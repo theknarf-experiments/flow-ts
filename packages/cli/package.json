@@ -1,9 +1,12 @@
 {
-  "name": "@flow-ts/executing",
+  "name": "@flow-ts/cli",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "flow-ts": "dist/bin.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -22,12 +25,9 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@electric-sql/d2ts": "^0.1.8",
-    "@flow-ts/catalog": "workspace:*",
+    "@flow-ts/executing": "workspace:*",
     "@flow-ts/parsing": "workspace:*",
-    "@flow-ts/planning": "workspace:*",
-    "@flow-ts/reading": "workspace:*",
-    "@flow-ts/strata": "workspace:*"
+    "@flow-ts/reading": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

@@ -1,32 +1,11 @@
-// Integration test wiring a d2ts graph with our Rel + InputSession + Reader.
+// Integration test wiring a d2ts graph with our Rel + InputSession.
 
-import * as fs from 'node:fs'
-import * as os from 'node:os'
-import * as path from 'node:path'
 import { D2, MessageType, MultiSet, map, output } from '@electric-sql/d2ts'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import {
-  InputSessionGeneric,
-  Rel,
-  readRows,
-  type Row,
-} from '../src/index.js'
+import { describe, expect, it } from 'vitest'
+import { InputSessionGeneric, Rel, type Row } from '../src/index.js'
 
-let tmpDir: string
-
-beforeEach(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-ts-reading-int-'))
-})
-
-afterEach(() => {
-  fs.rmSync(tmpDir, { recursive: true, force: true })
-})
-
-describe('Rel + InputSession + Reader (integration)', () => {
-  it('feeds CSV rows through a d2ts pipeline and surfaces them via output()', () => {
-    const csvPath = path.join(tmpDir, 'arc.csv')
-    fs.writeFileSync(csvPath, '1,2\n3,4\n5,6\n')
-
+describe('Rel + InputSession (integration)', () => {
+  it('feeds rows through a d2ts pipeline and surfaces them via output()', () => {
     const graph = new D2({ initialFrontier: 0 })
     const input = graph.newInput<Row>()
     const arc = new Rel(input, 2)
@@ -46,7 +25,7 @@ describe('Rel + InputSession + Reader (integration)', () => {
 
     graph.finalize()
 
-    for (const row of readRows(csvPath, ',', 2)) {
+    for (const row of [[1n, 2n], [3n, 4n], [5n, 6n]] as Row[]) {
       session.update(row, 1)
     }
     session.advanceTo(1)

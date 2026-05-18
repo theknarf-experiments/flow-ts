@@ -1,8 +1,8 @@
 // Port of flowlog/src/executing/src/dataflow.rs (incremental).
 //
-// Builds a d2ts dataflow graph from a ProgramQueryPlan, loads EDB facts via
-// the reading crate, runs the graph, and surfaces IDB results via a
-// caller-provided sink callback.
+// Builds a d2ts dataflow graph from a parsed Program + caller-provided EDB
+// facts, runs the graph, and surfaces IDB results via a sink callback.
+// No filesystem access here — the CLI package owns CSV reading and writing.
 //
 // Encoding strategy:
 //   - Row streams:    `IStreamBuilder<string>`             (encoded row)
@@ -42,7 +42,7 @@ import {
   type AggregationHeadIDB,
   aggregationCatalogFromProgram,
 } from '@flow-ts/catalog'
-import { parseProgram } from '@flow-ts/parsing'
+import type { Program } from '@flow-ts/parsing'
 import {
   type BinaryTransformation,
   type GroupStrataQueryPlan,
@@ -55,15 +55,8 @@ import {
   transformationOutput,
   unaryInput,
 } from '@flow-ts/planning'
-import {
-  type Row,
-  decodeRow,
-  encodeRow,
-  readRowsForRelDecl,
-} from '@flow-ts/reading'
+import { type Row, decodeRow, encodeRow } from '@flow-ts/reading'
 import { Strata } from '@flow-ts/strata'
-import * as fs from 'node:fs'
-import { Args } from './arg.js'
 
 export type IdbSink = (relationName: string, row: Row, diff: number) => void
 
@@ -79,11 +72,37 @@ interface DataflowMaps {
   kMap: Map<string, IStreamBuilder<EncodedRow>>
 }
 
-export function executeProgram(args: Args, sink: IdbSink): void {
-  const source = fs.readFileSync(args.program, 'utf8')
-  const program = parseProgram(source, { grammarSource: args.program })
+export interface ExecuteOptions {
+  /** Disables transformation-output sharing across rules — matches `--no-sharing`. */
+  noSharing?: boolean
+  /** Optimizer level; null = passthrough, 1 = sip, 2 = planning, 3 = both. */
+  optLevel?: number | null
+}
+
+/**
+ * Compile and run a parsed program against the supplied EDB facts. Each
+ * row produced by an IDB head is delivered to `sink`. The function is
+ * synchronous and finishes once the graph reaches its fixpoint.
+ *
+ * @param program     A program already parsed via `parseProgram`.
+ * @param edbFacts    Map from EDB declaration name → rows of bigints. Any
+ *                    EDB referenced by the program but missing from the map
+ *                    is treated as empty.
+ * @param options     Optional tuning knobs (see `ExecuteOptions`).
+ * @param sink        Callback invoked once per (relation, row, multiplicity).
+ */
+export function executeProgram(
+  program: Program,
+  edbFacts: ReadonlyMap<string, readonly Row[]>,
+  options: ExecuteOptions,
+  sink: IdbSink,
+): void {
   const strata = Strata.fromParser(program)
-  const plan = ProgramQueryPlanCls.fromStrata(strata, args.noSharing, args.optLevel)
+  const plan = ProgramQueryPlanCls.fromStrata(
+    strata,
+    options.noSharing ?? false,
+    options.optLevel ?? null,
+  )
   const aggCatalog = aggregationCatalogFromProgram(program)
 
   const graph = new D2({ initialFrontier: 0 })
@@ -113,9 +132,8 @@ export function executeProgram(args: Args, sink: IdbSink): void {
   graph.finalize()
 
   for (const edb of program.edbs) {
-    if (!edb.path) continue
     const input = edbInputs.get(edb.name)!
-    const rows = readRowsForRelDecl(edb, args.facts, args.delimiter)
+    const rows = edbFacts.get(edb.name) ?? []
     for (const row of rows) {
       input.sendData(0, [[encodeRow(row), 1]])
     }

@@ -5,7 +5,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { Attribute, RelDecl } from '@flow-ts/parsing'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { readRows, readRowsForRelDecl } from '../src/index.js'
+import { readRows, readRowsForRelDecl } from '../src/io.js'
 
 let tmpDir: string
 

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://turborepo.org/schema.json",
+  "tasks": {
+    "build:grammar": {
+      "inputs": ["src/grammar.peggy"],
+      "outputs": ["src/__generated__/**"]
+    },
+    "build": {
+      "dependsOn": ["^build", "build:grammar"],
+      "inputs": ["src/**", "tsconfig.json", "package.json"],
+      "outputs": ["dist/**"]
+    },
+    "typecheck": {
+      "dependsOn": ["^build", "build:grammar"],
+      "inputs": ["src/**", "tsconfig.json", "package.json"],
+      "outputs": []
+    },
+    "test": {
+      "dependsOn": ["^build", "build:grammar"],
+      "inputs": ["src/**", "tests/**", "tsconfig.json", "package.json", "vitest.config.ts"],
+      "outputs": []
+    },
+    "clean": {
+      "cache": false
+    }
+  }
+}

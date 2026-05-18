@@ -55,9 +55,17 @@ export function readRows(
 }
 
 /**
- * Convenience: resolve a RelDecl into a path under `factsDir` (using its
- * declared input path) and read it. Mirrors the upstream `read_row_generic`
- * entry point.
+ * Resolve a RelDecl's effective input filename. When `.input <path>` is
+ * declared, that path is used; otherwise the upstream convention is
+ * `<rel_name>.facts` (see `flowlog/src/executing/src/dataflow.rs`).
+ */
+export function relDeclInputPath(relDecl: RelDecl): string {
+  return relDecl.path ?? `${relDecl.name}.facts`
+}
+
+/**
+ * Convenience: resolve a RelDecl into a path under `factsDir` and read it.
+ * Mirrors the upstream `read_row_generic` entry point.
  */
 export function readRowsForRelDecl(
   relDecl: RelDecl,
@@ -66,10 +74,7 @@ export function readRowsForRelDecl(
   id = 0,
   peers = 1,
 ): Row[] {
-  if (!relDecl.path) {
-    throw new Error(`relation ${relDecl.name} has no input path`)
-  }
-  const fullPath = `${factsDir.replace(/\/$/, '')}/${relDecl.path}`
+  const fullPath = `${factsDir.replace(/\/$/, '')}/${relDeclInputPath(relDecl)}`
   return readRows(fullPath, delimiter, relDecl.arity(), id, peers)
 }
 

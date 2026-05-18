@@ -26,7 +26,6 @@ export function runCli(args: Args): Map<string, number> {
 
   const edbFacts = new Map<string, readonly Row[]>()
   for (const edb of program.edbs) {
-    if (!edb.path) continue
     edbFacts.set(edb.name, readRowsForRelDecl(edb, args.facts, args.delimiter))
   }
 

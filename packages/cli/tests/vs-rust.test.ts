@@ -14,6 +14,7 @@ import * as path from 'node:path'
 import { parseProgram } from '@flow-ts/parsing'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Args } from '../src/args.js'
+import { relDeclInputPath } from '../src/io.js'
 import { runCli } from '../src/main.js'
 
 const EXAMPLES_DIR = '/home/knarf/projects/dbflow/flowlog/examples'
@@ -27,6 +28,15 @@ const HARD_SKIP = new Set(['crdt.dl', 'crdt_slow.dl', 'sssp.dl'])
 // compared (the oracle records the mismatch) but not asserted on.
 const KNOWN_TS_FAILURES = new Set(['cspa.dl', 'cvc5.dl', 'galen.dl', 'z3.dl'])
 
+// Programs whose TS run blows past a reasonable wall-clock budget at the
+// default fact size. d2ts schedules every operator on every step regardless
+// of pending work, so programs with many strata + many operators (borrow.dl
+// has 23 strata, 12 recursive) accrue per-step overhead that Rust DD's
+// timely scheduler avoids. We still want correctness confirmation, so the
+// oracle drops these programs to a smaller per-EDB fact count.
+const SHRINK_FACTS = new Map<string, number>([['borrow.dl', 2]])
+const DEFAULT_FACT_COUNT = 5
+
 function findRustBinary(): string | null {
   const explicit = process.env.RUST_FLOWLOG
   if (explicit && fs.existsSync(explicit)) return explicit
@@ -39,20 +49,22 @@ function findRustBinary(): string | null {
 
 const rustBinary = findRustBinary()
 
-/** Generate the same synthetic facts as `examples-smoke.test.ts`. */
-function writeFacts(programPath: string, tmpDir: string): void {
+/** Synthetic facts for every declared EDB. Programs like borrow.dl
+ *  declare EDBs without explicit `.input` paths; Rust defaults those to
+ *  `<name>.facts`, so we write to that name to keep the comparison fair. */
+function writeFacts(file: string, programPath: string, tmpDir: string): void {
   const source = fs.readFileSync(programPath, 'utf8')
   const program = parseProgram(source, { grammarSource: programPath })
+  const factCount = SHRINK_FACTS.get(file) ?? DEFAULT_FACT_COUNT
   for (const edb of program.edbs) {
-    if (!edb.path) continue
     const arity = edb.arity()
     const rows: string[] = []
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < factCount; i++) {
       const cols: string[] = []
       for (let c = 0; c < arity; c++) cols.push(String((i + c) % 4))
       rows.push(cols.join(','))
     }
-    fs.writeFileSync(path.join(tmpDir, edb.path), `${rows.join('\n')}\n`)
+    fs.writeFileSync(path.join(tmpDir, relDeclInputPath(edb)), `${rows.join('\n')}\n`)
   }
 }
 
@@ -136,7 +148,7 @@ describe.skipIf(rustBinary === null)('flow-ts vs Rust executing — correctness 
       const programPath = path.join(EXAMPLES_DIR, file)
       const localProgram = path.join(tmpDir, file)
       fs.copyFileSync(programPath, localProgram)
-      writeFacts(localProgram, tmpDir)
+      writeFacts(file, localProgram, tmpDir)
 
       const rustOut = path.join(tmpDir, 'rust-out')
       const tsOut = path.join(tmpDir, 'ts-out')

@@ -73,12 +73,14 @@ describe('readRowsForRelDecl', () => {
     expect(rows).toHaveLength(2)
   })
 
-  it('throws if the RelDecl has no input path', () => {
+  it('defaults to <name>.facts when no .input path is declared', () => {
+    writeFacts('Arc.facts', '1\n2\n3\n')
     const decl = new RelDecl(
       'Arc',
       [new Attribute('x', 'Integer')],
       null,
     )
-    expect(() => readRowsForRelDecl(decl, tmpDir, ',')).toThrow(/no input path/)
+    const rows = readRowsForRelDecl(decl, tmpDir, ',')
+    expect(rows).toEqual([[1n], [2n], [3n]])
   })
 })

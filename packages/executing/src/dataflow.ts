@@ -14,10 +14,11 @@
 //
 // **Status**: handles single- and multi-IDB strata with the common
 // transformation kinds (RowTo*/KvTo*/Jn*/Nj*/Cartesian), constraint
-// filtering, fused compare filtering, and prior-stratum intermediates in
-// any form. Aggregation and head arithmetic are still TODO. Multi-IDB
-// recursion with self-joins on heavily-connected EDB data can hit a d2ts
-// frontier-tracking corner case (Invalid frontier/version errors).
+// filtering, fused compare filtering, prior-stratum intermediates in
+// any form, and head arithmetic via the planner's HeadArith post-map.
+// Aggregation is still TODO. Recursions whose dataflow cycle passes
+// through 3+ mutually-dependent IDBs hit a d2ts FeedbackOperator
+// frontier-convergence limitation (cspa/cvc5/galen/z3 examples).
 
 import {
   D2,
@@ -293,39 +294,6 @@ function buildRecursiveStratum(
   for (const headName of heads) {
     const finalHead = results[headName]
     if (finalHead) maps.rowMap.set(headName, finalHead as IStreamBuilder<EncodedRow>)
-  }
-}
-
-/** Union all `lastSignaturesMap` entries for each IDB head and route to sink. */
-function collectHeads(
-  groupPlan: GroupStrataQueryPlan,
-  maps: DataflowMaps,
-  idbSet: ReadonlySet<string>,
-  sink: IdbSink,
-): void {
-  for (const [headName, lasts] of groupPlan.lastSignaturesMap) {
-    if (!idbSet.has(headName)) continue
-    let stream: IStreamBuilder<EncodedRow> | null = null
-    // If the head is recursive, the iterate already populated maps.rowMap.
-    const existing = maps.rowMap.get(headName)
-    if (existing) {
-      stream = existing
-    } else {
-      for (const last of lasts) {
-        const s = maps.rowMap.get(last)
-        if (!s) continue
-        stream = stream === null ? s : stream.pipe(concat(s))
-      }
-    }
-    if (!stream) continue
-    dedupeEncodedRows(stream).pipe(
-      output((msg) => {
-        if (msg.type !== MessageType.DATA) return
-        for (const [encoded, mult] of msg.data.collection.getInner()) {
-          sink(headName, decodeRow(encoded), mult)
-        }
-      }),
-    )
   }
 }
 
@@ -678,6 +646,19 @@ function projectionIds(
 }
 
 function makeRowToRowFn(flow: TransformationFlow): (encoded: string) => string | null {
+  if (flow.kind === 'HeadArith') {
+    // Post-projection map: each output column is either a Copy of an input
+    // position or a Compute of an arithmetic over input positions.
+    const projections = flow.projections
+    return (encoded) => {
+      const row = decodeRow(encoded)
+      const read = kvReader(EMPTY_KEY, row)
+      const out: bigint[] = projections.map((p) =>
+        p.kind === 'Copy' ? row[p.index]! : evalArith(p.arithmetic, read),
+      )
+      return encodeRow(out)
+    }
+  }
   const kv = requireKvFlow(flow, 'makeRowToRowFn')
   // For RowToRow / RowToK, exactly one of `key`/`value` is populated.
   // The input is row-form (no key, value = the row).

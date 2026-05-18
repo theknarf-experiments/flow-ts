@@ -1,10 +1,9 @@
 // Integration tests: parse a .dl, run it end-to-end on synthetic facts,
 // collect rows via the sink callback.
 //
-// These tests scope to what the current minimum-viable executor handles
-// (unary row-form transformations on non-recursive strata). Recursive
-// strata, joins, and aggregation are exercised once those translators
-// are implemented.
+// These tests cover end-to-end execution paths: row-form projections,
+// recursive transitive closure (reach.dl), inner joins via the smoke
+// test, and head arithmetic. Aggregation isn't wired up yet.
 
 import * as fs from 'node:fs'
 import * as os from 'node:os'
@@ -60,6 +59,64 @@ Reach(y) :- Reach(x), Arc(x, y).
       else reach.delete(row[0]!)
     })
     expect([...reach].sort()).toEqual([1n, 2n, 3n, 4n])
+  })
+})
+
+describe('executeProgram — non-recursive join', () => {
+  it('Reach(z) :- Source(x), Arc(x, z) joins Source with Arc', () => {
+    const programPath = writeFile(
+      'oneStep.dl',
+      `\
+.in
+.decl Source(id: number)
+.input Source.csv
+
+.decl Arc(x: number, y: number)
+.input Arc.csv
+
+.printsize
+.decl Reach(id: number)
+
+.rule
+Reach(y) :- Source(x), Arc(x, y).
+`,
+    )
+    writeFile('Source.csv', '1\n2\n')
+    writeFile('Arc.csv', '1,10\n2,20\n3,30\n')
+
+    const seen: bigint[] = []
+    executeProgram(new Args({ program: programPath, facts: tmpDir }), (rel, row) => {
+      if (rel === 'Reach') seen.push(row[0]!)
+    })
+
+    expect(seen.sort()).toEqual([10n, 20n])
+  })
+})
+
+describe('executeProgram — head arithmetic', () => {
+  it('post-projects a head expression `x + 1`', () => {
+    const programPath = writeFile(
+      'addone.dl',
+      `\
+.in
+.decl Source(id: number)
+.input Source.csv
+
+.printsize
+.decl Plus1(id: number)
+
+.rule
+Plus1(x + 1) :- Source(x).
+`,
+    )
+    writeFile('Source.csv', '1\n2\n3\n')
+
+    const seen: bigint[] = []
+    executeProgram(new Args({ program: programPath, facts: tmpDir }), (rel, row) => {
+      if (rel === 'Plus1') seen.push(row[0]!)
+    })
+
+    expect(seen.sort()).toEqual([2n, 3n, 4n])
   })
 })
 

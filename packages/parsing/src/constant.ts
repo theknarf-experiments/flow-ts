@@ -11,7 +11,9 @@ export function constToString(c: Const): string {
     case 'Integer':
       return c.value.toString()
     case 'Text':
-      return c.value
+      // Quote so the output round-trips through the parser. Upstream Rust
+      // emits the raw text; we wrap it.
+      return `"${c.value}"`
     case 'Float': {
       const buf = new ArrayBuffer(8)
       new BigInt64Array(buf)[0] = c.bits

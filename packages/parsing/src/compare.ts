@@ -15,19 +15,22 @@ export function comparisonOperatorIsEquals(op: ComparisonOperator): boolean {
 }
 
 export function comparisonOperatorToString(op: ComparisonOperator): string {
+  // ASCII forms that round-trip through the parser. The upstream Rust uses
+  // unicode (≠/≥/≤) for its Display impl; we use the parser-compatible
+  // spellings so `programToDl` output is round-trippable.
   switch (op) {
     case 'Equals':
       return '=='
     case 'NotEquals':
-      return '≠'
+      return '!='
     case 'GreaterThan':
       return '>'
     case 'GreaterEqualThan':
-      return '≥'
+      return '>='
     case 'LessThan':
       return '<'
     case 'LessEqualThan':
-      return '≤'
+      return '<='
   }
 }
 
@@ -53,6 +56,6 @@ export class ComparisonExpr {
   }
 
   toString(): string {
-    return `[${this.left.toString()} ${comparisonOperatorToString(this.operator)} ${this.right.toString()}]`
+    return `${this.left.toString()} ${comparisonOperatorToString(this.operator)} ${this.right.toString()}`
   }
 }

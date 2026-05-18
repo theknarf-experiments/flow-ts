@@ -12,10 +12,12 @@
 // String encoding sidesteps d2ts's two limitations on bigint-bearing
 // row arrays (JS Map identity + JSON.stringify in delta tracking).
 //
-// **Status**: handles single-IDB strata with the most common transformation
-// kinds (RowTo*/KvTo*/Jn*/Nj*/Cartesian). Aggregation, head arithmetic,
-// comparison filtering, var-equality constraints, and multi-IDB recursive
-// strata are stubbed and will throw if encountered.
+// **Status**: handles single- and multi-IDB strata with the common
+// transformation kinds (RowTo*/KvTo*/Jn*/Nj*/Cartesian), constraint
+// filtering, fused compare filtering, and prior-stratum intermediates in
+// any form. Aggregation and head arithmetic are still TODO. Multi-IDB
+// recursion with self-joins on heavily-connected EDB data can hit a d2ts
+// frontier-tracking corner case (Invalid frontier/version errors).
 
 import {
   D2,
@@ -200,46 +202,64 @@ function buildRecursiveStratum(
   maps: DataflowMaps,
 ): void {
   const heads = [...groupPlan.headSignaturesSet()]
-  if (heads.length !== 1) {
-    throw new Error(
-      `recursive strata with ${heads.length} IDB heads not yet supported (got ${heads.join(', ')})`,
-    )
-  }
-  const headName = heads[0]!
+  if (heads.length === 0) return
+  const headSet = new Set(heads)
 
-  // Externals = EDBs / prior-stratum IDBs the transformations read from.
-  const baseRels = baseInputRelations(groupPlan)
-  const externals: Record<string, IStreamBuilder<EncodedRow>> = {}
-  for (const relName of baseRels) {
-    if (relName === headName) continue
-    const outer = maps.rowMap.get(relName)
-    if (outer) externals[relName] = outer
+  // Externals = every enter-scope signature (base atoms + prior-stratum
+  // intermediates, in any form) that isn't one of the recursive heads. Tag
+  // by form so the body can route each entered stream back into the right
+  // nest map. Mirrors Rust dataflow.rs's row_map/kv_map/k_map switch.
+  const externals: Record<string, IStreamBuilder<unknown>> = {}
+  for (const sig of groupPlan.enterScope) {
+    if (headSet.has(sig)) continue
+    if (maps.rowMap.has(sig)) {
+      externals[`row:${sig}`] = maps.rowMap.get(sig) as IStreamBuilder<unknown>
+    } else if (maps.kvMap.has(sig)) {
+      externals[`kv:${sig}`] = maps.kvMap.get(sig) as IStreamBuilder<unknown>
+    } else if (maps.kMap.has(sig)) {
+      externals[`k:${sig}`] = maps.kMap.get(sig) as IStreamBuilder<unknown>
+    }
   }
-  // Prior-stratum data for the head itself (e.g. reach.dl's group-0 IDB).
-  // Entered separately so the body can concat it with per-rule outputs —
-  // the analog of the Rust `recursive_collector` adding `init_rel`.
-  const priorKey = `__prior__${headName}`
-  const prior = maps.rowMap.get(headName)
-  if (prior) externals[priorKey] = prior
+  // Prior-stratum data per recursive head (e.g. reach.dl's group-0 IDB) —
+  // the analog of Rust's `recursive_collector` seeding with `init_rel`.
+  const priorKeys = new Map<string, string>()
+  for (const headName of heads) {
+    const prior = maps.rowMap.get(headName)
+    if (prior) {
+      const k = `__prior__${headName}`
+      priorKeys.set(headName, k)
+      externals[k] = prior as IStreamBuilder<unknown>
+    }
+  }
 
   const results = iterateMulti<
     string,
-    typeof headName,
-    Record<string, EncodedRow>,
-    Record<typeof headName, EncodedRow>
-  >(graph, externals, [headName] as const, (entered, variables) => {
+    string,
+    Record<string, unknown>,
+    Record<string, EncodedRow>
+  >(graph, externals, heads, (entered, variables) => {
     const nestMaps: DataflowMaps = {
       rowMap: new Map(),
       kvMap: new Map(),
       kMap: new Map(),
     }
-    const headVar = variables[headName]!
-    for (const relName of baseRels) {
-      if (relName === headName) {
-        nestMaps.rowMap.set(relName, headVar)
-      } else {
-        const s = entered[relName]
-        if (s) nestMaps.rowMap.set(relName, s)
+    for (const h of heads) {
+      nestMaps.rowMap.set(h, variables[h]! as IStreamBuilder<EncodedRow>)
+    }
+
+    for (const tagged of Object.keys(entered)) {
+      if (tagged.startsWith('__prior__')) continue
+      const colon = tagged.indexOf(':')
+      const form = tagged.slice(0, colon)
+      const sig = tagged.slice(colon + 1)
+      const stream = entered[tagged]
+      if (!stream) continue
+      if (form === 'row') {
+        nestMaps.rowMap.set(sig, stream as IStreamBuilder<EncodedRow>)
+      } else if (form === 'kv') {
+        nestMaps.kvMap.set(sig, stream as IStreamBuilder<EncodedKv>)
+      } else if (form === 'k') {
+        nestMaps.kMap.set(sig, stream as IStreamBuilder<EncodedRow>)
       }
     }
 
@@ -247,46 +267,33 @@ function buildRecursiveStratum(
       applyTransformation(t, nestMaps)
     }
 
-    const lasts = groupPlan.lastSignaturesMap.get(headName) ?? []
-    let unioned: IStreamBuilder<EncodedRow> | null = null
-    for (const last of lasts) {
-      const s = nestMaps.rowMap.get(last)
-      if (!s) continue
-      unioned = unioned === null ? s : unioned.pipe(concat(s))
+    const out: Record<string, IStreamBuilder<EncodedRow>> = {}
+    for (const headName of heads) {
+      const lasts = groupPlan.lastSignaturesMap.get(headName) ?? []
+      let unioned: IStreamBuilder<EncodedRow> | null = null
+      for (const last of lasts) {
+        const s = nestMaps.rowMap.get(last)
+        if (!s) continue
+        unioned = unioned === null ? s : unioned.pipe(concat(s))
+      }
+      const priorK = priorKeys.get(headName)
+      const priorEntered = priorK
+        ? (entered[priorK] as IStreamBuilder<EncodedRow> | undefined)
+        : undefined
+      if (priorEntered) {
+        unioned = unioned === null ? priorEntered : unioned.pipe(concat(priorEntered))
+      }
+      const headVar = variables[headName]! as IStreamBuilder<EncodedRow>
+      out[headName] =
+        unioned === null ? headVar.pipe(filter(() => false)) : dedupeEncodedRows(unioned)
     }
-    const priorEntered = entered[priorKey]
-    if (priorEntered) {
-      unioned = unioned === null ? priorEntered : unioned.pipe(concat(priorEntered))
-    }
-    const next =
-      unioned === null ? headVar.pipe(filter(() => false)) : dedupeEncodedRows(unioned)
-    return { [headName]: next } as Record<typeof headName, IStreamBuilder<EncodedRow>>
+    return out
   })
 
-  const finalHead = results[headName]!
-  maps.rowMap.set(headName, finalHead)
-}
-
-/**
- * Find the base (Atom-kind) relations referenced by transformations in a
- * stratum. These are the relations whose streams we need either in the seed
- * (EDBs / prior IDBs) or derived from the iteration variable (the recursive
- * IDB heads). Transformations that read intermediate outputs reference the
- * other transformations directly and don't need separate seeding.
- */
-function baseInputRelations(groupPlan: GroupStrataQueryPlan): Set<string> {
-  const out = new Set<string>()
-  for (const t of groupPlan.strataPlanFlat()) {
-    if (isUnary(t)) {
-      const sig = unaryInput(t).signature
-      if (sig.kind === 'Atom') out.add(sig.name)
-    } else {
-      const [l, r] = binaryInputs(t as BinaryTransformation)
-      if (l.signature.kind === 'Atom') out.add(l.signature.name)
-      if (r.signature.kind === 'Atom') out.add(r.signature.name)
-    }
+  for (const headName of heads) {
+    const finalHead = results[headName]
+    if (finalHead) maps.rowMap.set(headName, finalHead as IStreamBuilder<EncodedRow>)
   }
-  return out
 }
 
 /** Union all `lastSignaturesMap` entries for each IDB head and route to sink. */
@@ -474,22 +481,26 @@ function storeBinaryResult<JoinOut>(
   maps: DataflowMaps,
   outName: string,
   joined: IStreamBuilder<JoinOut>,
-  fn: (j: JoinOut) => { key: string; value: string },
+  fn: (j: JoinOut) => { key: string; value: string } | null,
   ok: number,
   ov: number,
 ): void {
+  // Filter out rows the projection function rejects (fused compare filters
+  // returning null), then project. Two passes via filter+map; fn is called
+  // twice per row, but that's acceptable.
+  const surviving = joined.pipe(filter((j) => fn(j) !== null))
   if (ok === 0) {
     // row form: encoded value is the whole row
-    const out = joined.pipe(map((j) => fn(j).value))
+    const out = surviving.pipe(map((j) => fn(j)!.value))
     maps.rowMap.set(outName, out)
   } else if (ov === 0) {
     // k-only form: encoded key is the whole row
-    const out = joined.pipe(map((j) => fn(j).key))
+    const out = surviving.pipe(map((j) => fn(j)!.key))
     maps.kMap.set(outName, out)
   } else {
     // kv form
-    const out = joined.pipe(map((j): EncodedKv => {
-      const r = fn(j)
+    const out = surviving.pipe(map((j): EncodedKv => {
+      const r = fn(j)!
       return [r.key, r.value]
     }))
     maps.kvMap.set(outName, out)
@@ -542,76 +553,179 @@ function filterMap<I, O>(fn: (input: I) => O | null) {
 }
 
 // -----------------------------------------------------------------------
+// Flow evaluation: read positions, evaluate constraints + comparisons
+// -----------------------------------------------------------------------
+
+type TArg = import('@flow-ts/planning').TransformationArgument
+type FactorArg = import('@flow-ts/planning').FactorArgument
+type ArithArg = import('@flow-ts/planning').ArithmeticArgument
+type CompareArg = import('@flow-ts/planning').ComparisonExprArgument
+type BaseConstraintsT = import('@flow-ts/planning').BaseConstraints
+
+/** Resolves a TransformationArgument to its concrete bigint value. */
+type ArgReader = (arg: TArg) => bigint
+
+/** Reader for KV-form inputs (one keyed pair). */
+function kvReader(key: readonly bigint[], value: readonly bigint[]): ArgReader {
+  return (arg) => {
+    if (arg.kind !== 'KV') throw new Error(`kvReader: expected KV arg, got ${arg.kind}`)
+    const arr = arg.isValue ? value : key
+    const v = arr[arg.id]
+    if (v === undefined) throw new Error(`kvReader: out-of-range id ${arg.id}`)
+    return v
+  }
+}
+
+/** Reader for join-output inputs: shared key, left value, right value. */
+function jnReader(
+  key: readonly bigint[],
+  leftValue: readonly bigint[],
+  rightValue: readonly bigint[],
+): ArgReader {
+  return (arg) => {
+    if (arg.kind !== 'Jn') throw new Error(`jnReader: expected Jn arg, got ${arg.kind}`)
+    if (!arg.isValue) {
+      const v = key[arg.id]
+      if (v === undefined) throw new Error(`jnReader: out-of-range key id ${arg.id}`)
+      return v
+    }
+    const side = arg.isRight ? rightValue : leftValue
+    const v = side[arg.id]
+    if (v === undefined) throw new Error(`jnReader: out-of-range value id ${arg.id}`)
+    return v
+  }
+}
+
+function constToBigint(c: import('@flow-ts/parsing').Const): bigint {
+  if (c.kind === 'Integer') return c.value
+  if (c.kind === 'Float') return c.bits
+  throw new Error(`constToBigint: ${c.kind} constants not yet supported`)
+}
+
+function evalFactor(f: FactorArg, read: ArgReader): bigint {
+  return f.kind === 'Const' ? constToBigint(f.value) : read(f.argument)
+}
+
+function evalArith(arith: ArithArg, read: ArgReader): bigint {
+  let acc = evalFactor(arith.init, read)
+  for (const [op, factor] of arith.rest) {
+    const x = evalFactor(factor, read)
+    switch (op) {
+      case 'Plus':    acc = acc + x; break
+      case 'Minus':   acc = acc - x; break
+      case 'Multiply':acc = acc * x; break
+      case 'Divide':  acc = acc / x; break
+      case 'Modulo':  acc = acc % x; break
+    }
+  }
+  return acc
+}
+
+function evalCompare(cmp: CompareArg, read: ArgReader): boolean {
+  const l = evalArith(cmp.left, read)
+  const r = evalArith(cmp.right, read)
+  switch (cmp.operator) {
+    case 'Equals':           return l === r
+    case 'NotEquals':        return l !== r
+    case 'GreaterThan':      return l > r
+    case 'GreaterEqualThan': return l >= r
+    case 'LessThan':         return l < r
+    case 'LessEqualThan':    return l <= r
+  }
+}
+
+function passesFilters(
+  constraints: BaseConstraintsT,
+  compares: readonly CompareArg[],
+  read: ArgReader,
+): boolean {
+  for (const [arg, c] of constraints.constantEqConstraints) {
+    if (read(arg) !== constToBigint(c)) return false
+  }
+  for (const [a, b] of constraints.variableEqConstraints) {
+    if (read(a) !== read(b)) return false
+  }
+  for (const cmp of compares) {
+    if (!evalCompare(cmp, read)) return false
+  }
+  return true
+}
+
+// -----------------------------------------------------------------------
 // Flow → projection-function builders
 // -----------------------------------------------------------------------
 
-function projectionIds(
-  args: readonly { kind: 'KV' | 'Jn' }[],
-  ctx: string,
-): number[] {
-  return args.map((a) => {
-    if (a.kind !== 'KV') throw new Error(`${ctx}: expected KV arg`)
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    return (a as { kind: 'KV'; id: number }).id
-  })
-}
+const EMPTY_KEY: readonly bigint[] = []
 
-function requireSimpleFlow(flow: TransformationFlow, ctx: string): void {
+function requireKvFlow(
+  flow: TransformationFlow,
+  ctx: string,
+): Extract<TransformationFlow, { kind: 'KVToKV' }> {
   if (flow.kind !== 'KVToKV') {
     throw new Error(`${ctx}: expected KVToKV flow, got ${flow.kind}`)
   }
-  if (!flow.constraints.isEmpty() || flow.compares.length > 0) {
-    throw new Error(`${ctx}: constraints/compares not yet implemented`)
-  }
+  return flow
+}
+
+function projectionIds(
+  args: readonly import('@flow-ts/planning').TransformationArgument[],
+  ctx: string,
+): [boolean, number][] {
+  return args.map((a) => {
+    if (a.kind !== 'KV') throw new Error(`${ctx}: expected KV arg, got ${a.kind}`)
+    return [a.isValue, a.id] as [boolean, number]
+  })
 }
 
 function makeRowToRowFn(flow: TransformationFlow): (encoded: string) => string | null {
-  requireSimpleFlow(flow, 'makeRowToRowFn')
+  const kv = requireKvFlow(flow, 'makeRowToRowFn')
   // For RowToRow / RowToK, exactly one of `key`/`value` is populated.
-  const kv = flow as Extract<TransformationFlow, { kind: 'KVToKV' }>
-  const idsSource = kv.key.length === 0 ? kv.value : kv.key
-  const ids = projectionIds(idsSource, 'makeRowToRowFn')
+  // The input is row-form (no key, value = the row).
+  const proj = projectionIds(kv.key.length === 0 ? kv.value : kv.key, 'makeRowToRowFn')
+  const constraints = kv.constraints
+  const compares = kv.compares
   return (encoded) => {
     const row = decodeRow(encoded)
-    const out = ids.map((i) => row[i]!)
-    return encodeRow(out)
+    if (!passesFilters(constraints, compares, kvReader(EMPTY_KEY, row))) return null
+    return encodeRow(proj.map(([_, id]) => row[id]!))
   }
 }
 
 function makeRowToKvFn(
   flow: TransformationFlow,
 ): (encoded: string) => EncodedKv | null {
-  requireSimpleFlow(flow, 'makeRowToKvFn')
-  const kv = flow as Extract<TransformationFlow, { kind: 'KVToKV' }>
-  const keyIds = projectionIds(kv.key, 'makeRowToKvFn key')
-  const valIds = projectionIds(kv.value, 'makeRowToKvFn value')
+  const kv = requireKvFlow(flow, 'makeRowToKvFn')
+  const keyProj = projectionIds(kv.key, 'makeRowToKvFn key')
+  const valProj = projectionIds(kv.value, 'makeRowToKvFn value')
+  const constraints = kv.constraints
+  const compares = kv.compares
   return (encoded) => {
     const row = decodeRow(encoded)
-    return [encodeRow(keyIds.map((i) => row[i]!)), encodeRow(valIds.map((i) => row[i]!))]
+    if (!passesFilters(constraints, compares, kvReader(EMPTY_KEY, row))) return null
+    return [
+      encodeRow(keyProj.map(([_, id]) => row[id]!)),
+      encodeRow(valProj.map(([_, id]) => row[id]!)),
+    ]
   }
 }
 
 /**
  * For Kv → Kv / Kv → K transformations the input is a `[K_in, V_in]` pair.
- * Each output `TransformationArgument.kind = 'KV'` carries `isValue` (which
- * input side it pulls from) and `id` (the position).
+ * Each `TransformationArgument.kind = 'KV'` carries `isValue` (which input
+ * side it pulls from) and `id` (the position).
  */
 function makeKvToKvFn(
   flow: TransformationFlow,
 ): (input: EncodedKv) => EncodedKv | null {
-  requireSimpleFlow(flow, 'makeKvToKvFn')
-  const kv = flow as Extract<TransformationFlow, { kind: 'KVToKV' }>
-  const keyProj = kv.key.map((a) => {
-    if (a.kind !== 'KV') throw new Error('makeKvToKvFn: expected KV')
-    return [a.isValue, a.id] as [boolean, number]
-  })
-  const valProj = kv.value.map((a) => {
-    if (a.kind !== 'KV') throw new Error('makeKvToKvFn: expected KV')
-    return [a.isValue, a.id] as [boolean, number]
-  })
+  const kv = requireKvFlow(flow, 'makeKvToKvFn')
+  const keyProj = projectionIds(kv.key, 'makeKvToKvFn key')
+  const valProj = projectionIds(kv.value, 'makeKvToKvFn value')
+  const constraints = kv.constraints
+  const compares = kv.compares
   return ([encK, encV]) => {
     const k = decodeRow(encK)
     const v = decodeRow(encV)
+    if (!passesFilters(constraints, compares, kvReader(k, v))) return null
     const project = (proj: [boolean, number][]) =>
       proj.map(([isValue, id]) => (isValue ? v[id]! : k[id]!))
     return [encodeRow(project(keyProj)), encodeRow(project(valProj))]
@@ -621,17 +735,14 @@ function makeKvToKvFn(
 function makeKvToKFn(
   flow: TransformationFlow,
 ): (input: EncodedKv) => EncodedRow | null {
-  requireSimpleFlow(flow, 'makeKvToKFn')
-  const kv = flow as Extract<TransformationFlow, { kind: 'KVToKV' }>
-  // For Kv→K the output is a single row carried in either the key (typical)
-  // or value (degenerate); the planner uses `key` when ok > 0.
-  const proj = (kv.key.length > 0 ? kv.key : kv.value).map((a) => {
-    if (a.kind !== 'KV') throw new Error('makeKvToKFn: expected KV')
-    return [a.isValue, a.id] as [boolean, number]
-  })
+  const kv = requireKvFlow(flow, 'makeKvToKFn')
+  const proj = projectionIds(kv.key.length > 0 ? kv.key : kv.value, 'makeKvToKFn')
+  const constraints = kv.constraints
+  const compares = kv.compares
   return ([encK, encV]) => {
     const k = decodeRow(encK)
     const v = decodeRow(encV)
+    if (!passesFilters(constraints, compares, kvReader(k, v))) return null
     return encodeRow(proj.map(([isValue, id]) => (isValue ? v[id]! : k[id]!)))
   }
 }
@@ -639,18 +750,16 @@ function makeKvToKFn(
 /**
  * Project a `[K, [V_left, V_right]]` join output into the flow's declared
  * (output_key, output_value) shape. K is the shared join key; V_left/V_right
- * are the values carried by each side.
+ * are the values carried by each side. Returns `null` when a fused compare
+ * filter rejects the row.
  */
 function makeJoinOutFn(
   flow: TransformationFlow,
   _ok: number,
   _ov: number,
-): (joined: [string, [string, string]]) => { key: string; value: string } {
+): (joined: [string, [string, string]]) => { key: string; value: string } | null {
   if (flow.kind !== 'JnToKV') {
     throw new Error(`makeJoinOutFn: expected JnToKV flow, got ${flow.kind}`)
-  }
-  if (flow.compares.length > 0) {
-    throw new Error('makeJoinOutFn: compare filters not yet implemented')
   }
   const keyProj = flow.key.map((a) => {
     if (a.kind !== 'Jn') throw new Error('makeJoinOutFn key: expected Jn')
@@ -660,18 +769,28 @@ function makeJoinOutFn(
     if (a.kind !== 'Jn') throw new Error('makeJoinOutFn value: expected Jn')
     return [a.isRight, a.isValue, a.id] as [boolean, boolean, number]
   })
+  const compares = flow.compares
 
   return ([encK, [encVL, encVR]]) => {
     const k = decodeRow(encK)
     const vL = decodeRow(encVL)
     const vR = decodeRow(encVR)
+    // Compares fused at the join level: evaluate against (k, vL, vR) before
+    // projecting. The planner only attaches a compare here when its vars
+    // span both sides — purely-left compares went into the left's KvToKv
+    // flow, purely-right ditto.
+    if (compares.length > 0) {
+      const read = jnReader(k, vL, vR)
+      for (const cmp of compares) {
+        if (!evalCompare(cmp, read)) return null
+      }
+    }
     const pick = (proj: [boolean, boolean, number][]) =>
-      proj.map(([_isRight, isValue, id]) => {
+      proj.map(([isRight, isValue, id]) => {
         // Both sides of an inner join share the same K, so `isRight` doesn't
         // affect key lookups — the shared K is on both sides.
         if (!isValue) return k[id]!
-        // value side: which side's value?
-        return _isRight ? vR[id]! : vL[id]!
+        return isRight ? vR[id]! : vL[id]!
       })
     return { key: encodeRow(pick(keyProj)), value: encodeRow(pick(valProj)) }
   }
@@ -679,18 +798,20 @@ function makeJoinOutFn(
 
 /**
  * antiJoin produces `[K, [V_left, null]]`. Only `V_left` is meaningful; the
- * right side never appears in the output.
+ * right side never appears in the output. The planner never attaches
+ * compares directly to the antijoin — they're baked into the right-side
+ * KvToKv flow before the antijoin — so this projection is unconditional.
  */
 function makeAntijoinOutFn(
   flow: TransformationFlow,
   _ok: number,
   _ov: number,
-): (joined: [string, [string, null]]) => { key: string; value: string } {
+): (joined: [string, [string, null]]) => { key: string; value: string } | null {
   if (flow.kind !== 'JnToKV') {
     throw new Error(`makeAntijoinOutFn: expected JnToKV, got ${flow.kind}`)
   }
   if (flow.compares.length > 0) {
-    throw new Error('makeAntijoinOutFn: compare filters not yet implemented')
+    throw new Error('makeAntijoinOutFn: unexpected compares attached to antijoin')
   }
   const keyProj = flow.key.map((a) => {
     if (a.kind !== 'Jn') throw new Error('makeAntijoinOutFn key: expected Jn')

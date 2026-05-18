@@ -47,6 +47,37 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.19.19)
 
+  packages/executing:
+    dependencies:
+      '@electric-sql/d2ts':
+        specifier: ^0.1.8
+        version: 0.1.8
+      '@flow-ts/catalog':
+        specifier: workspace:*
+        version: link:../catalog
+      '@flow-ts/parsing':
+        specifier: workspace:*
+        version: link:../parsing
+      '@flow-ts/planning':
+        specifier: workspace:*
+        version: link:../planning
+      '@flow-ts/reading':
+        specifier: workspace:*
+        version: link:../reading
+      '@flow-ts/strata':
+        specifier: workspace:*
+        version: link:../strata
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.19.19
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.19.19)
+
   packages/optimizing:
     dependencies:
       '@flow-ts/catalog':

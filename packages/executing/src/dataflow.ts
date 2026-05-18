@@ -190,6 +190,12 @@ function buildNonRecursiveStratum(
  * for every IDB head it produces — the union of all rules' last outputs,
  * deduped (or aggregated). Subsequent strata can then reference the head
  * as a base atom.
+ *
+ * A predicate may appear as a head in multiple non-recursive strata when
+ * Kosaraju puts its rules in independent SCCs (e.g. Doop's `SubtypeOf` —
+ * leaf-projection rules sit in one stratum, IDB-join rules in another).
+ * When that happens we union the new stratum's outputs with whatever is
+ * already in `rowMap[head]` so downstream consumers see all contributions.
  */
 function registerHeads(
   groupPlan: GroupStrataQueryPlan,
@@ -197,8 +203,7 @@ function registerHeads(
   aggCatalog: ReadonlyMap<string, AggregationHeadIDB>,
 ): void {
   for (const [headName, lasts] of groupPlan.lastSignaturesMap) {
-    if (maps.rowMap.has(headName)) continue // already registered (recursive case)
-    let unioned: IStreamBuilder<EncodedRow> | null = null
+    let unioned: IStreamBuilder<EncodedRow> | null = maps.rowMap.get(headName) ?? null
     for (const last of lasts) {
       const s = maps.rowMap.get(last)
       if (!s) continue

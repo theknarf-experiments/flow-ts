@@ -15,10 +15,12 @@
 // **Status**: handles single- and multi-IDB strata with the common
 // transformation kinds (RowTo*/KvTo*/Jn*/Nj*/Cartesian), constraint
 // filtering, fused compare filtering, prior-stratum intermediates in
-// any form, and head arithmetic via the planner's HeadArith post-map.
-// Aggregation is still TODO. Recursions whose dataflow cycle passes
-// through 3+ mutually-dependent IDBs hit a d2ts FeedbackOperator
-// frontier-convergence limitation (cspa/cvc5/galen/z3 examples).
+// any form, head arithmetic via the planner's HeadArith post-map, and
+// non-recursive aggregation (Min/Max/Sum/Count, grouped by all-but-last
+// columns). Recursive aggregation reuses the same reducer per iteration;
+// only Min is guaranteed to converge monotonically. Recursions whose
+// dataflow cycle passes through 3+ mutually-dependent IDBs hit a d2ts
+// FeedbackOperator frontier-convergence limitation (cspa/cvc5/galen/z3).
 
 import {
   D2,
@@ -33,9 +35,13 @@ import {
   innerJoin,
   map,
   output,
+  reduce,
 } from '@electric-sql/d2ts'
 import { iterateMulti } from './iterate-multi.js'
-import { aggregationCatalogFromProgram } from '@flow-ts/catalog'
+import {
+  type AggregationHeadIDB,
+  aggregationCatalogFromProgram,
+} from '@flow-ts/catalog'
 import { parseProgram } from '@flow-ts/parsing'
 import {
   type BinaryTransformation,
@@ -78,8 +84,7 @@ export function executeProgram(args: Args, sink: IdbSink): void {
   const program = parseProgram(source, { grammarSource: args.program })
   const strata = Strata.fromParser(program)
   const plan = ProgramQueryPlanCls.fromStrata(strata, args.noSharing, args.optLevel)
-  // Aggregation hook-up is TODO; we look the catalog up but don't use it yet.
-  void aggregationCatalogFromProgram(program)
+  const aggCatalog = aggregationCatalogFromProgram(program)
 
   const graph = new D2({ initialFrontier: 0 })
 
@@ -96,7 +101,14 @@ export function executeProgram(args: Args, sink: IdbSink): void {
     maps.rowMap.set(edb.name, input)
   }
 
-  buildProgramDataflow(graph, plan, maps, sink, new Set(program.idbs.map((d) => d.name)))
+  buildProgramDataflow(
+    graph,
+    plan,
+    maps,
+    sink,
+    new Set(program.idbs.map((d) => d.name)),
+    aggCatalog,
+  )
 
   graph.finalize()
 
@@ -118,12 +130,13 @@ function buildProgramDataflow(
   maps: DataflowMaps,
   sink: IdbSink,
   idbSet: ReadonlySet<string>,
+  aggCatalog: ReadonlyMap<string, AggregationHeadIDB>,
 ): void {
   for (const groupPlan of plan.programPlan) {
     if (groupPlan.isRecursive) {
-      buildRecursiveStratum(graph, groupPlan, maps)
+      buildRecursiveStratum(graph, groupPlan, maps, aggCatalog)
     } else {
-      buildNonRecursiveStratum(groupPlan, maps)
+      buildNonRecursiveStratum(groupPlan, maps, aggCatalog)
     }
   }
   // Sink each IDB head's final stream after all strata are processed. This
@@ -146,19 +159,25 @@ function buildProgramDataflow(
 function buildNonRecursiveStratum(
   groupPlan: GroupStrataQueryPlan,
   maps: DataflowMaps,
+  aggCatalog: ReadonlyMap<string, AggregationHeadIDB>,
 ): void {
   for (const t of groupPlan.strataPlanFlat()) {
     applyTransformation(t, maps)
   }
-  registerHeads(groupPlan, maps)
+  registerHeads(groupPlan, maps, aggCatalog)
 }
 
 /**
  * After a stratum's transformations are wired, populate `maps.rowMap[head]`
  * for every IDB head it produces — the union of all rules' last outputs,
- * deduped. Subsequent strata can then reference the head as a base atom.
+ * deduped (or aggregated). Subsequent strata can then reference the head
+ * as a base atom.
  */
-function registerHeads(groupPlan: GroupStrataQueryPlan, maps: DataflowMaps): void {
+function registerHeads(
+  groupPlan: GroupStrataQueryPlan,
+  maps: DataflowMaps,
+  aggCatalog: ReadonlyMap<string, AggregationHeadIDB>,
+): void {
   for (const [headName, lasts] of groupPlan.lastSignaturesMap) {
     if (maps.rowMap.has(headName)) continue // already registered (recursive case)
     let unioned: IStreamBuilder<EncodedRow> | null = null
@@ -167,9 +186,12 @@ function registerHeads(groupPlan: GroupStrataQueryPlan, maps: DataflowMaps): voi
       if (!s) continue
       unioned = unioned === null ? s : unioned.pipe(concat(s))
     }
-    if (unioned !== null) {
-      maps.rowMap.set(headName, dedupeEncodedRows(unioned))
-    }
+    if (unioned === null) continue
+    const aggHead = aggCatalog.get(headName)
+    maps.rowMap.set(
+      headName,
+      aggHead ? applyAggregation(unioned, aggHead) : dedupeEncodedRows(unioned),
+    )
   }
 }
 
@@ -201,6 +223,7 @@ function buildRecursiveStratum(
   graph: D2,
   groupPlan: GroupStrataQueryPlan,
   maps: DataflowMaps,
+  aggCatalog: ReadonlyMap<string, AggregationHeadIDB>,
 ): void {
   const heads = [...groupPlan.headSignaturesSet()]
   if (heads.length === 0) return
@@ -285,8 +308,12 @@ function buildRecursiveStratum(
         unioned = unioned === null ? priorEntered : unioned.pipe(concat(priorEntered))
       }
       const headVar = variables[headName]! as IStreamBuilder<EncodedRow>
-      out[headName] =
-        unioned === null ? headVar.pipe(filter(() => false)) : dedupeEncodedRows(unioned)
+      if (unioned === null) {
+        out[headName] = headVar.pipe(filter(() => false))
+        continue
+      }
+      const aggHead = aggCatalog.get(headName)
+      out[headName] = aggHead ? applyAggregation(unioned, aggHead) : dedupeEncodedRows(unioned)
     }
     return out
   })
@@ -295,6 +322,73 @@ function buildRecursiveStratum(
     const finalHead = results[headName]
     if (finalHead) maps.rowMap.set(headName, finalHead as IStreamBuilder<EncodedRow>)
   }
+}
+
+/**
+ * Group an encoded-row stream by all-but-last columns and apply the head's
+ * aggregation operator to the last column. Output rows are the group key
+ * followed by the aggregated scalar — the analog of Rust's
+ * `aggregation_reduce_logic` + `aggregation_merge_kv`.
+ *
+ * Only the all-positive numeric path is wired up: Min/Max/Sum/Count over
+ * a single bigint column. Compatible with the planner's `HeadArith`
+ * post-map (which copies the aggregation's first var into the last slot).
+ */
+function applyAggregation(
+  stream: IStreamBuilder<EncodedRow>,
+  aggHead: AggregationHeadIDB,
+): IStreamBuilder<EncodedRow> {
+  const operator = aggHead.aggregationArgument.operator
+  // arity = group-cols + 1 (the agg-value). isGroupBy = arity > 1.
+  // Re-key to [encoded_group_key, encoded_agg_value] for d2ts `reduce`.
+  const keyed = stream.pipe(
+    map((encoded): EncodedKv => {
+      const row = decodeRow(encoded)
+      const k = row.slice(0, row.length - 1)
+      const v = row.slice(row.length - 1)
+      return [encodeRow(k), encodeRow(v)]
+    }),
+  )
+  return keyed
+    .pipe(
+      reduce((vals: [string, number][]): [string, number][] => {
+        // Multiply each value by its multiplicity for Sum/Count semantics.
+        // Min/Max ignore multiplicity (idempotent over a set).
+        let acc: bigint | null = null
+        let count = 0n
+        for (const [encV, mult] of vals) {
+          if (mult <= 0) continue
+          const v = decodeRow(encV)[0]!
+          for (let i = 0; i < mult; i++) {
+            switch (operator) {
+              case 'Min':
+                acc = acc === null || v < acc ? v : acc
+                break
+              case 'Max':
+                acc = acc === null || v > acc ? v : acc
+                break
+              case 'Sum':
+                acc = (acc ?? 0n) + v
+                break
+              case 'Count':
+                count += 1n
+                break
+            }
+          }
+        }
+        const result: bigint =
+          operator === 'Count' ? count : acc !== null ? acc : 0n
+        if (operator !== 'Count' && acc === null) return []
+        return [[encodeRow([result]), 1]]
+      }),
+    )
+    .pipe(
+      map(([encK, encV]) => {
+        const k = decodeRow(encK)
+        const v = decodeRow(encV)
+        return encodeRow([...k, ...v])
+      }),
+    )
 }
 
 /** Dedupe an encoded-row stream (matches reading's dedupeRowStream). */

@@ -21,6 +21,7 @@ const ArgsSchema = z.object({
   noSharing: z.boolean().default(false),
   workers: z.coerce.number().int().positive().default(1),
   optLevel: z.coerce.number().int().min(0).max(3).nullable().default(null),
+  stream: z.boolean().default(false),
 })
 
 export type ArgsInit = z.input<typeof ArgsSchema>
@@ -34,6 +35,7 @@ export class Args {
   readonly noSharing!: boolean
   readonly workers!: number
   readonly optLevel!: number | null
+  readonly stream!: boolean
 
   constructor(init: ArgsInit) {
     Object.assign(this, ArgsSchema.parse(init))
@@ -72,6 +74,11 @@ export function buildCommand(): Command {
         'optimization level: 0=as-is, 1=sip, 2=planning, 3=sip + planning',
       ).choices(['0', '1', '2', '3']),
     )
+    .option(
+      '--stream',
+      'after loading initial EDB facts, read incremental updates from stdin (see README)',
+      false,
+    )
 }
 
 /** Parse argv (excluding node + script name) into validated `Args`. The
@@ -94,5 +101,6 @@ export function parseArgs(argv: readonly string[]): Args {
     noSharing: opts.sharing === false,
     workers: opts.workers,
     optLevel: opts.O ?? null,
+    stream: opts.stream,
   })
 }

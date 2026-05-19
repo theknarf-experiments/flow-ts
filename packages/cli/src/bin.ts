@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // Binary entrypoint for `flow-ts`. Parses argv via commander (so `--help`
 // and validation errors land on stderr the way users expect), then hands
-// off the validated `Args` to `runCli`.
+// off the validated `Args` to `runCli` (batch) or `runStreamCli` (with
+// --stream).
 
 import { Args, buildCommand } from './args.js'
-import { runCli } from './main.js'
+import { runCli, runStreamCli, readStdinLines } from './main.js'
 
 const cmd = buildCommand()
 cmd.parse(process.argv)
@@ -19,8 +20,13 @@ try {
     noSharing: opts.sharing === false,
     workers: opts.workers,
     optLevel: opts.O ?? null,
+    stream: opts.stream,
   })
-  runCli(args)
+  if (args.stream) {
+    await runStreamCli(args, readStdinLines())
+  } else {
+    runCli(args)
+  }
 } catch (err) {
   console.error((err as Error).message)
   process.exit(1)

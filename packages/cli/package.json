@@ -25,9 +25,12 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@flow-ts/catalog": "workspace:*",
     "@flow-ts/executing": "workspace:*",
     "@flow-ts/parsing": "workspace:*",
+    "@flow-ts/planning": "workspace:*",
     "@flow-ts/reading": "workspace:*",
+    "@flow-ts/strata": "workspace:*",
     "commander": "^14.0.3",
     "zod": "^4.4.3"
   },

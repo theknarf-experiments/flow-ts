@@ -100,6 +100,42 @@ $ printf -- "\n+ Arc 3,4\n\n- Arc 2,3\n\n" | flow-ts -p reach.dl -f . --stream
 -1	Reach	4
 ```
 
+### Inspect
+
+`flow-ts inspect <program.dl>` dumps the parsed program, the stratification, and the execution plan without running anything. Useful when a rule isn't behaving the way you expect — you can see which stratum it ended up in, what's marked recursive, and how the planner broke it into transformations.
+
+```bash
+$ flow-ts inspect reach.dl
+Program: reach.dl
+========
+
+EDBs (2):
+  Source(id: number) [Source.csv]
+  Arc(x: number, y: number) [Arc.csv]
+
+IDBs (1):
+  Reach(id: number)
+
+Rules (2):
+  [0] Reach(y) :- Source(y).
+  [1] Reach(y) :- Reach(x), Arc(x, y).
+
+Strata
+======
+
+#0 non-recursive [1 rule]
+  Reach(y) :- Source(y).
+
+#1 recursive [1 rule]
+  Reach(y) :- Reach(x), Arc(x, y).
+
+Plan
+====
+...
+```
+
+Add `--json` for machine-readable output, or `-O 1` / `--no-sharing` to inspect a plan under different planner knobs.
+
 ## Library usage
 
 The executor is published-shaped (not on npm yet) as `@flow-ts/executing`. Two entry points:

@@ -53,14 +53,15 @@ export class Args {
   }
 }
 
-/** Build the commander command. Exported so the bin entrypoint can wire
- *  it directly (for `--help` etc.) without going through `parseArgs`. */
-export function buildCommand(): Command {
-  return new Command()
-    .name('flow-ts')
-    .description('A Datalog engine on top of incremental dataflow')
-    .requiredOption('-p, --program <path>', 'path of the Datalog program')
-    .requiredOption('-f, --facts <dir>', 'directory containing EDB fact files')
+/** Attach the batch / stream-mode options to a Command. `program` and
+ *  `facts` are intentionally NOT marked `requiredOption()` — commander
+ *  enforces those across subcommands too, which breaks `flow-ts inspect`.
+ *  Zod's schema parse below catches missing values and produces a
+ *  descriptive error. */
+export function attachBatchOptions(cmd: Command): Command {
+  return cmd
+    .option('-p, --program <path>', 'path of the Datalog program')
+    .option('-f, --facts <dir>', 'directory containing EDB fact files')
     .option('-c, --csvs <dir>', 'directory to write IDB CSV outputs into')
     .option('-d, --delimiter <char>', 'field delimiter for fact files', ',')
     .option('--fat-mode', 'enable fat-row mode for arities > 8', false)
@@ -81,6 +82,31 @@ export function buildCommand(): Command {
     )
 }
 
+/** Translate commander's option object into a validated `Args` instance. */
+export function argsFromOpts(opts: Record<string, unknown>): Args {
+  return new Args({
+    program: opts.program as string,
+    facts: opts.facts as string,
+    csvs: (opts.csvs as string | undefined) ?? null,
+    delimiter: opts.delimiter as string,
+    fatMode: opts.fatMode as boolean,
+    // `--no-sharing` toggles `opts.sharing` to false (default true).
+    noSharing: opts.sharing === false,
+    workers: opts.workers as number,
+    optLevel: (opts.O as number | undefined) ?? null,
+    stream: opts.stream as boolean,
+  })
+}
+
+/** Build the top-level commander program with the batch options
+ *  attached at the root. Used by tests and by the binary's batch path. */
+export function buildCommand(): Command {
+  const cmd = new Command()
+    .name('flow-ts')
+    .description('A Datalog engine on top of incremental dataflow')
+  return attachBatchOptions(cmd)
+}
+
 /** Parse argv (excluding node + script name) into validated `Args`. The
  *  binary entrypoint should call `buildCommand()` directly so commander
  *  can print errors / help to stderr. This helper is for tests and other
@@ -90,17 +116,5 @@ export function parseArgs(argv: readonly string[]): Args {
   cmd.exitOverride()
   cmd.configureOutput({ writeOut: () => {}, writeErr: () => {} })
   cmd.parse(argv as string[], { from: 'user' })
-  const opts = cmd.opts()
-  return new Args({
-    program: opts.program,
-    facts: opts.facts,
-    csvs: opts.csvs ?? null,
-    delimiter: opts.delimiter,
-    fatMode: opts.fatMode,
-    // `--no-sharing` toggles `opts.sharing` to false (default true).
-    noSharing: opts.sharing === false,
-    workers: opts.workers,
-    optLevel: opts.O ?? null,
-    stream: opts.stream,
-  })
+  return argsFromOpts(cmd.opts())
 }

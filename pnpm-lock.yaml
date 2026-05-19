@@ -69,6 +69,25 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.19.19)
 
+  packages/db-ivm:
+    dependencies:
+      fractional-indexing:
+        specifier: ^3.2.0
+        version: 3.2.0
+      sorted-btree:
+        specifier: ^1.8.1
+        version: 1.8.1
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.19.19
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.19.19)
+
   packages/executing:
     dependencies:
       '@electric-sql/d2ts':
@@ -89,6 +108,9 @@ importers:
       '@flow-ts/strata':
         specifier: workspace:*
         version: link:../strata
+      '@tanstack/db-ivm':
+        specifier: ^0.1.18
+        version: 0.1.18(typescript@5.9.3)
     devDependencies:
       '@types/node':
         specifier: ^22.10.0
@@ -495,6 +517,11 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@tanstack/db-ivm@0.1.18':
+    resolution: {integrity: sha512-+pZJiRKdoKRM5Epq9T7otD9ZJl82pRFauo7LKuJGrarjVKQ7r+QQlPe3kGdN9LEKSnuNGIWjX9OOY4M8kH4eLw==}
+    peerDependencies:
+      typescript: '>=4.7'
+
   '@turbo/darwin-64@2.9.14':
     resolution: {integrity: sha512-t7QiPflaEyBE4oayeZtSmu4mEfjgIrcNlNNl1z1dmIVPqEdtA7+CfTf8d7KXsOGPh6aNgWjKxyvQg9uGfDQF+A==}
     cpu: [x64]
@@ -678,6 +705,9 @@ packages:
 
   siginfo@2.0.0:
     resolution: {integrity: sha512-ybx0WO1/8bSBLEWXZvEd7gMW3Sn3JFlW3TvX1nREbDLRNQNaeNN8WK0meBwPdAaOI7TtRRRJn/Es1zhrrCHu7g==}
+
+  sorted-btree@1.8.1:
+    resolution: {integrity: sha512-395+XIP+wqNn3USkFSrNz7G3Ss/MXlZEqesxvzCRFwL14h6e8LukDHdLBePn5pwbm5OQ9vGu8mDyz2lLDIqamQ==}
 
   source-map-generator@0.8.0:
     resolution: {integrity: sha512-psgxdGMwl5MZM9S3FWee4EgsEaIjahYV5AzGnwUvPhWeITz/j6rKpysQHlQ4USdxvINlb8lKfWGIXwfkrgtqkA==}
@@ -947,6 +977,12 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.60.4':
     optional: true
 
+  '@tanstack/db-ivm@0.1.18(typescript@5.9.3)':
+    dependencies:
+      fractional-indexing: 3.2.0
+      sorted-btree: 1.8.1
+      typescript: 5.9.3
+
   '@turbo/darwin-64@2.9.14':
     optional: true
 
@@ -1146,6 +1182,8 @@ snapshots:
   semver@7.6.3: {}
 
   siginfo@2.0.0: {}
+
+  sorted-btree@1.8.1: {}
 
   source-map-generator@0.8.0: {}
 

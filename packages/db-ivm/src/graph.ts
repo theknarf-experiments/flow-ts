@@ -70,7 +70,14 @@ export abstract class Operator<T> implements IOperator<T> {
   abstract run(): void
 
   hasPendingWork(): boolean {
-    return this.inputs.some((input) => !input.isEmpty())
+    // Hot path: the scheduler calls this on every operator before every
+    // step. Most operators have one or two inputs, so a manual loop
+    // beats `.some(arrow)` by a wide margin in V8.
+    const inputs = this.inputs
+    for (let i = 0; i < inputs.length; i++) {
+      if (!inputs[i]!.isEmpty()) return true
+    }
+    return false
   }
 }
 
@@ -124,6 +131,9 @@ export abstract class LinearUnaryOperator<T, U> extends UnaryOperator<T | U> {
   abstract inner(collection: MultiSet<T | U>): MultiSet<U>
 
   run(): void {
+    // Skip the drain() allocation when there's nothing to do — `step()`
+    // sweeps every operator each tick, so the no-input case is hot.
+    if (this.inputs[0]!.isEmpty()) return
     for (const message of this.inputMessages()) {
       this.output.sendData(this.inner(message))
     }

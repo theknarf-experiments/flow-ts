@@ -47,19 +47,20 @@ export class D2 implements ID2 {
     if (!this.#finalized) {
       throw new Error(`Graph not finalized`)
     }
-    for (const op of this.#operators) {
-      op.run()
-    }
+    const ops = this.#operators
+    for (let i = 0; i < ops.length; i++) ops[i]!.run()
   }
 
   pendingWork(): boolean {
-    return this.#operators.some((op) => op.hasPendingWork())
+    const ops = this.#operators
+    for (let i = 0; i < ops.length; i++) {
+      if (ops[i]!.hasPendingWork()) return true
+    }
+    return false
   }
 
   run(): void {
-    while (this.pendingWork()) {
-      this.step()
-    }
+    while (this.pendingWork()) this.step()
   }
 }
 

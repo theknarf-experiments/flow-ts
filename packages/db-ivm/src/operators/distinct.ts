@@ -35,25 +35,30 @@ export class DistinctOperator<
 
     // Compute the new multiplicity for each value
     for (const message of this.inputMessages()) {
-      for (const [value, diff] of message.getInner()) {
+      const inner = message.getInner()
+      for (let i = 0; i < inner.length; i++) {
+        const pair = inner[i]!
+        const value = pair[0]
+        const diff = pair[1]
         const hashedValue = hash(this.#by(value))
 
+        const existing = updatedValues.get(hashedValue)
         const oldMultiplicity =
-          updatedValues.get(hashedValue)?.[0] ??
-          this.#values.get(hashedValue) ??
-          0
-        const newMultiplicity = oldMultiplicity + diff
-        updatedValues.set(hashedValue, [newMultiplicity, value])
+          existing !== undefined
+            ? existing[0]
+            : (this.#values.get(hashedValue) ?? 0)
+        updatedValues.set(hashedValue, [oldMultiplicity + diff, value])
       }
     }
 
     const result: Array<[KeyValue<number, GetValue<T>>, number]> = []
 
-    // Check which values became visible or disappeared
-    for (const [
-      hashedValue,
-      [newMultiplicity, value],
-    ] of updatedValues.entries()) {
+    // Check which values became visible or disappeared. `hashedValue` is
+    // by construction `hash(this.#by(value))`, so reuse it for the emitted
+    // record's key rather than re-hashing on every diff we surface.
+    for (const [hashedValue, pair] of updatedValues) {
+      const newMultiplicity = pair[0]
+      const value = pair[1]
       const oldMultiplicity = this.#values.get(hashedValue) ?? 0
 
       if (newMultiplicity === 0) {
@@ -63,13 +68,9 @@ export class DistinctOperator<
       }
 
       if (oldMultiplicity <= 0 && newMultiplicity > 0) {
-        // The value wasn't present in the stream
-        // but with this change it is now present in the stream
-        result.push([[hash(this.#by(value)), value[1]], 1])
+        result.push([[hashedValue, value[1]], 1])
       } else if (oldMultiplicity > 0 && newMultiplicity <= 0) {
-        // The value was present in the stream
-        // but with this change it is no longer present in the stream
-        result.push([[hash(this.#by(value)), value[1]], -1])
+        result.push([[hashedValue, value[1]], -1])
       }
     }
 

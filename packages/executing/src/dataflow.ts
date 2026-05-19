@@ -879,6 +879,7 @@ function pickEncodedRow(
   return s
 }
 
+
 /**
  * For Kv → Kv / Kv → K transformations the input is a `[K_in, V_in]` pair.
  * Each `TransformationArgument.kind = 'KV'` carries `isValue` (which input
@@ -973,18 +974,19 @@ function makeJoinOutFn(
   })
   const compares = flow.compares
 
-  // No-compare fast path: project columns as STRING substrings; never
-  // round-trip through Number. The vast majority of joins follow this
-  // path (only joins whose compares span both sides need numbers).
+  // No-compare fast path. We codegen a specialised string-projection
+  // closure per join so the per-row inner loop has no destructuring or
+  // branches — V8 inlines and JITs the hot path tightly. The vast
+  // majority of joins follow this branch (only joins whose compares
+  // span both sides need numbers).
   if (compares.length === 0) {
+    const keyFn = compileJnPick(keyProj)
+    const valFn = compileJnPick(valProj)
     return ([encK, [encVL, encVR]]) => {
       const k = splitEncoded(encK)
       const vL = splitEncoded(encVL)
       const vR = splitEncoded(encVR)
-      return {
-        key: pickEncoded(keyProj, k, vL, vR),
-        value: pickEncoded(valProj, k, vL, vR),
-      }
+      return { key: keyFn(k, vL, vR), value: valFn(k, vL, vR) }
     }
   }
 
@@ -1031,6 +1033,29 @@ function pickEncoded(
     s += ','
   }
   return s
+}
+
+/** Compile a `pickEncoded` specialisation. The projection indices are
+ *  baked into the function body so the hot per-row code has no loop,
+ *  no destructuring and no `proj[i]` lookup — just direct array reads
+ *  and string concatenation. */
+type JnPickFn = (
+  k: readonly string[],
+  vL: readonly string[],
+  vR: readonly string[],
+) => string
+function compileJnPick(
+  proj: ReadonlyArray<readonly [boolean, boolean, number]>,
+): JnPickFn {
+  if (proj.length === 0) return () => ''
+  const parts: string[] = []
+  for (let i = 0; i < proj.length; i++) {
+    const [isRight, isValue, id] = proj[i]!
+    const src = !isValue ? 'k' : isRight ? 'vR' : 'vL'
+    parts.push(`${src}[${id}]+','`)
+  }
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  return new Function('k', 'vL', 'vR', `return ${parts.join('+')}`) as JnPickFn
 }
 
 /**

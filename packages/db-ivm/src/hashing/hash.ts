@@ -48,7 +48,54 @@ const UINT8ARRAY_CONTENT_HASH_THRESHOLD = 128
 
 const hashCache = new WeakMap<object, number>()
 
+// Fast hashing fast-paths. Equivalence with murmur isn't required: every
+// call to hash() is consumed locally, so as long as same-content inputs
+// yield the same number these are usable as Map bucket keys.
+//
+// FNV-1a 32-bit for strings; folds character codes one at a time with no
+// allocations. ~10× faster than instantiating a MurmurHashStream and
+// running it byte-by-byte for ASCII strings of typical row-encoding length.
+function hashStringFnv1a(s: string): number {
+  let h = 2166136261 >>> 0
+  for (let i = 0; i < s.length; i++) {
+    h = Math.imul(h ^ s.charCodeAt(i), 16777619)
+  }
+  return h >>> 0
+}
+
+// Combine N already-numeric per-element hashes into one 32-bit value via
+// the same FNV-1a mixer. Used by the array fast-path.
+function combineHashStep(h: number, x: number): number {
+  return Math.imul(h ^ (x >>> 0), 16777619) >>> 0
+}
+
+// Per-element fast-path. Falls back to the structural hash for objects.
+function hashElem(v: unknown): number {
+  switch (typeof v) {
+    case 'string':
+      return hashStringFnv1a(v)
+    case 'number':
+      return v | 0
+    case 'boolean':
+      return v ? 1 : 0
+    default:
+      return hash(v)
+  }
+}
+
 export function hash(input: any): number {
+  if (typeof input === 'string') return hashStringFnv1a(input)
+  if (typeof input === 'number') return input | 0
+  // Tight array fast-path. The most common shape we hash is
+  // `[encodedKey, encodedValue]` from a join's value side — two strings.
+  // Skipping `MurmurHashStream` here is the single biggest win.
+  if (Array.isArray(input)) {
+    let h = 2166136261 >>> 0
+    for (let i = 0; i < input.length; i++) {
+      h = combineHashStep(h, hashElem(input[i]))
+    }
+    return h >>> 0
+  }
   const hasher = new MurmurHashStream()
   updateHasher(hasher, input)
   return hasher.digest()

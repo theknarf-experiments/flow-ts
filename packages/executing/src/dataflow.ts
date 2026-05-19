@@ -737,6 +737,10 @@ function makeRowToRowFn(flow: TransformationFlow): (encoded: string) => string |
   const proj = projectionIds(kv.key.length === 0 ? kv.value : kv.key, 'makeRowToRowFn')
   const constraints = kv.constraints
   const compares = kv.compares
+  const unfiltered = constraints.isEmpty() && compares.length === 0
+  if (unfiltered) {
+    return (encoded) => pickEncodedRow(proj, splitEncoded(encoded))
+  }
   return (encoded) => {
     const row = decodeRow(encoded)
     if (!passesFilters(constraints, compares, kvReader(EMPTY_KEY, row))) return null
@@ -752,6 +756,13 @@ function makeRowToKvFn(
   const valProj = projectionIds(kv.value, 'makeRowToKvFn value')
   const constraints = kv.constraints
   const compares = kv.compares
+  const unfiltered = constraints.isEmpty() && compares.length === 0
+  if (unfiltered) {
+    return (encoded) => {
+      const cols = splitEncoded(encoded)
+      return [pickEncodedRow(keyProj, cols), pickEncodedRow(valProj, cols)]
+    }
+  }
   return (encoded) => {
     const row = decodeRow(encoded)
     if (!passesFilters(constraints, compares, kvReader(EMPTY_KEY, row))) return null
@@ -760,6 +771,20 @@ function makeRowToKvFn(
       encodeRow(valProj.map(([_, id]) => row[id]!)),
     ]
   }
+}
+
+/** Project from a single split-row, ignoring the `isValue` flag (row-form
+ *  inputs only have one column array; the key half is always empty). */
+function pickEncodedRow(
+  proj: ReadonlyArray<[boolean, number]>,
+  cols: readonly string[],
+): string {
+  let s = ''
+  for (let i = 0; i < proj.length; i++) {
+    s += cols[proj[i]![1]]!
+    s += ','
+  }
+  return s
 }
 
 /**
@@ -775,6 +800,14 @@ function makeKvToKvFn(
   const valProj = projectionIds(kv.value, 'makeKvToKvFn value')
   const constraints = kv.constraints
   const compares = kv.compares
+  const unfiltered = constraints.isEmpty() && compares.length === 0
+  if (unfiltered) {
+    return ([encK, encV]) => {
+      const k = splitEncoded(encK)
+      const v = splitEncoded(encV)
+      return [pickEncodedKv(keyProj, k, v), pickEncodedKv(valProj, k, v)]
+    }
+  }
   return ([encK, encV]) => {
     const k = decodeRow(encK)
     const v = decodeRow(encV)
@@ -792,12 +825,36 @@ function makeKvToKFn(
   const proj = projectionIds(kv.key.length > 0 ? kv.key : kv.value, 'makeKvToKFn')
   const constraints = kv.constraints
   const compares = kv.compares
+  const unfiltered = constraints.isEmpty() && compares.length === 0
+  if (unfiltered) {
+    return ([encK, encV]) => {
+      const k = splitEncoded(encK)
+      const v = splitEncoded(encV)
+      return pickEncodedKv(proj, k, v)
+    }
+  }
   return ([encK, encV]) => {
     const k = decodeRow(encK)
     const v = decodeRow(encV)
     if (!passesFilters(constraints, compares, kvReader(k, v))) return null
     return encodeRow(proj.map(([isValue, id]) => (isValue ? v[id]! : k[id]!)))
   }
+}
+
+/** KV-flavoured pick: `[isValue, id]` selects between the k and v column
+ *  arrays. Concats encoded columns directly without parsing numbers. */
+function pickEncodedKv(
+  proj: ReadonlyArray<[boolean, number]>,
+  k: readonly string[],
+  v: readonly string[],
+): string {
+  let s = ''
+  for (let i = 0; i < proj.length; i++) {
+    const [isValue, id] = proj[i]!
+    s += isValue ? v[id]! : k[id]!
+    s += ','
+  }
+  return s
 }
 
 /**
@@ -824,6 +881,21 @@ function makeJoinOutFn(
   })
   const compares = flow.compares
 
+  // No-compare fast path: project columns as STRING substrings; never
+  // round-trip through Number. The vast majority of joins follow this
+  // path (only joins whose compares span both sides need numbers).
+  if (compares.length === 0) {
+    return ([encK, [encVL, encVR]]) => {
+      const k = splitEncoded(encK)
+      const vL = splitEncoded(encVL)
+      const vR = splitEncoded(encVR)
+      return {
+        key: pickEncoded(keyProj, k, vL, vR),
+        value: pickEncoded(valProj, k, vL, vR),
+      }
+    }
+  }
+
   return ([encK, [encVL, encVR]]) => {
     const k = decodeRow(encK)
     const vL = decodeRow(encVL)
@@ -832,21 +904,41 @@ function makeJoinOutFn(
     // projecting. The planner only attaches a compare here when its vars
     // span both sides — purely-left compares went into the left's KvToKv
     // flow, purely-right ditto.
-    if (compares.length > 0) {
-      const read = jnReader(k, vL, vR)
-      for (const cmp of compares) {
-        if (!evalCompare(cmp, read)) return null
-      }
+    const read = jnReader(k, vL, vR)
+    for (const cmp of compares) {
+      if (!evalCompare(cmp, read)) return null
     }
     const pick = (proj: [boolean, boolean, number][]) =>
       proj.map(([isRight, isValue, id]) => {
-        // Both sides of an inner join share the same K, so `isRight` doesn't
-        // affect key lookups — the shared K is on both sides.
         if (!isValue) return k[id]!
         return isRight ? vR[id]! : vL[id]!
       })
     return { key: encodeRow(pick(keyProj)), value: encodeRow(pick(valProj)) }
   }
+}
+
+/** Split an encoded row into its column-string parts without parsing
+ *  numbers. Inverse of `encodeRow`. */
+function splitEncoded(encoded: string): string[] {
+  if (encoded === '') return []
+  return encoded.slice(0, -1).split(',')
+}
+
+/** Project Jn-flavoured `[isRight, isValue, id]` slots into a comma-
+ *  terminated encoded row, reusing the input string columns directly. */
+function pickEncoded(
+  proj: ReadonlyArray<[boolean, boolean, number]>,
+  k: readonly string[],
+  vL: readonly string[],
+  vR: readonly string[],
+): string {
+  let s = ''
+  for (let i = 0; i < proj.length; i++) {
+    const [isRight, isValue, id] = proj[i]!
+    s += isValue ? (isRight ? vR[id]! : vL[id]!) : k[id]!
+    s += ','
+  }
+  return s
 }
 
 /**

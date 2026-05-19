@@ -177,7 +177,7 @@ function buildNonRecursiveStratum(
   aggCatalog: ReadonlyMap<string, AggregationHeadIDB>,
 ): void {
   for (const t of groupPlan.strataPlanFlat()) {
-    applyTransformation(t, maps)
+    applyTransformation(t, maps, groupPlan)
   }
   registerHeads(groupPlan, maps, aggCatalog)
 }
@@ -262,7 +262,7 @@ function buildRecursiveStratum(
       }
 
       for (const t of groupPlan.strataPlanFlat()) {
-        applyTransformation(t, nestMaps)
+        applyTransformation(t, nestMaps, groupPlan)
       }
 
       const out: Record<string, IStreamBuilder<EncodedRow>> = {}
@@ -380,13 +380,38 @@ function dedupeEncodedRows(
 // Per-transformation translation
 // -----------------------------------------------------------------------
 
-function applyTransformation(t: Transformation, maps: DataflowMaps): void {
+function applyTransformation(
+  t: Transformation,
+  maps: DataflowMaps,
+  groupPlan?: GroupStrataQueryPlan,
+): void {
   const outName = transformationOutput(t).signature.name
   if (isUnary(t)) {
     applyUnary(t, maps, outName)
-    return
+  } else {
+    applyBinary(t, maps, outName)
   }
-  applyBinary(t, maps, outName)
+  // Inside a recursive stratum, SIP rules generate `_sip` heads that later
+  // rules in the SAME iteration reference by short name. `registerHeads`
+  // only runs at stratum boundaries, so we alias the short name to the
+  // last-transformation stream right here. Non-recursive strata don't
+  // need this — the collector at the end (`registerHeads`) handles all
+  // head registration in one pass, and aliasing here would double-count
+  // when sharing dedupes the transformation across mini-strata.
+  if (groupPlan?.isRecursive) {
+    const heads = groupPlan.reverseLastSignaturesMap.get(outName)
+    if (heads) {
+      for (const head of heads) {
+        if (!head.includes('_sip')) continue
+        const s = maps.rowMap.get(outName)
+        if (s) maps.rowMap.set(head, s)
+        const k = maps.kMap.get(outName)
+        if (k) maps.kMap.set(head, k)
+        const kv = maps.kvMap.get(outName)
+        if (kv) maps.kvMap.set(head, kv)
+      }
+    }
+  }
 }
 
 function applyUnary(

@@ -4,8 +4,8 @@ import fc from 'fast-check'
 import { describe, it } from 'vitest'
 import { decodeRow, encodeRow, type Row } from '../src/index.js'
 
-const bigintField = fc.bigInt({ min: -(1n << 60n), max: 1n << 60n })
-const row = fc.array(bigintField, { minLength: 0, maxLength: 8 })
+const numField = fc.integer({ min: -(2 ** 30), max: 2 ** 30 })
+const row = fc.array(numField, { minLength: 0, maxLength: 8 })
 
 describe('encodeRow / decodeRow', () => {
   it('round-trip: decodeRow(encodeRow(r)) === r', () => {

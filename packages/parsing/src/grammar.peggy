@@ -177,7 +177,7 @@ Constant
   / s:String  { return options.b.constText(s); }
 
 Integer
-  = $(("+" / "-")? [0-9]+) { return BigInt(text()); }
+  = $(("+" / "-")? [0-9]+) { return Number(text()); }
 
 String
   = "\"" chars:$([^"]*) "\"" { return chars; }

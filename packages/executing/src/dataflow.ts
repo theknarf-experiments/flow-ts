@@ -328,8 +328,8 @@ function applyAggregation(
       reduce((vals: [string, number][]): [string, number][] => {
         // Multiply each value by its multiplicity for Sum/Count semantics.
         // Min/Max ignore multiplicity (idempotent over a set).
-        let acc: bigint | null = null
-        let count = 0n
+        let acc: number | null = null
+        let count = 0
         for (const [encV, mult] of vals) {
           if (mult <= 0) continue
           const v = decodeRow(encV)[0]!
@@ -342,16 +342,16 @@ function applyAggregation(
                 acc = acc === null || v > acc ? v : acc
                 break
               case 'Sum':
-                acc = (acc ?? 0n) + v
+                acc = (acc ?? 0) + v
                 break
               case 'Count':
-                count += 1n
+                count += 1
                 break
             }
           }
         }
-        const result: bigint =
-          operator === 'Count' ? count : acc !== null ? acc : 0n
+        const result: number =
+          operator === 'Count' ? count : acc !== null ? acc : 0
         if (operator !== 'Count' && acc === null) return []
         return [[encodeRow([result]), 1]]
       }),
@@ -598,11 +598,11 @@ type ArithArg = import('@flow-ts/planning').ArithmeticArgument
 type CompareArg = import('@flow-ts/planning').ComparisonExprArgument
 type BaseConstraintsT = import('@flow-ts/planning').BaseConstraints
 
-/** Resolves a TransformationArgument to its concrete bigint value. */
-type ArgReader = (arg: TArg) => bigint
+/** Resolves a TransformationArgument to its concrete numeric value. */
+type ArgReader = (arg: TArg) => number
 
 /** Reader for KV-form inputs (one keyed pair). */
-function kvReader(key: readonly bigint[], value: readonly bigint[]): ArgReader {
+function kvReader(key: readonly number[], value: readonly number[]): ArgReader {
   return (arg) => {
     if (arg.kind !== 'KV') throw new Error(`kvReader: expected KV arg, got ${arg.kind}`)
     const arr = arg.isValue ? value : key
@@ -614,9 +614,9 @@ function kvReader(key: readonly bigint[], value: readonly bigint[]): ArgReader {
 
 /** Reader for join-output inputs: shared key, left value, right value. */
 function jnReader(
-  key: readonly bigint[],
-  leftValue: readonly bigint[],
-  rightValue: readonly bigint[],
+  key: readonly number[],
+  leftValue: readonly number[],
+  rightValue: readonly number[],
 ): ArgReader {
   return (arg) => {
     if (arg.kind !== 'Jn') throw new Error(`jnReader: expected Jn arg, got ${arg.kind}`)
@@ -632,17 +632,21 @@ function jnReader(
   }
 }
 
-function constToBigint(c: import('@flow-ts/parsing').Const): bigint {
+function constToNumber(c: import('@flow-ts/parsing').Const): number {
   if (c.kind === 'Integer') return c.value
-  if (c.kind === 'Float') return c.bits
-  throw new Error(`constToBigint: ${c.kind} constants not yet supported`)
+  if (c.kind === 'Float') {
+    const buf = new ArrayBuffer(8)
+    new BigInt64Array(buf)[0] = c.bits
+    return new Float64Array(buf)[0]!
+  }
+  throw new Error(`constToNumber: ${c.kind} constants not yet supported`)
 }
 
-function evalFactor(f: FactorArg, read: ArgReader): bigint {
-  return f.kind === 'Const' ? constToBigint(f.value) : read(f.argument)
+function evalFactor(f: FactorArg, read: ArgReader): number {
+  return f.kind === 'Const' ? constToNumber(f.value) : read(f.argument)
 }
 
-function evalArith(arith: ArithArg, read: ArgReader): bigint {
+function evalArith(arith: ArithArg, read: ArgReader): number {
   let acc = evalFactor(arith.init, read)
   for (const [op, factor] of arith.rest) {
     const x = evalFactor(factor, read)
@@ -650,7 +654,7 @@ function evalArith(arith: ArithArg, read: ArgReader): bigint {
       case 'Plus':    acc = acc + x; break
       case 'Minus':   acc = acc - x; break
       case 'Multiply':acc = acc * x; break
-      case 'Divide':  acc = acc / x; break
+      case 'Divide':  acc = Math.trunc(acc / x); break
       case 'Modulo':  acc = acc % x; break
     }
   }
@@ -676,7 +680,7 @@ function passesFilters(
   read: ArgReader,
 ): boolean {
   for (const [arg, c] of constraints.constantEqConstraints) {
-    if (read(arg) !== constToBigint(c)) return false
+    if (read(arg) !== constToNumber(c)) return false
   }
   for (const [a, b] of constraints.variableEqConstraints) {
     if (read(a) !== read(b)) return false
@@ -691,7 +695,7 @@ function passesFilters(
 // Flow → projection-function builders
 // -----------------------------------------------------------------------
 
-const EMPTY_KEY: readonly bigint[] = []
+const EMPTY_KEY: readonly number[] = []
 
 function requireKvFlow(
   flow: TransformationFlow,
@@ -721,7 +725,7 @@ function makeRowToRowFn(flow: TransformationFlow): (encoded: string) => string |
     return (encoded) => {
       const row = decodeRow(encoded)
       const read = kvReader(EMPTY_KEY, row)
-      const out: bigint[] = projections.map((p) =>
+      const out: number[] = projections.map((p) =>
         p.kind === 'Copy' ? row[p.index]! : evalArith(p.arithmetic, read),
       )
       return encodeRow(out)

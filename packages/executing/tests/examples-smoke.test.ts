@@ -30,9 +30,9 @@ function generateFacts(program: ReturnType<typeof parseProgram>): Map<string, Ro
     const arity = edb.arity()
     const rows: Row[] = []
     for (let i = 0; i < N; i++) {
-      const row: bigint[] = []
+      const row: number[] = []
       for (let c = 0; c < arity; c++) {
-        row.push(BigInt((i + c) % MOD))
+        row.push(Number((i + c) % MOD))
       }
       rows.push(row)
     }

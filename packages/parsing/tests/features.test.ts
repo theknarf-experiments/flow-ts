@@ -113,7 +113,7 @@ describe('constants', () => {
     const arg = (r.rhs[0]! as { kind: 'Atom'; atom: { args: unknown[] } }).atom.args[1]
     expect(arg).toMatchObject({
       kind: 'Const',
-      value: { kind: 'Integer', value: 42n },
+      value: { kind: 'Integer', value: 42 },
     })
   })
 
@@ -122,7 +122,7 @@ describe('constants', () => {
     const arg = (r.rhs[0]! as { kind: 'Atom'; atom: { args: unknown[] } }).atom.args[1]
     expect(arg).toMatchObject({
       kind: 'Const',
-      value: { kind: 'Integer', value: -7n },
+      value: { kind: 'Integer', value: -7 },
     })
   })
 

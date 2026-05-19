@@ -43,7 +43,7 @@ type Builders = {
   ) => Arithmetic
   factorVar: (name: string) => Factor
   factorConst: (value: Const) => Factor
-  constInteger: (value: bigint) => Const
+  constInteger: (value: number) => Const
   constText: (value: string) => Const
 }
 
@@ -56,7 +56,7 @@ const builders: Builders = {
   predNegated: (atom) => ({ kind: 'NegatedAtom', atom }),
   predCompare: (expr) => ({ kind: 'Compare', expr }),
   predBoolean: (value) => {
-    const zero = new Arithmetic({ kind: 'Const', value: { kind: 'Integer', value: 0n } }, [])
+    const zero = new Arithmetic({ kind: 'Const', value: { kind: 'Integer', value: 0 } }, [])
     const op: ComparisonOperator = value ? 'Equals' : 'NotEquals'
     return { kind: 'Compare', expr: new ComparisonExpr(zero, op, zero) }
   },

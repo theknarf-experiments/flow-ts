@@ -39,7 +39,7 @@ describe('BaseFilters via Catalog.fromStrata', () => {
       kind: 'Atom',
       atom: new Atom('arc', [
         { kind: 'Var', name: 'x' },
-        { kind: 'Const', value: { kind: 'Integer', value: 5n } },
+        { kind: 'Const', value: { kind: 'Integer', value: 5 } },
       ]),
     }
     const rule = buildRule(new Head('r', xHead), [arcX5])

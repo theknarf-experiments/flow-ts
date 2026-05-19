@@ -15,15 +15,15 @@ describe('Semiring', () => {
 
 describe('Min', () => {
   it('plusEquals takes the minimum (example: 5 ⊕ 3 == 3)', () => {
-    const a = Min.new(5n)
-    a.plusEquals(Min.new(3n))
-    expect(a.value).toBe(3n)
+    const a = Min.new(5)
+    a.plusEquals(Min.new(3))
+    expect(a.value).toBe(3)
   })
 
   it('infinity is the additive identity', () => {
     const inf = Min.infinity()
-    inf.plusEquals(Min.new(42n))
-    expect(inf.value).toBe(42n)
+    inf.plusEquals(Min.new(42))
+    expect(inf.value).toBe(42)
   })
 
   it('zero === infinity', () => {
@@ -33,7 +33,7 @@ describe('Min', () => {
   })
 
   describe('properties', () => {
-    const u64 = fc.bigInt({ min: 0n, max: (1n << 64n) - 1n })
+    const u64 = fc.integer({ min: 0, max: 2 ** 30 })
 
     it('associativity: (a ⊕ b) ⊕ c == a ⊕ (b ⊕ c)', () => {
       fc.assert(
@@ -85,7 +85,7 @@ describe('Min', () => {
     })
 
     it('infinity absorbs (returns the finite value)', () => {
-      const finite = fc.bigInt({ min: 0n, max: (1n << 64n) - 2n })
+      const finite = fc.integer({ min: 0, max: 2 ** 30 })
       fc.assert(
         fc.property(finite, (a) => {
           const r = Min.new(a)

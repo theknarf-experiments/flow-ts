@@ -32,7 +32,7 @@ export function runCli(args: Args): Map<string, number> {
   // Accumulate per-row multiplicities. db-ivm emits intermediate diffs
   // during fixpoint iteration — same row can be +1 / -1 across ticks —
   // so we collapse to the final set after `executeProgram` returns.
-  const rowMultiplicities = new Map<string, Map<string, [bigint[], number]>>()
+  const rowMultiplicities = new Map<string, Map<string, [number[], number]>>()
   const sink: IdbSink = (rel, row, diff) => {
     let rels = rowMultiplicities.get(rel)
     if (!rels) {

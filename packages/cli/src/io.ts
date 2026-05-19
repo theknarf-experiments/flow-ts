@@ -17,11 +17,12 @@ export function readerLines(filePath: string): string[] {
 }
 
 /**
- * Read a CSV/facts file into rows. Each value is parsed as a bigint integer.
+ * Read a CSV/facts file into rows. Each value is parsed as a JS number (safe
+ * integer range — Datalog IDs and counts fit comfortably).
  *
  * `id` / `peers` implement the FlowLog worker-sharding rule: the first column
  * mod `peers` selects which worker owns the row. With `peers = 1`, every row
- * is accepted (single-worker mode, which is the d2ts default).
+ * is accepted (single-worker mode, which is the db-ivm default).
  */
 export function readRows(
   relPath: string,
@@ -35,14 +36,14 @@ export function readRows(
     const fields = line.split(delimiter)
     if (fields.length === 0) continue
     const firstRaw = fields[0]!.trim()
-    const first = BigInt(firstRaw)
-    if (Number(first) % peers !== id) continue
+    const first = Number(firstRaw)
+    if (first % peers !== id) continue
 
-    const row: bigint[] = [first]
+    const row: number[] = [first]
     for (let i = 1; i < fields.length; i++) {
       const raw = fields[i]!.trim()
       if (raw.length === 0) continue
-      row.push(BigInt(raw))
+      row.push(Number(raw))
     }
     if (row.length !== expectedArity) {
       throw new Error(
@@ -95,7 +96,7 @@ function fdFor(filePath: string): number {
 }
 
 /** Append one CSV row to `filePath`, reusing a cached file descriptor. */
-export function appendCsvRow(filePath: string, row: readonly bigint[]): void {
+export function appendCsvRow(filePath: string, row: readonly number[]): void {
   fs.writeSync(fdFor(filePath), `${row.map((v) => v.toString()).join(',')}\n`)
 }
 

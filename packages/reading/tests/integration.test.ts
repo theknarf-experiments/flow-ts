@@ -12,7 +12,7 @@ describe('Rel + InputSession (integration)', () => {
     const session = new InputSessionGeneric<Row>(2, input)
 
     // Build a tiny pipeline: just project to the second column.
-    const seen: bigint[] = []
+    const seen: number[] = []
     arc.stream.pipe(
       map((row) => row[1]!),
       output((data) => {
@@ -24,13 +24,13 @@ describe('Rel + InputSession (integration)', () => {
 
     graph.finalize()
 
-    for (const row of [[1n, 2n], [3n, 4n], [5n, 6n]] as Row[]) {
+    for (const row of [[1, 2], [3, 4], [5, 6]] as Row[]) {
       session.update(row, 1)
     }
     session.flush()
     graph.run()
 
-    expect(seen.sort()).toEqual([2n, 4n, 6n])
+    expect(seen.sort()).toEqual([2, 4, 6])
   })
 
   it('Rel.threshold dedupes rows of equal content', () => {
@@ -38,7 +38,7 @@ describe('Rel + InputSession (integration)', () => {
     const input = graph.newInput<Row>()
     const rel = new Rel(input, 1)
 
-    const seen: bigint[] = []
+    const seen: number[] = []
     rel
       .threshold()
       .stream.pipe(
@@ -54,13 +54,13 @@ describe('Rel + InputSession (integration)', () => {
     // Push (1) twice and (2) once — distinct should report each row once.
     input.sendData(
       new MultiSet<Row>([
-        [[1n], 1],
-        [[1n], 1],
-        [[2n], 1],
+        [[1], 1],
+        [[1], 1],
+        [[2], 1],
       ]),
     )
     graph.run()
 
-    expect(seen.sort()).toEqual([1n, 2n])
+    expect(seen.sort()).toEqual([1, 2])
   })
 })

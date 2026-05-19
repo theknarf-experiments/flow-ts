@@ -13,7 +13,7 @@ function run(source: string, edbs: Record<string, Row[]>, sink: IdbSink): void {
 
 describe('executeProgram — reach.dl end-to-end (recursive)', () => {
   it('Reach is the transitive closure of Source under Arc', () => {
-    const reach = new Set<bigint>()
+    const reach = new Set<number>()
     run(
       `\
 .in
@@ -31,8 +31,8 @@ Reach(y) :- Source(y).
 Reach(y) :- Reach(x), Arc(x, y).
 `,
       {
-        Source: [[1n]],
-        Arc: [[1n, 2n], [2n, 3n], [3n, 4n]],
+        Source: [[1]],
+        Arc: [[1, 2], [2, 3], [3, 4]],
       },
       (rel, row, diff) => {
         if (rel !== 'Reach') return
@@ -40,13 +40,13 @@ Reach(y) :- Reach(x), Arc(x, y).
         else reach.delete(row[0]!)
       },
     )
-    expect([...reach].sort()).toEqual([1n, 2n, 3n, 4n])
+    expect([...reach].sort()).toEqual([1, 2, 3, 4])
   })
 })
 
 describe('executeProgram — non-recursive join', () => {
   it('Reach(z) :- Source(x), Arc(x, z) joins Source with Arc', () => {
-    const seen: bigint[] = []
+    const seen: number[] = []
     run(
       `\
 .in
@@ -63,20 +63,20 @@ describe('executeProgram — non-recursive join', () => {
 Reach(y) :- Source(x), Arc(x, y).
 `,
       {
-        Source: [[1n], [2n]],
-        Arc: [[1n, 10n], [2n, 20n], [3n, 30n]],
+        Source: [[1], [2]],
+        Arc: [[1, 10], [2, 20], [3, 30]],
       },
       (rel, row) => {
         if (rel === 'Reach') seen.push(row[0]!)
       },
     )
-    expect(seen.sort()).toEqual([10n, 20n])
+    expect(seen.sort()).toEqual([10, 20])
   })
 })
 
 describe('executeProgram — head arithmetic', () => {
   it('post-projects a head expression `x + 1`', () => {
-    const seen: bigint[] = []
+    const seen: number[] = []
     run(
       `\
 .in
@@ -89,18 +89,18 @@ describe('executeProgram — head arithmetic', () => {
 .rule
 Plus1(x + 1) :- Source(x).
 `,
-      { Source: [[1n], [2n], [3n]] },
+      { Source: [[1], [2], [3]] },
       (rel, row) => {
         if (rel === 'Plus1') seen.push(row[0]!)
       },
     )
-    expect(seen.sort()).toEqual([2n, 3n, 4n])
+    expect(seen.sort()).toEqual([2, 3, 4])
   })
 })
 
 describe('executeProgram — aggregation', () => {
   it('count() per group counts EDB rows', () => {
-    const seen = new Map<bigint, bigint>()
+    const seen = new Map<number, number>()
     run(
       `\
 .in
@@ -115,22 +115,22 @@ OutDeg(x, count(y)) :- Arc(x, y).
 `,
       {
         Arc: [
-          [1n, 10n], [1n, 11n], [1n, 12n],
-          [2n, 20n],
-          [3n, 30n], [3n, 31n],
+          [1, 10], [1, 11], [1, 12],
+          [2, 20],
+          [3, 30], [3, 31],
         ],
       },
       (rel, row) => {
         if (rel === 'OutDeg') seen.set(row[0]!, row[1]!)
       },
     )
-    expect(seen.get(1n)).toBe(3n)
-    expect(seen.get(2n)).toBe(1n)
-    expect(seen.get(3n)).toBe(2n)
+    expect(seen.get(1)).toBe(3)
+    expect(seen.get(2)).toBe(1)
+    expect(seen.get(3)).toBe(2)
   })
 
   it('sum() per group sums EDB rows', () => {
-    const seen = new Map<bigint, bigint>()
+    const seen = new Map<number, number>()
     run(
       `\
 .in
@@ -144,19 +144,19 @@ OutDeg(x, count(y)) :- Arc(x, y).
 Total(x, sum(w)) :- W(x, w).
 `,
       {
-        W: [[1n, 5n], [1n, 10n], [2n, 7n], [2n, 3n], [2n, 1n]],
+        W: [[1, 5], [1, 10], [2, 7], [2, 3], [2, 1]],
       },
       (rel, row) => {
         if (rel === 'Total') seen.set(row[0]!, row[1]!)
       },
     )
-    expect(seen.get(1n)).toBe(15n)
-    expect(seen.get(2n)).toBe(11n)
+    expect(seen.get(1)).toBe(15)
+    expect(seen.get(2)).toBe(11)
   })
 
   it('min() and max() per group', () => {
-    const lo = new Map<bigint, bigint>()
-    const hi = new Map<bigint, bigint>()
+    const lo = new Map<number, number>()
+    const hi = new Map<number, number>()
     run(
       `\
 .in
@@ -172,23 +172,23 @@ Lo(x, min(w)) :- W(x, w).
 Hi(x, max(w)) :- W(x, w).
 `,
       {
-        W: [[1n, 5n], [1n, 10n], [1n, 1n], [2n, 7n], [2n, 3n]],
+        W: [[1, 5], [1, 10], [1, 1], [2, 7], [2, 3]],
       },
       (rel, row) => {
         if (rel === 'Lo') lo.set(row[0]!, row[1]!)
         if (rel === 'Hi') hi.set(row[0]!, row[1]!)
       },
     )
-    expect(lo.get(1n)).toBe(1n)
-    expect(lo.get(2n)).toBe(3n)
-    expect(hi.get(1n)).toBe(10n)
-    expect(hi.get(2n)).toBe(7n)
+    expect(lo.get(1)).toBe(1)
+    expect(lo.get(2)).toBe(3)
+    expect(hi.get(1)).toBe(10)
+    expect(hi.get(2)).toBe(7)
   })
 })
 
 describe('executeProgram — non-recursive single-rule projection', () => {
   it('Reach(y) :- Source(y). projects the EDB into the IDB', () => {
-    const seen: Array<{ rel: string; row: readonly bigint[]; diff: number }> = []
+    const seen: Array<{ rel: string; row: readonly number[]; diff: number }> = []
     const sink: IdbSink = (rel, row, diff) => seen.push({ rel, row, diff })
     run(
       `\
@@ -202,15 +202,15 @@ describe('executeProgram — non-recursive single-rule projection', () => {
 .rule
 Reach(y) :- Source(y).
 `,
-      { Source: [[1n], [2n], [3n]] },
+      { Source: [[1], [2], [3]] },
       sink,
     )
     const reachRows = seen.filter((s) => s.rel === 'Reach').map((s) => s.row[0]!)
-    expect(reachRows.sort()).toEqual([1n, 2n, 3n])
+    expect(reachRows.sort()).toEqual([1, 2, 3])
   })
 
   it('projects from a 2-column EDB to a 1-column IDB', () => {
-    const seen: bigint[] = []
+    const seen: number[] = []
     run(
       `\
 .in
@@ -223,11 +223,11 @@ Reach(y) :- Source(y).
 .rule
 OnlyX(x) :- Arc(x, y).
 `,
-      { Arc: [[1n, 10n], [2n, 20n], [3n, 30n]] },
+      { Arc: [[1, 10], [2, 20], [3, 30]] },
       (rel, row) => {
         if (rel === 'OnlyX') seen.push(row[0]!)
       },
     )
-    expect(seen.sort()).toEqual([1n, 2n, 3n])
+    expect(seen.sort()).toEqual([1, 2, 3])
   })
 })

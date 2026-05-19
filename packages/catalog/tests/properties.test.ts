@@ -32,7 +32,7 @@ const atomArgGen: fc.Arbitrary<AtomArg> = fc.oneof(
         (n) =>
           ({
             kind: 'Const',
-            value: { kind: 'Integer', value: BigInt(n) },
+            value: { kind: 'Integer', value: Number(n) },
           }) as AtomArg,
       ),
   },

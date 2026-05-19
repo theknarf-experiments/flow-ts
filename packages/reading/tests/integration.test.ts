@@ -1,12 +1,12 @@
-// Integration test wiring a d2ts graph with our Rel + InputSession.
+// Integration test wiring a db-ivm graph with our Rel + InputSession.
 
-import { D2, MessageType, MultiSet, map, output } from '@electric-sql/d2ts'
+import { D2, MultiSet, map, output } from '@flow-ts/db-ivm'
 import { describe, expect, it } from 'vitest'
 import { InputSessionGeneric, Rel, type Row } from '../src/index.js'
 
 describe('Rel + InputSession (integration)', () => {
-  it('feeds rows through a d2ts pipeline and surfaces them via output()', () => {
-    const graph = new D2({ initialFrontier: 0 })
+  it('feeds rows through a db-ivm pipeline and surfaces them via output()', () => {
+    const graph = new D2()
     const input = graph.newInput<Row>()
     const arc = new Rel(input, 2)
     const session = new InputSessionGeneric<Row>(2, input)
@@ -15,9 +15,8 @@ describe('Rel + InputSession (integration)', () => {
     const seen: bigint[] = []
     arc.stream.pipe(
       map((row) => row[1]!),
-      output((msg) => {
-        if (msg.type !== MessageType.DATA) return
-        for (const [v] of msg.data.collection.getInner()) {
+      output((data) => {
+        for (const [v] of data.getInner()) {
           seen.push(v)
         }
       }),
@@ -28,14 +27,14 @@ describe('Rel + InputSession (integration)', () => {
     for (const row of [[1n, 2n], [3n, 4n], [5n, 6n]] as Row[]) {
       session.update(row, 1)
     }
-    session.advanceTo(1)
+    session.flush()
     graph.run()
 
     expect(seen.sort()).toEqual([2n, 4n, 6n])
   })
 
   it('Rel.threshold dedupes rows of equal content', () => {
-    const graph = new D2({ initialFrontier: 0 })
+    const graph = new D2()
     const input = graph.newInput<Row>()
     const rel = new Rel(input, 1)
 
@@ -43,9 +42,8 @@ describe('Rel + InputSession (integration)', () => {
     rel
       .threshold()
       .stream.pipe(
-        output((msg) => {
-          if (msg.type !== MessageType.DATA) return
-          for (const [row, mult] of msg.data.collection.getInner()) {
+        output((data) => {
+          for (const [row, mult] of data.getInner()) {
             for (let i = 0; i < mult; i++) seen.push(row[0]!)
           }
         }),
@@ -55,14 +53,12 @@ describe('Rel + InputSession (integration)', () => {
 
     // Push (1) twice and (2) once — distinct should report each row once.
     input.sendData(
-      0,
       new MultiSet<Row>([
         [[1n], 1],
         [[1n], 1],
         [[2n], 1],
       ]),
     )
-    input.sendFrontier(1)
     graph.run()
 
     expect(seen.sort()).toEqual([1n, 2n])

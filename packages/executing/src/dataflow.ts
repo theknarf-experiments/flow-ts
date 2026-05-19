@@ -24,7 +24,6 @@
 
 import {
   D2,
-  MessageType,
   type IStreamBuilder,
   type KeyValue,
   type RootStreamBuilder,
@@ -33,10 +32,11 @@ import {
   distinct,
   filter,
   innerJoin,
+  iterate,
   map,
   output,
   reduce,
-} from '@electric-sql/d2ts'
+} from '@flow-ts/db-ivm'
 import { iterateMulti } from './iterate-multi.js'
 import {
   type AggregationHeadIDB,
@@ -105,7 +105,7 @@ export function executeProgram(
   )
   const aggCatalog = aggregationCatalogFromProgram(program)
 
-  const graph = new D2({ initialFrontier: 0 })
+  const graph = new D2()
 
   const maps: DataflowMaps = {
     rowMap: new Map(),
@@ -134,10 +134,8 @@ export function executeProgram(
   for (const edb of program.edbs) {
     const input = edbInputs.get(edb.name)!
     const rows = edbFacts.get(edb.name) ?? []
-    for (const row of rows) {
-      input.sendData(0, [[encodeRow(row), 1]])
-    }
-    input.sendFrontier(1)
+    if (rows.length === 0) continue
+    input.sendData(rows.map((row) => [encodeRow(row), 1] as [EncodedRow, number]))
   }
   graph.run()
 }
@@ -164,9 +162,8 @@ function buildProgramDataflow(
     const stream = maps.rowMap.get(idbName)
     if (!stream) continue
     stream.pipe(
-      output((msg) => {
-        if (msg.type !== MessageType.DATA) return
-        for (const [encoded, mult] of msg.data.collection.getInner()) {
+      output((data) => {
+        for (const [encoded, mult] of data.getInner()) {
           sink(idbName, decodeRow(encoded), mult)
         }
       }),
@@ -219,28 +216,16 @@ function registerHeads(
 }
 
 /**
- * Recursive stratum executor — mirrors Rust DD's `scope.iterative` pattern.
+ * Recursive stratum executor (db-ivm). One feedback variable per IDB
+ * head. db-ivm operators carry their own state across `run()` calls, so
+ * externals (EDBs / prior-stratum IDBs) don't need a scope wrapper —
+ * they're just read from `maps.*` inside the body's closure and the
+ * downstream join/distinct operators remember everything they've seen.
  *
- *   1. Externals (EDBs, prior-stratum non-head IDBs, and any prior data for
- *      the head itself) are persistently entered into the scope via
- *      `persistentIngress`. This is the analog of DD's `.enter(scope)`; it
- *      differs from d2ts's stock `iterate(f)` which negates the seed at
- *      inner step 1 (the canonical example doesn't notice because its body
- *      only references the iter variable).
- *
- *   2. One feedback variable per IDB head in the stratum. Currently we
- *      only support a single head; multi-head mutual recursion is the same
- *      pattern, just with N variables in the `variableNames` list.
- *
- *   3. Inside the body, `nestMaps.rowMap[headName]` resolves to the
- *      variable handle. Recursive references to the IDB pick it up; EDB
- *      lookups resolve to the persistently-entered streams.
- *
- *   4. The body concatenates per-rule outputs plus any prior-stratum seed
- *      for the head (the `recursive_collector` analog), dedupes, and
- *      returns. `iterateMulti` wires that as the variable's new value via
- *      a `FeedbackOperator`. After convergence the egressed result is
- *      registered back into `maps.rowMap`.
+ * Each iteration the body unions all per-rule contributions + any prior-
+ * stratum value for the head, then deduplicates (or aggregates) before
+ * handing the result to `iterateMulti`, which forwards it as the
+ * variable's next value and also surfaces it as the converged output.
  */
 function buildRecursiveStratum(
   graph: D2,
@@ -250,96 +235,62 @@ function buildRecursiveStratum(
 ): void {
   const heads = [...groupPlan.headSignaturesSet()]
   if (heads.length === 0) return
-  const headSet = new Set(heads)
 
-  // Externals = every enter-scope signature (base atoms + prior-stratum
-  // intermediates, in any form) that isn't one of the recursive heads. Tag
-  // by form so the body can route each entered stream back into the right
-  // nest map. Mirrors Rust dataflow.rs's row_map/kv_map/k_map switch.
-  const externals: Record<string, IStreamBuilder<unknown>> = {}
-  for (const sig of groupPlan.enterScope) {
-    if (headSet.has(sig)) continue
-    if (maps.rowMap.has(sig)) {
-      externals[`row:${sig}`] = maps.rowMap.get(sig) as IStreamBuilder<unknown>
-    } else if (maps.kvMap.has(sig)) {
-      externals[`kv:${sig}`] = maps.kvMap.get(sig) as IStreamBuilder<unknown>
-    } else if (maps.kMap.has(sig)) {
-      externals[`k:${sig}`] = maps.kMap.get(sig) as IStreamBuilder<unknown>
-    }
-  }
-  // Prior-stratum data per recursive head (e.g. reach.dl's group-0 IDB) —
-  // the analog of Rust's `recursive_collector` seeding with `init_rel`.
-  const priorKeys = new Map<string, string>()
+  // Snapshot the prior-stratum head streams BEFORE we install variable
+  // placeholders so the body can concat them with the per-rule outputs.
+  // (Mirrors Rust's `recursive_collector` seeding with `init_rel`.)
+  const priors = new Map<string, IStreamBuilder<EncodedRow>>()
   for (const headName of heads) {
     const prior = maps.rowMap.get(headName)
-    if (prior) {
-      const k = `__prior__${headName}`
-      priorKeys.set(headName, k)
-      externals[k] = prior as IStreamBuilder<unknown>
-    }
+    if (prior) priors.set(headName, prior)
   }
 
-  const results = iterateMulti<
-    string,
-    string,
-    Record<string, unknown>,
-    Record<string, EncodedRow>
-  >(graph, externals, heads, (entered, variables) => {
-    const nestMaps: DataflowMaps = {
-      rowMap: new Map(),
-      kvMap: new Map(),
-      kMap: new Map(),
-    }
-    for (const h of heads) {
-      nestMaps.rowMap.set(h, variables[h]! as IStreamBuilder<EncodedRow>)
-    }
+  const results = iterateMulti<string, Record<string, EncodedRow>>(
+    graph,
+    heads,
+    (variables) => {
+      // The body sees a nested view of `maps` where each recursive head
+      // is replaced by its variable handle. Externals (EDBs, prior-
+      // stratum non-head IDBs) keep pointing at the outer streams.
+      const nestMaps: DataflowMaps = {
+        rowMap: new Map(maps.rowMap),
+        kvMap: new Map(maps.kvMap),
+        kMap: new Map(maps.kMap),
+      }
+      for (const h of heads) {
+        nestMaps.rowMap.set(h, variables[h]! as IStreamBuilder<EncodedRow>)
+      }
 
-    for (const tagged of Object.keys(entered)) {
-      if (tagged.startsWith('__prior__')) continue
-      const colon = tagged.indexOf(':')
-      const form = tagged.slice(0, colon)
-      const sig = tagged.slice(colon + 1)
-      const stream = entered[tagged]
-      if (!stream) continue
-      if (form === 'row') {
-        nestMaps.rowMap.set(sig, stream as IStreamBuilder<EncodedRow>)
-      } else if (form === 'kv') {
-        nestMaps.kvMap.set(sig, stream as IStreamBuilder<EncodedKv>)
-      } else if (form === 'k') {
-        nestMaps.kMap.set(sig, stream as IStreamBuilder<EncodedRow>)
+      for (const t of groupPlan.strataPlanFlat()) {
+        applyTransformation(t, nestMaps)
       }
-    }
 
-    for (const t of groupPlan.strataPlanFlat()) {
-      applyTransformation(t, nestMaps)
-    }
-
-    const out: Record<string, IStreamBuilder<EncodedRow>> = {}
-    for (const headName of heads) {
-      const lasts = groupPlan.lastSignaturesMap.get(headName) ?? []
-      let unioned: IStreamBuilder<EncodedRow> | null = null
-      for (const last of lasts) {
-        const s = nestMaps.rowMap.get(last)
-        if (!s) continue
-        unioned = unioned === null ? s : unioned.pipe(concat(s))
+      const out: Record<string, IStreamBuilder<EncodedRow>> = {}
+      for (const headName of heads) {
+        const lasts = groupPlan.lastSignaturesMap.get(headName) ?? []
+        let unioned: IStreamBuilder<EncodedRow> | null = null
+        for (const last of lasts) {
+          const s = nestMaps.rowMap.get(last)
+          if (!s) continue
+          unioned = unioned === null ? s : unioned.pipe(concat(s))
+        }
+        const prior = priors.get(headName)
+        if (prior) {
+          unioned = unioned === null ? prior : unioned.pipe(concat(prior))
+        }
+        const headVar = variables[headName]! as IStreamBuilder<EncodedRow>
+        if (unioned === null) {
+          out[headName] = headVar.pipe(filter(() => false))
+          continue
+        }
+        const aggHead = aggCatalog.get(headName)
+        out[headName] = aggHead
+          ? applyAggregation(unioned, aggHead)
+          : dedupeEncodedRows(unioned)
       }
-      const priorK = priorKeys.get(headName)
-      const priorEntered = priorK
-        ? (entered[priorK] as IStreamBuilder<EncodedRow> | undefined)
-        : undefined
-      if (priorEntered) {
-        unioned = unioned === null ? priorEntered : unioned.pipe(concat(priorEntered))
-      }
-      const headVar = variables[headName]! as IStreamBuilder<EncodedRow>
-      if (unioned === null) {
-        out[headName] = headVar.pipe(filter(() => false))
-        continue
-      }
-      const aggHead = aggCatalog.get(headName)
-      out[headName] = aggHead ? applyAggregation(unioned, aggHead) : dedupeEncodedRows(unioned)
-    }
-    return out
-  })
+      return out
+    },
+  )
 
   for (const headName of heads) {
     const finalHead = results[headName]
@@ -420,8 +371,8 @@ function dedupeEncodedRows(
 ): IStreamBuilder<EncodedRow> {
   return stream.pipe(
     map((r) => [r, r] as [string, string]),
-    distinct<string, string, [string, string]>(),
-    map(([, v]) => v),
+    distinct(),
+    map(([, v]) => v as string),
   )
 }
 

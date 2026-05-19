@@ -22,8 +22,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@electric-sql/d2ts": "^0.1.8",
     "@flow-ts/catalog": "workspace:*",
+    "@flow-ts/db-ivm": "workspace:*",
     "@flow-ts/parsing": "workspace:*",
     "@flow-ts/planning": "workspace:*",
     "@flow-ts/reading": "workspace:*",

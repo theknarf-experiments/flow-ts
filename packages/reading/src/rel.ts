@@ -7,8 +7,8 @@
 // the TS port collapses both `Rel<G>` and `DoubleRel<G>` to single classes
 // carrying their arity at the value level.
 
-import type { IStreamBuilder } from '@electric-sql/d2ts'
-import { concat, distinct, map, negate } from '@electric-sql/d2ts'
+import type { IStreamBuilder } from '@flow-ts/db-ivm'
+import { concat, distinct, map, negate } from '@flow-ts/db-ivm'
 import { decodeRow, encodeRow } from './encoding.js'
 import { isFatArity } from './row.js'
 import type { Row } from './row.js'
@@ -78,8 +78,8 @@ function dedupeRowStream<T extends Row>(stream: IStreamBuilder<T>): IStreamBuild
       const k = encodeRow(row)
       return [k, k] as [string, string]
     }),
-    distinct<string, string, [string, string]>(),
-    map(([, v]) => decodeRow(v) as unknown as T),
+    distinct(),
+    map(([, v]) => decodeRow(v as string) as unknown as T),
   )
 }
 

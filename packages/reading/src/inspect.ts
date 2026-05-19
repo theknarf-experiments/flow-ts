@@ -3,11 +3,11 @@
 // File-output helpers (writeRel, writeRelSize, mergeRelationPartitions) live
 // in `@flow-ts/cli`'s `io.ts` so this module stays browser-compatible.
 
-import { MessageType, distinct, map, output } from '@electric-sql/d2ts'
+import { distinct, map, output } from '@flow-ts/db-ivm'
 import { type Rel, type DoubleRel } from './rel.js'
 import { type Row, rowToString } from './row.js'
 
-/** Attach a printer that reports the per-version cardinality of `rel`. */
+/** Attach a printer that reports the per-batch cardinality of `rel`. */
 export function inspectSize<T extends Row>(
   rel: Rel<T>,
   name: string,
@@ -18,10 +18,9 @@ export function inspectSize<T extends Row>(
     : `Size of (non-recursive) ${name}`
   rel.stream.pipe(
     distinct(),
-    output((msg) => {
-      if (msg.type !== MessageType.DATA) return
+    output((data) => {
       let total = 0
-      for (const [, multiplicity] of msg.data.collection.getInner()) {
+      for (const [, multiplicity] of data.getInner()) {
         total += multiplicity
       }
       console.log(`${prefix}: ${total}`)
@@ -33,10 +32,9 @@ export function inspectSize<T extends Row>(
 export function inspectContents<T extends Row>(rel: Rel<T>, name: string): void {
   rel.stream.pipe(
     distinct(),
-    output((msg) => {
-      if (msg.type !== MessageType.DATA) return
-      for (const [row, multiplicity] of msg.data.collection.getInner()) {
-        console.log(`${name}: (${rowToString(row)}, ${msg.data.version}, ${multiplicity})`)
+    output((data) => {
+      for (const [row, multiplicity] of data.getInner()) {
+        console.log(`${name}: (${rowToString(row)}, ${multiplicity})`)
       }
     }),
   )
@@ -49,10 +47,9 @@ export function inspectContentsKeyed<K extends Row, V extends Row>(
 ): void {
   rel.stream.pipe(
     map(([k, v]) => [rowToString(k), rowToString(v)] as [string, string]),
-    output((msg) => {
-      if (msg.type !== MessageType.DATA) return
-      for (const [[k, v], multiplicity] of msg.data.collection.getInner()) {
-        console.log(`${name}: ((${k}: ${v}), ${msg.data.version}, ${multiplicity})`)
+    output((data) => {
+      for (const [[k, v], multiplicity] of data.getInner()) {
+        console.log(`${name}: ((${k}: ${v}), ${multiplicity})`)
       }
     }),
   )
@@ -64,9 +61,8 @@ export function inspectStreamingGeneric<T extends Row>(
   callback: (rowValues: string[], diff: number) => void,
 ): void {
   rel.stream.pipe(
-    output((msg) => {
-      if (msg.type !== MessageType.DATA) return
-      for (const [row, multiplicity] of msg.data.collection.getInner()) {
+    output((data) => {
+      for (const [row, multiplicity] of data.getInner()) {
         callback(
           row.map((v) => v.toString()),
           multiplicity,

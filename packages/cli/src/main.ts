@@ -29,14 +29,22 @@ export function runCli(args: Args): Map<string, number> {
     edbFacts.set(edb.name, readRowsForRelDecl(edb, args.facts, args.delimiter))
   }
 
-  const counts = new Map<string, number>()
+  // Accumulate per-row multiplicities. db-ivm emits intermediate diffs
+  // during fixpoint iteration — same row can be +1 / -1 across ticks —
+  // so we collapse to the final set after `executeProgram` returns.
+  const rowMultiplicities = new Map<string, Map<string, [bigint[], number]>>()
   const sink: IdbSink = (rel, row, diff) => {
-    if (diff <= 0) return
-    counts.set(rel, (counts.get(rel) ?? 0) + diff)
-    if (args.csvs !== null) {
-      appendCsvRow(path.join(args.csvs, 'csvs', `${rel}.csv`), row)
+    let rels = rowMultiplicities.get(rel)
+    if (!rels) {
+      rels = new Map()
+      rowMultiplicities.set(rel, rels)
+    }
+    const key = row.map((v) => v.toString()).join(',')
+    const entry = rels.get(key)
+    if (entry) {
+      entry[1] += diff
     } else {
-      console.log(`${rel}: ${row.map((v) => v.toString()).join(',')}`)
+      rels.set(key, [[...row], diff])
     }
   }
 
@@ -48,14 +56,28 @@ export function runCli(args: Args): Map<string, number> {
       sink,
     )
 
+    const counts = new Map<string, number>()
+    for (const [rel, rels] of rowMultiplicities) {
+      for (const [, [row, net]] of rels) {
+        if (net <= 0) continue
+        counts.set(rel, (counts.get(rel) ?? 0) + 1)
+        const line = row.map((v) => v.toString()).join(',')
+        if (args.csvs !== null) {
+          appendCsvRow(path.join(args.csvs, 'csvs', `${rel}.csv`), row)
+        } else {
+          console.log(`${rel}: ${line}`)
+        }
+      }
+    }
+
     if (args.csvs !== null) {
       const sizePath = path.join(args.csvs, 'csvs', 'size.txt')
       for (const [rel, count] of counts) {
         appendSizeLine(sizePath, rel, count)
       }
     }
+    return counts
   } finally {
     closeAllFiles()
   }
-  return counts
 }

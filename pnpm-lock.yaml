@@ -90,12 +90,12 @@ importers:
 
   packages/executing:
     dependencies:
-      '@electric-sql/d2ts':
-        specifier: ^0.1.8
-        version: 0.1.8
       '@flow-ts/catalog':
         specifier: workspace:*
         version: link:../catalog
+      '@flow-ts/db-ivm':
+        specifier: workspace:*
+        version: link:../db-ivm
       '@flow-ts/parsing':
         specifier: workspace:*
         version: link:../parsing
@@ -108,9 +108,6 @@ importers:
       '@flow-ts/strata':
         specifier: workspace:*
         version: link:../strata
-      '@tanstack/db-ivm':
-        specifier: ^0.1.18
-        version: 0.1.18(typescript@5.9.3)
     devDependencies:
       '@types/node':
         specifier: ^22.10.0
@@ -192,9 +189,9 @@ importers:
 
   packages/reading:
     dependencies:
-      '@electric-sql/d2ts':
-        specifier: ^0.1.8
-        version: 0.1.8
+      '@flow-ts/db-ivm':
+        specifier: workspace:*
+        version: link:../db-ivm
       '@flow-ts/parsing':
         specifier: workspace:*
         version: link:../parsing
@@ -516,11 +513,6 @@ packages:
     resolution: {integrity: sha512-QVTUovf40zgTqlFVrKA1uXMVvU2QWEFWfAH8Wdc48IxLvrJMQVMBRjuQyUpzZCDkakImib9eVazbWlC6ksWtJw==}
     cpu: [x64]
     os: [win32]
-
-  '@tanstack/db-ivm@0.1.18':
-    resolution: {integrity: sha512-+pZJiRKdoKRM5Epq9T7otD9ZJl82pRFauo7LKuJGrarjVKQ7r+QQlPe3kGdN9LEKSnuNGIWjX9OOY4M8kH4eLw==}
-    peerDependencies:
-      typescript: '>=4.7'
 
   '@turbo/darwin-64@2.9.14':
     resolution: {integrity: sha512-t7QiPflaEyBE4oayeZtSmu4mEfjgIrcNlNNl1z1dmIVPqEdtA7+CfTf8d7KXsOGPh6aNgWjKxyvQg9uGfDQF+A==}
@@ -976,12 +968,6 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.60.4':
     optional: true
-
-  '@tanstack/db-ivm@0.1.18(typescript@5.9.3)':
-    dependencies:
-      fractional-indexing: 3.2.0
-      sorted-btree: 1.8.1
-      typescript: 5.9.3
 
   '@turbo/darwin-64@2.9.14':
     optional: true

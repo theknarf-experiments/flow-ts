@@ -1,4 +1,12 @@
 export * from './d2.js'
+export {
+  DifferenceStreamReader,
+  DifferenceStreamWriter,
+  Operator,
+  UnaryOperator,
+  BinaryOperator,
+  LinearUnaryOperator,
+} from './graph.js'
 export * from './multiset.js'
 export * from './operators/index.js'
 export * from './types.js'

@@ -24,17 +24,14 @@ const EXAMPLES_DIR = '/home/knarf/projects/dbflow/flowlog/examples'
 //   sssp   — needs the nemo_arithmetic branch
 const HARD_SKIP = new Set(['crdt.dl', 'crdt_slow.dl', 'sssp.dl'])
 
-// Known to fail in TS due to d2ts multi-variable feedback bug. Still
-// compared (the oracle records the mismatch) but not asserted on.
-const KNOWN_TS_FAILURES = new Set(['cspa.dl', 'cvc5.dl', 'galen.dl', 'z3.dl'])
+// Programs whose TS execution is allowed to crash without failing the test.
+// Empty by default — every other unexpected TS crash escalates.
+const KNOWN_TS_FAILURES = new Set<string>()
 
-// Programs whose TS run blows past a reasonable wall-clock budget at the
-// default fact size. d2ts schedules every operator on every step regardless
-// of pending work, so programs with many strata + many operators (borrow.dl
-// has 23 strata, 12 recursive) accrue per-step overhead that Rust DD's
-// timely scheduler avoids. We still want correctness confirmation, so the
-// oracle drops these programs to a smaller per-EDB fact count.
-const SHRINK_FACTS = new Map<string, number>([['borrow.dl', 2]])
+// Override per-EDB fact count for specific programs (e.g. to keep runtime
+// reasonable on combinatorially explosive ones). Default is 5 rows/EDB.
+// Currently empty — kept as a knob in case future programs need it.
+const SHRINK_FACTS = new Map<string, number>()
 const DEFAULT_FACT_COUNT = 5
 
 function findRustBinary(): string | null {

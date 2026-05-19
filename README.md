@@ -18,10 +18,19 @@ flow-ts is a port of the Rust [FlowLog](https://github.com/dbflow-project/flowlo
 
 ## Install
 
+The toolchain is pinned: Node via `mise.toml` (24.15.0 LTS), pnpm via
+corepack (`packageManager` field in `package.json`). With
+[mise](https://mise.jdx.dev) and corepack on your machine:
+
 ```bash
+mise install                # fetches Node 24.15.0 if missing
+corepack enable             # one-time, lets pnpm resolve from packageManager
 pnpm install
 pnpm -r run build
 ```
+
+If you already have Node ≥ 20 and pnpm 9 on your PATH, those steps reduce to
+just the last two.
 
 ## CLI usage
 

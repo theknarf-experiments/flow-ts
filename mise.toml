@@ -1,0 +1,6 @@
+# Tool versions for `mise install`. Pnpm is intentionally NOT pinned here
+# — corepack reads the `packageManager` field in `package.json` instead,
+# which keeps the pnpm version under one canonical source of truth.
+
+[tools]
+node = "24.15.0"

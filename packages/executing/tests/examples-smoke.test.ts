@@ -19,17 +19,20 @@ const SKIP = new Set(['crdt.dl', 'crdt_slow.dl', 'sssp.dl'])
 beforeEach(() => {})
 afterEach(() => {})
 
-/** Produce a small handful of synthetic rows for each EDB the program declares. */
+/** Produce a moderate-sized synthetic dataset (50 rows per EDB, values mod 16)
+ *  for each EDB the program declares. Matches the oracle's defaults. */
 function generateFacts(program: ReturnType<typeof parseProgram>): Map<string, Row[]> {
+  const N = 50
+  const MOD = 16
   const out = new Map<string, Row[]>()
   for (const edb of program.edbs) {
     if (!edb.path) continue
     const arity = edb.arity()
     const rows: Row[] = []
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < N; i++) {
       const row: bigint[] = []
       for (let c = 0; c < arity; c++) {
-        row.push(BigInt((i + c) % 4))
+        row.push(BigInt((i + c) % MOD))
       }
       rows.push(row)
     }

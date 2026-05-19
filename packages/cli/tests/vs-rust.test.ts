@@ -28,11 +28,16 @@ const HARD_SKIP = new Set(['crdt.dl', 'crdt_slow.dl', 'sssp.dl'])
 // Empty by default — every other unexpected TS crash escalates.
 const KNOWN_TS_FAILURES = new Set<string>()
 
-// Override per-EDB fact count for specific programs (e.g. to keep runtime
-// reasonable on combinatorially explosive ones). Default is 5 rows/EDB.
-// Currently empty — kept as a knob in case future programs need it.
-const SHRINK_FACTS = new Map<string, number>()
-const DEFAULT_FACT_COUNT = 5
+// Default synthetic dataset size, tuned so the whole oracle runs in under
+// ~10s but every program does enough work to exercise its joins and
+// recursion non-trivially. The MOD bound on column values controls how
+// many distinct values appear; higher MOD = sparser data = fewer joins
+// match = quicker convergence.
+const DEFAULT_FACT_COUNT = 50
+const DEFAULT_VALUE_MOD = 16
+// Per-program overrides — useful when a program scales combinatorially.
+// Empty by default; populate `[file, [count, mod]]` to shrink as needed.
+const SCALE_OVERRIDES = new Map<string, { count: number; mod: number }>()
 
 function findRustBinary(): string | null {
   const explicit = process.env.RUST_FLOWLOG
@@ -52,13 +57,15 @@ const rustBinary = findRustBinary()
 function writeFacts(file: string, programPath: string, tmpDir: string): void {
   const source = fs.readFileSync(programPath, 'utf8')
   const program = parseProgram(source, { grammarSource: programPath })
-  const factCount = SHRINK_FACTS.get(file) ?? DEFAULT_FACT_COUNT
+  const override = SCALE_OVERRIDES.get(file)
+  const factCount = override?.count ?? DEFAULT_FACT_COUNT
+  const mod = override?.mod ?? DEFAULT_VALUE_MOD
   for (const edb of program.edbs) {
     const arity = edb.arity()
     const rows: string[] = []
     for (let i = 0; i < factCount; i++) {
       const cols: string[] = []
-      for (let c = 0; c < arity; c++) cols.push(String((i + c) % 4))
+      for (let c = 0; c < arity; c++) cols.push(String((i + c) % mod))
       rows.push(cols.join(','))
     }
     fs.writeFileSync(path.join(tmpDir, relDeclInputPath(edb)), `${rows.join('\n')}\n`)

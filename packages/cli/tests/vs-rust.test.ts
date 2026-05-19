@@ -28,16 +28,21 @@ const HARD_SKIP = new Set(['crdt.dl', 'crdt_slow.dl', 'sssp.dl'])
 // Empty by default — every other unexpected TS crash escalates.
 const KNOWN_TS_FAILURES = new Set<string>()
 
-// Default synthetic dataset size, tuned so the whole oracle runs in under
-// ~10s but every program does enough work to exercise its joins and
-// recursion non-trivially. The MOD bound on column values controls how
-// many distinct values appear; higher MOD = sparser data = fewer joins
-// match = quicker convergence.
-const DEFAULT_FACT_COUNT = 50
-const DEFAULT_VALUE_MOD = 16
-// Per-program overrides — useful when a program scales combinatorially.
-// Empty by default; populate `[file, [count, mod]]` to shrink as needed.
-const SCALE_OVERRIDES = new Map<string, { count: number; mod: number }>()
+// Default synthetic dataset size. The MOD bound on column values controls
+// how many distinct values appear; higher MOD = sparser data = fewer joins
+// match = quicker convergence but more recursive iterations.
+const DEFAULT_FACT_COUNT = 100
+const DEFAULT_VALUE_MOD = 32
+// Per-program overrides for ones that scale combinatorially with N or MOD
+// (their recursive joins blow up faster than linear). The shrunk sizes are
+// still much bigger than the prior 5/4 baseline — we just keep the whole
+// oracle under ~30s total wall-clock.
+const SCALE_OVERRIDES = new Map<string, { count: number; mod: number }>([
+  ['andersen.dl', { count: 80, mod: 32 }],
+  ['borrow.dl', { count: 40, mod: 16 }],
+  ['cspa.dl', { count: 75, mod: 25 }],
+  ['galen.dl', { count: 50, mod: 16 }],
+])
 
 function findRustBinary(): string | null {
   const explicit = process.env.RUST_FLOWLOG

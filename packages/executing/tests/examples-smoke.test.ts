@@ -19,11 +19,21 @@ const SKIP = new Set(['crdt.dl', 'crdt_slow.dl', 'sssp.dl'])
 beforeEach(() => {})
 afterEach(() => {})
 
-/** Produce a moderate-sized synthetic dataset (50 rows per EDB, values mod 16)
- *  for each EDB the program declares. Matches the oracle's defaults. */
-function generateFacts(program: ReturnType<typeof parseProgram>): Map<string, Row[]> {
-  const N = 50
-  const MOD = 16
+// Default synthetic dataset; per-program overrides for combinatorial blow-up.
+const DEFAULT_N = 100
+const DEFAULT_MOD = 32
+const SCALE_OVERRIDES: Record<string, { N: number; MOD: number }> = {
+  'andersen.dl': { N: 80, MOD: 32 },
+  'borrow.dl': { N: 40, MOD: 16 },
+  'cspa.dl': { N: 75, MOD: 25 },
+  'galen.dl': { N: 50, MOD: 16 },
+}
+
+function generateFacts(
+  file: string,
+  program: ReturnType<typeof parseProgram>,
+): Map<string, Row[]> {
+  const { N, MOD } = SCALE_OVERRIDES[file] ?? { N: DEFAULT_N, MOD: DEFAULT_MOD }
   const out = new Map<string, Row[]>()
   for (const edb of program.edbs) {
     if (!edb.path) continue
@@ -32,7 +42,7 @@ function generateFacts(program: ReturnType<typeof parseProgram>): Map<string, Ro
     for (let i = 0; i < N; i++) {
       const row: number[] = []
       for (let c = 0; c < arity; c++) {
-        row.push(Number((i + c) % MOD))
+        row.push((i + c) % MOD)
       }
       rows.push(row)
     }
@@ -65,7 +75,7 @@ describe('executeProgram smoke coverage', () => {
       let facts: Map<string, Row[]>
       try {
         program = parseProgram(source, { grammarSource: programPath })
-        facts = generateFacts(program)
+        facts = generateFacts(file, program)
       } catch (e) {
         outcomes.push({ file, ok: false, error: `setup: ${(e as Error).message}` })
         return

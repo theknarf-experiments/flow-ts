@@ -34,8 +34,10 @@ import {
   innerJoin,
   iterate,
   map,
+  minByKey,
   output,
   reduce,
+  stringDistinct,
 } from '@flow-ts/db-ivm'
 import { iterateMulti } from './iterate-multi.js'
 import {
@@ -380,6 +382,11 @@ function applyAggregation(
   aggHead: AggregationHeadIDB,
 ): IStreamBuilder<EncodedRow> {
   const operator = aggHead.aggregationArgument.operator
+  // Min-semigroup fast path: O(#deltas-this-tick) per tick instead of
+  // the generic `reduce`'s O(#candidates-per-key) per tick. Matches
+  // Rust's `codegen_min_optimize!`. Implementable because the inputs to
+  // a Min under recursion are monotonic positive diffs.
+  if (operator === 'Min') return applyMinAggregation(stream)
   // arity = group-cols + 1 (the agg-value). isGroupBy = arity > 1.
   // Re-key to [encoded_group_key, encoded_agg_value] for d2ts `reduce`.
   const keyed = stream.pipe(
@@ -402,9 +409,6 @@ function applyAggregation(
           const v = decodeRow(encV)[0]!
           for (let i = 0; i < mult; i++) {
             switch (operator) {
-              case 'Min':
-                acc = acc === null || v < acc ? v : acc
-                break
               case 'Max':
                 acc = acc === null || v > acc ? v : acc
                 break
@@ -432,15 +436,48 @@ function applyAggregation(
     )
 }
 
-/** Dedupe an encoded-row stream (matches reading's dedupeRowStream). */
+/**
+ * Min-semigroup specialisation for the `applyAggregation` fast path.
+ * The generic `reduce` re-scans every candidate value for a key on
+ * each delta, which scales quadratically when iterations keep adding
+ * candidates (cc.dl shape). `minByKey` only emits when the running
+ * minimum actually decreases, so per-tick work is proportional to the
+ * deltas, not the accumulated history.
+ *
+ * Input row: `[group_col_0, group_col_1, ..., agg_value]` (last column
+ * is the value being minimised; everything before is the group key).
+ * Output row: same shape, with `agg_value` replaced by the running min.
+ */
+function applyMinAggregation(
+  stream: IStreamBuilder<EncodedRow>,
+): IStreamBuilder<EncodedRow> {
+  // Re-key to [encodedGroupKey, numericValue].
+  const keyed = stream.pipe(
+    map((encoded): KeyValue<string, number> => {
+      const cols = splitEncoded(encoded)
+      const last = cols.length - 1
+      // Group key = group columns rejoined; agg value = parsed last column.
+      let groupKey = ''
+      for (let i = 0; i < last; i++) {
+        groupKey += cols[i]!
+        groupKey += ','
+      }
+      return [groupKey, Number(cols[last]!)]
+    }),
+  )
+  return keyed.pipe(
+    minByKey<string>(),
+    map(([k, v]) => `${k}${v},`),
+  )
+}
+
+/** Dedupe an encoded-row stream. Encoded rows are already strings, so
+ *  the specialised `stringDistinct` is a perfect fit — saves the
+ *  map→distinct→map round-trip and the per-row murmur hash. */
 function dedupeEncodedRows(
   stream: IStreamBuilder<EncodedRow>,
 ): IStreamBuilder<EncodedRow> {
-  return stream.pipe(
-    map((r) => [r, r] as [string, string]),
-    distinct(),
-    map(([, v]) => v as string),
-  )
+  return stream.pipe(stringDistinct())
 }
 
 // -----------------------------------------------------------------------

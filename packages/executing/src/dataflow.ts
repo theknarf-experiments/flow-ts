@@ -91,12 +91,37 @@ export interface ExecuteOptions {
  * @param options     Optional tuning knobs (see `ExecuteOptions`).
  * @param sink        Callback invoked once per (relation, row, multiplicity).
  */
-export function executeProgram(
+/**
+ * A long-lived incremental query session. db-ivm operators maintain
+ * state across `D2.run()` calls, so each `advance()` only processes the
+ * EDB delta queued since the previous advance. The `sink` callback fires
+ * with each new IDB diff during `advance()`.
+ *
+ * Lifecycle: build session → `update(rel, row, ±1)` repeatedly →
+ * `advance()` to drive the graph → optionally more updates → finally
+ * `close()` (or just keep advancing indefinitely).
+ */
+export interface ProgramSession {
+  /** Queue an EDB delta. `diff` defaults to +1 (insert); -1 retracts.
+   *  Multiple updates for the same row accumulate via the standard
+   *  multiset arithmetic. Calling `update` after `close` throws. */
+  update(relation: string, row: Row, diff?: number): void
+  /** Flush queued updates, drive the graph to a fixpoint over them. */
+  advance(): void
+  /** Final advance + freeze the session. Further updates throw. */
+  close(): void
+}
+
+/**
+ * Open a streaming session over the given program. `executeProgram` is a
+ * thin convenience wrapper that loads all EDB facts and closes the
+ * session in one shot.
+ */
+export function openSession(
   program: Program,
-  edbFacts: ReadonlyMap<string, readonly Row[]>,
   options: ExecuteOptions,
   sink: IdbSink,
-): void {
+): ProgramSession {
   const strata = Strata.fromParser(program)
   const plan = ProgramQueryPlanCls.fromStrata(
     strata,
@@ -131,13 +156,55 @@ export function executeProgram(
 
   graph.finalize()
 
-  for (const edb of program.edbs) {
-    const input = edbInputs.get(edb.name)!
-    const rows = edbFacts.get(edb.name) ?? []
-    if (rows.length === 0) continue
-    input.sendData(rows.map((row) => [encodeRow(row), 1] as [EncodedRow, number]))
+  // Per-EDB queue of (encoded row, diff) waiting to be sent at next advance.
+  const pending = new Map<string, Array<[EncodedRow, number]>>()
+  let closed = false
+
+  return {
+    update(relation, row, diff = 1) {
+      if (closed) throw new Error('session closed')
+      if (!edbInputs.has(relation)) {
+        throw new Error(`unknown EDB relation: ${relation}`)
+      }
+      let queue = pending.get(relation)
+      if (!queue) {
+        queue = []
+        pending.set(relation, queue)
+      }
+      queue.push([encodeRow(row), diff])
+    },
+    advance() {
+      if (closed) throw new Error('session closed')
+      for (const [relation, queue] of pending) {
+        if (queue.length === 0) continue
+        edbInputs.get(relation)!.sendData(queue)
+      }
+      pending.clear()
+      graph.run()
+    },
+    close() {
+      if (closed) return
+      this.advance()
+      closed = true
+    },
   }
-  graph.run()
+}
+
+/**
+ * Batch-mode helper. Loads all EDB facts and runs the program once to a
+ * fixpoint. Internally a thin wrapper around `openSession`.
+ */
+export function executeProgram(
+  program: Program,
+  edbFacts: ReadonlyMap<string, readonly Row[]>,
+  options: ExecuteOptions,
+  sink: IdbSink,
+): void {
+  const session = openSession(program, options, sink)
+  for (const [relation, rows] of edbFacts) {
+    for (const row of rows) session.update(relation, row, 1)
+  }
+  session.close()
 }
 
 function buildProgramDataflow(

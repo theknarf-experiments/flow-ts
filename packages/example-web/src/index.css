@@ -94,6 +94,73 @@ body {
   font-size: 0.8rem;
 }
 
+.replica-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  font-size: 0.8rem;
+  color: #9aa0a6;
+  flex-wrap: wrap;
+}
+
+.replica-online {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  cursor: pointer;
+}
+
+.replica-online input {
+  margin: 0;
+}
+
+.replica-delay {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.replica-delay input[type='range'] {
+  width: 6rem;
+  accent-color: #3a5f8a;
+}
+
+.replica-delay-value {
+  font-variant-numeric: tabular-nums;
+  color: #cfd3d8;
+  min-width: 3rem;
+  display: inline-block;
+  text-align: right;
+}
+
+.replica-panel .stat-line {
+  margin-top: 0.5rem;
+}
+
+.sync-status {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid #2a2f37;
+  border-radius: 0.5rem;
+  background: #14171c;
+}
+
+.sync-status h2 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #cfd3d8;
+}
+
+.sync-status .stat-line {
+  font-size: 0.85rem;
+}
+
+.network-status-partitioned {
+  color: #d4a44a;
+  font-weight: 600;
+}
+
 header h1 {
   margin: 0 0 0.5rem;
   font-weight: 600;

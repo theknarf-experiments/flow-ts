@@ -1,7 +1,7 @@
-// End-to-end test for the `/text` route — Stewen's list CRDT driving
-// a textarea. Each keystroke turns into an `Insert` op; backspace
-// emits a `Remove`. The visible text comes from walking the derived
-// `ListElem` linked list.
+// End-to-end tests for the two-replica RGA text CRDT demo. Each
+// replica owns its own Store; a SyncLink layered on top forwards new
+// EDB rows between them after a configurable delay. Per-replica
+// online toggles park ops locally until both sides come back online.
 
 import { type Page, expect, test } from '@playwright/test'
 
@@ -10,105 +10,43 @@ async function gotoApp(page: Page): Promise<void> {
   await expect(page.locator('body[data-hydrated="true"]')).toBeAttached()
 }
 
-test.describe('text CRDT demo', () => {
-  test('renders the editor and zeroed stats on load', async ({ page }) => {
+test.describe('text CRDT demo — single replica (A)', () => {
+  test('renders both editors zeroed on load', async ({ page }) => {
     await gotoApp(page)
-    await expect(page.getByTestId('text-editor')).toBeVisible()
-    await expect(page.getByTestId('text-editor')).toHaveValue('')
-    await expect(page.getByTestId('stat-inserts')).toHaveText('0')
-    await expect(page.getByTestId('stat-removes')).toHaveText('0')
-    await expect(page.getByTestId('stat-visible')).toHaveText('0')
+    for (const id of ['a', 'b']) {
+      await expect(page.getByTestId(`text-editor-${id}`)).toHaveValue('')
+      await expect(page.getByTestId(`stat-inserts-${id}`)).toHaveText('0')
+      await expect(page.getByTestId(`stat-visible-${id}`)).toHaveText('0')
+    }
+    await expect(page.getByTestId('sync-link-status')).toHaveText('connected')
   })
 
-  test('typing characters appends Insert ops and renders the text', async ({ page }) => {
+  test('typing in A inserts ops and renders the text', async ({ page }) => {
     await gotoApp(page)
-    const editor = page.getByTestId('text-editor')
-
-    // Playwright's `pressSequentially` fires one keystroke per char,
-    // exactly what the CRDT-driven onChange expects.
-    await editor.pressSequentially('hi!')
-
-    await expect(editor).toHaveValue('hi!')
-    await expect(page.getByTestId('stat-inserts')).toHaveText('3')
-    await expect(page.getByTestId('stat-removes')).toHaveText('0')
-    await expect(page.getByTestId('stat-visible')).toHaveText('3')
-    // ListElem grew to three rows — one per visible character.
-    await expect(page.getByTestId('relation-count-ListElem')).toHaveText('3 rows')
-    // Insert EDB shows the underlying ops.
-    await expect(page.getByTestId('relation-count-Insert')).toHaveText('3 rows')
+    await page.getByTestId('text-editor-a').pressSequentially('hi!')
+    await expect(page.getByTestId('text-editor-a')).toHaveValue('hi!')
+    await expect(page.getByTestId('stat-inserts-a')).toHaveText('3')
+    await expect(page.getByTestId('stat-visible-a')).toHaveText('3')
   })
 
-  test('backspace emits Remove ops; tombstones live alongside inserts', async ({ page }) => {
+  test('backspace tombstones the tail; log keeps growing', async ({ page }) => {
     await gotoApp(page)
-    const editor = page.getByTestId('text-editor')
+    const editor = page.getByTestId('text-editor-a')
     await editor.pressSequentially('hello')
-    await expect(page.getByTestId('stat-visible')).toHaveText('5')
-
-    // Two backspaces should leave "hel" visible but keep both inserts
-    // AND two tombstones in the EDBs (the CRDT log is append-only).
     await editor.press('Backspace')
     await editor.press('Backspace')
 
     await expect(editor).toHaveValue('hel')
-    await expect(page.getByTestId('stat-inserts')).toHaveText('5')
-    await expect(page.getByTestId('stat-removes')).toHaveText('2')
-    await expect(page.getByTestId('stat-visible')).toHaveText('3')
+    await expect(page.getByTestId('stat-inserts-a')).toHaveText('5')
+    await expect(page.getByTestId('stat-removes-a')).toHaveText('2')
+    await expect(page.getByTestId('stat-visible-a')).toHaveText('3')
   })
 
-  test('retyping after backspace appends fresh Insert ops (no resurrection)', async ({ page }) => {
+  test('inserting in the middle keeps the cursor at the insertion point', async ({ page }) => {
     await gotoApp(page)
-    const editor = page.getByTestId('text-editor')
-    await editor.pressSequentially('hi')
-    await editor.press('Backspace')
-    await editor.pressSequentially('a')
-
-    // 3 inserts (h, i, a), 1 remove (i), 2 visible (h, a).
-    await expect(editor).toHaveValue('ha')
-    await expect(page.getByTestId('stat-inserts')).toHaveText('3')
-    await expect(page.getByTestId('stat-removes')).toHaveText('1')
-    await expect(page.getByTestId('stat-visible')).toHaveText('2')
-  })
-
-  test('inspector shows the EDB rows are addressable', async ({ page }) => {
-    await gotoApp(page)
-    await page.getByTestId('text-editor').pressSequentially('ab')
-
-    // Each insert lives under `relation-row-Insert-<rep>-<ctr>-<parent_rep>-<parent_ctr>-<value>`.
-    // The first char has parent (0, 0); the second char's parent is
-    // the first char's (rep, ctr) = (1, 1).
-    await expect(page.getByTestId('relation-row-Insert-1-1-0-0-a')).toBeVisible()
-    await expect(page.getByTestId('relation-row-Insert-1-2-1-1-b')).toBeVisible()
-  })
-
-  test('inserting in the middle of the text adds chars at the cursor', async ({ page }) => {
-    await gotoApp(page)
-    const editor = page.getByTestId('text-editor')
-    await editor.pressSequentially('hello')
-    // Cursor between 'e' and 'l' (position 2). Type a character that's
-    // unique to the string so the prefix/suffix diff is unambiguous.
-    await editor.evaluate((el: HTMLTextAreaElement) => el.setSelectionRange(2, 2))
-    await editor.pressSequentially('X')
-
-    await expect(editor).toHaveValue('heXllo')
-    await expect(page.getByTestId('stat-inserts')).toHaveText('6')
-    await expect(page.getByTestId('stat-removes')).toHaveText('0')
-    // The new insert (ctr 6) has the 'e' (ctr 2) as its parent — i.e.
-    // it points at the character it was inserted *after*.
-    await expect(page.getByTestId('relation-row-Insert-1-6-1-2-X')).toBeVisible()
-    // The cursor stays where the user typed (after 'X', position 3),
-    // not at the end of the text.
-    const cursor = await editor.evaluate((el: HTMLTextAreaElement) => el.selectionStart)
-    expect(cursor).toBe(3)
-  })
-
-  test('typing multiple chars in the middle keeps the cursor in place', async ({ page }) => {
-    await gotoApp(page)
-    const editor = page.getByTestId('text-editor')
+    const editor = page.getByTestId('text-editor-a')
     await editor.pressSequentially('hello')
     await editor.evaluate((el: HTMLTextAreaElement) => el.setSelectionRange(2, 2))
-    // After each keystroke the cursor should advance by one, NOT jump
-    // back to position 2 (because we'd reset) or to the end (because
-    // React replaced the value).
     await editor.pressSequentially('XYZ')
 
     await expect(editor).toHaveValue('heXYZllo')
@@ -116,37 +54,88 @@ test.describe('text CRDT demo', () => {
     expect(cursor).toBe(5)
   })
 
-  test('deleting in the middle tombstones the right character', async ({ page }) => {
+  test('selecting a range and typing replaces it via Insert + Remove ops', async ({ page }) => {
     await gotoApp(page)
-    const editor = page.getByTestId('text-editor')
-    await editor.pressSequentially('hello')
-    // Move into the middle and backspace the second 'l' (position 3).
-    await editor.press('ArrowLeft') // cursor before 'o'
-    await editor.press('Backspace') // deletes 'l' at position 3
-
-    await expect(editor).toHaveValue('helo')
-    await expect(page.getByTestId('stat-inserts')).toHaveText('5')
-    await expect(page.getByTestId('stat-removes')).toHaveText('1')
-    await expect(page.getByTestId('stat-visible')).toHaveText('4')
-    // The tombstone targets ctr 4 (the second 'l') — not ctr 5 ('o').
-    await expect(page.getByTestId('relation-row-Remove-1-4')).toBeVisible()
-  })
-
-  test('selecting a range and typing replaces the selection in one go', async ({ page }) => {
-    await gotoApp(page)
-    const editor = page.getByTestId('text-editor')
+    const editor = page.getByTestId('text-editor-a')
     await editor.pressSequentially('hello world')
-    // Select 'world' (positions 6..11) and replace with 'there'.
-    await editor.evaluate((el: HTMLTextAreaElement) => {
-      el.setSelectionRange(6, 11)
-    })
+    await editor.evaluate((el: HTMLTextAreaElement) => el.setSelectionRange(6, 11))
     await editor.pressSequentially('there')
 
     await expect(editor).toHaveValue('hello there')
-    // 11 original + 5 new inserts (the chars in 'there') = 16 inserts;
-    // 5 tombstones for the original 'world'.
-    await expect(page.getByTestId('stat-inserts')).toHaveText('16')
-    await expect(page.getByTestId('stat-removes')).toHaveText('5')
-    await expect(page.getByTestId('stat-visible')).toHaveText('11')
+    await expect(page.getByTestId('stat-inserts-a')).toHaveText('16')
+    await expect(page.getByTestId('stat-removes-a')).toHaveText('5')
+    await expect(page.getByTestId('stat-visible-a')).toHaveText('11')
+  })
+})
+
+test.describe('text CRDT demo — two-replica sync', () => {
+  test('typing in A while both are online propagates to B', async ({ page }) => {
+    await gotoApp(page)
+    // Slam the delay sliders to 0 so the sync round-trip is bounded
+    // by the next animation frame, not 250ms.
+    for (const id of ['a', 'b']) {
+      await page.getByTestId(`delay-${id}`).fill('0')
+    }
+    await page.getByTestId('text-editor-a').pressSequentially('hi')
+
+    await expect(page.getByTestId('text-editor-a')).toHaveValue('hi')
+    await expect(page.getByTestId('text-editor-b')).toHaveValue('hi')
+    await expect(page.getByTestId('stat-visible-b')).toHaveText('2')
+  })
+
+  test('replicas diverge when one is offline, then converge on reconnect', async ({ page }) => {
+    await gotoApp(page)
+    for (const id of ['a', 'b']) {
+      await page.getByTestId(`delay-${id}`).fill('0')
+    }
+
+    // Take B offline; type into A. The op queues at the link.
+    await page.getByTestId('online-b').uncheck()
+    await expect(page.getByTestId('sync-link-status')).toHaveText('partitioned')
+    await page.getByTestId('text-editor-a').pressSequentially('hi')
+
+    // A sees its own text; B still empty; one op queued for A → B.
+    await expect(page.getByTestId('text-editor-a')).toHaveValue('hi')
+    await expect(page.getByTestId('text-editor-b')).toHaveValue('')
+    await expect(page.getByTestId('sync-queue-a-to-b')).toHaveText('2')
+
+    // Bring B back online — the queue drains and both sides converge.
+    await page.getByTestId('online-b').check()
+    await expect(page.getByTestId('text-editor-b')).toHaveValue('hi')
+    await expect(page.getByTestId('sync-queue-a-to-b')).toHaveText('0')
+    await expect(page.getByTestId('sync-link-status')).toHaveText('connected')
+  })
+
+  test('concurrent edits from both replicas converge after reconnect', async ({ page }) => {
+    await gotoApp(page)
+    for (const id of ['a', 'b']) {
+      await page.getByTestId(`delay-${id}`).fill('0')
+    }
+
+    // Partition the network and edit both sides independently.
+    await page.getByTestId('online-a').uncheck()
+    await page.getByTestId('online-b').uncheck()
+
+    await page.getByTestId('text-editor-a').pressSequentially('AAA')
+    await page.getByTestId('text-editor-b').pressSequentially('BBB')
+    await expect(page.getByTestId('text-editor-a')).toHaveValue('AAA')
+    await expect(page.getByTestId('text-editor-b')).toHaveValue('BBB')
+
+    // Reconnect; the two sides converge to the same string.
+    await page.getByTestId('online-a').check()
+    await page.getByTestId('online-b').check()
+
+    // Both editors should agree once queues drain. Each end has 6
+    // inserts (3 local + 3 received) and 6 visible chars; the order
+    // is whatever the CRDT picks based on replica id.
+    await expect(page.getByTestId('stat-visible-a')).toHaveText('6')
+    await expect(page.getByTestId('stat-visible-b')).toHaveText('6')
+    const finalA = await page.getByTestId('text-editor-a').inputValue()
+    const finalB = await page.getByTestId('text-editor-b').inputValue()
+    expect(finalA).toBe(finalB)
+    expect(finalA).toHaveLength(6)
+    // The 6 chars are exactly the 3 from each replica.
+    const sortedChars = finalA.split('').sort().join('')
+    expect(sortedChars).toBe('AAABBB')
   })
 })

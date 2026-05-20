@@ -1,24 +1,28 @@
-// CRDT text editor backed by the RGA-like list CRDT Datalog query in
-// `textProgram.ts`. Each keystroke becomes an `Insert(rep_id, ctr,
-// parent_rep, parent_ctr, value)`; backspace emits a `Remove(rep, ctr)`.
-// The rendered text comes from walking the derived `ListElem` linked
-// list from the sentinel `(0, 0)` — so what you see in the textarea is
-// literally the IDB result, not local React state.
+// Two-replica RGA text CRDT demo with simulated network sync.
 //
-// This isn't a proper editor (no cursor positioning, no IME support,
-// no undo) — it's a demo to show CRDT ops driving live derived state.
-// Scope: append + backspace at the end of the document.
+// Two independent `Store` instances run the same list-CRDT program;
+// each editor only ever writes to its own store. A `SyncLink` sitting
+// on top of both stores (using only the public Store API) watches for
+// new EDB rows on either side and forwards them to the other after a
+// configurable delay. Per-replica online flags gate both sending and
+// receiving — toggle one offline and its ops queue locally until the
+// link comes back, then drain in arrival order. Type into both
+// editors with one offline and watch them converge once you flip the
+// switch back.
 
 import {
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
+  useSyncExternalStore,
   type ChangeEvent,
   type RefObject,
 } from 'react'
 import { Store, useLiveQuery, useProgram } from '@flow-ts/react'
 import { RelationTable } from './components/RelationTable.js'
+import { SyncLink, type ReplicaId } from './SyncLink.js'
 import { textProgram, TEXT_SOURCE } from './textProgram.js'
 
 type InsertRow = readonly [number, number, number, number, string]
@@ -27,55 +31,41 @@ type ListElemRow = readonly [number, number, string, number, number]
 
 type ElemId = readonly [number, number]
 
-const REPLICA_ID = 1
 const SENTINEL: ElemId = [0, 0]
+const SYNCED_RELATIONS = ['Insert', 'Remove']
 
-const store = new Store(textProgram)
-const inserts = store.collection<InsertRow>('Insert')
-const removes = store.collection<RemoveRow>('Remove')
+// One store per replica; both load the same program but maintain
+// independent state.
+const storeA = new Store(textProgram)
+const storeB = new Store(textProgram)
+const sync = new SyncLink(storeA, storeB, SYNCED_RELATIONS)
 
-/** Index `ListElem` rows by their "prev" pointer so we can walk the
- *  linked list in O(n) starting at the sentinel. */
+const insertsA = storeA.collection<InsertRow>('Insert')
+const removesA = storeA.collection<RemoveRow>('Remove')
+const insertsB = storeB.collection<InsertRow>('Insert')
+const removesB = storeB.collection<RemoveRow>('Remove')
+
+interface ReplicaBindings {
+  id: ReplicaId
+  /** Unique numeric replica id so the two sides can't collide on
+   *  `(rep_id, ctr)` tuples. */
+  repId: number
+  store: Store
+  inserts: typeof insertsA
+  removes: typeof removesA
+}
+
+const REPLICAS: Record<ReplicaId, ReplicaBindings> = {
+  a: { id: 'a', repId: 1, store: storeA, inserts: insertsA, removes: removesA },
+  b: { id: 'b', repId: 2, store: storeB, inserts: insertsB, removes: removesB },
+}
+
 function indexByPrev(elems: ReadonlyArray<ListElemRow>): Map<string, ListElemRow> {
   const out = new Map<string, ListElemRow>()
   for (const e of elems) out.set(`${e[0]},${e[1]}`, e)
   return out
 }
 
-/** Single-contiguous-edit diff between two strings: strip the longest
- *  common prefix + suffix, the leftover middle is the change. Returns
- *  `[removeStart, removeEnd)` as a half-open range into `prev`, and the
- *  characters that need to be inserted at that position to get to
- *  `next`. Covers everything a single keystroke or paste produces. */
-function diff(prev: string, next: string): {
-  removeStart: number
-  removeEnd: number
-  insertChars: string
-} {
-  let prefixLen = 0
-  const minLen = Math.min(prev.length, next.length)
-  while (prefixLen < minLen && prev[prefixLen] === next[prefixLen]) {
-    prefixLen++
-  }
-  let suffixLen = 0
-  while (
-    suffixLen < prev.length - prefixLen &&
-    suffixLen < next.length - prefixLen &&
-    prev[prev.length - 1 - suffixLen] === next[next.length - 1 - suffixLen]
-  ) {
-    suffixLen++
-  }
-  return {
-    removeStart: prefixLen,
-    removeEnd: prev.length - suffixLen,
-    insertChars: next.slice(prefixLen, next.length - suffixLen),
-  }
-}
-
-/** Reconstruct the rendered text by walking the linked list from the
- *  sentinel. Each `ListElem(prev, value, next)` row says "the element
- *  AFTER `prev` is `next`, and its character is `value`." Returns both
- *  the assembled string and the in-order list of visible-element ids. */
 function renderText(elems: ReadonlyArray<ListElemRow>): {
   text: string
   tail: ElemId[]
@@ -93,31 +83,114 @@ function renderText(elems: ReadonlyArray<ListElemRow>): {
   return { text, tail }
 }
 
+function diff(prev: string, next: string): {
+  removeStart: number
+  removeEnd: number
+  insertChars: string
+} {
+  let prefixLen = 0
+  const minLen = Math.min(prev.length, next.length)
+  while (prefixLen < minLen && prev[prefixLen] === next[prefixLen]) prefixLen++
+  let suffixLen = 0
+  while (
+    suffixLen < prev.length - prefixLen &&
+    suffixLen < next.length - prefixLen &&
+    prev[prev.length - 1 - suffixLen] === next[next.length - 1 - suffixLen]
+  ) {
+    suffixLen++
+  }
+  return {
+    removeStart: prefixLen,
+    removeEnd: prev.length - suffixLen,
+    insertChars: next.slice(prefixLen, next.length - suffixLen),
+  }
+}
+
+function useSyncState() {
+  return useSyncExternalStore(
+    (cb) => sync.subscribe(cb),
+    () => sync.snapshot(),
+    () => sync.snapshot(),
+  )
+}
+
 export function TextDemo(): JSX.Element {
-  // Counter for generating fresh `(rep, ctr)` ids.
+  return (
+    <div className="app">
+      <header>
+        <h1>flow-ts • two-replica text CRDT demo</h1>
+        <p>
+          Two independent <code>Store</code> instances running the same
+          list-CRDT program. Each editor only writes to its own store.
+          A sync layer on top forwards new <code>Insert</code> and{' '}
+          <code>Remove</code> ops between them after a configurable
+          delay. Toggle a replica offline to see ops queue locally;
+          flip it back on to watch the two sides converge.
+        </p>
+      </header>
+
+      <ProgramPanel />
+
+      <section className="grid">
+        <ReplicaPanel binding={REPLICAS.a} title="Replica A" />
+        <ReplicaPanel binding={REPLICAS.b} title="Replica B" />
+      </section>
+
+      <SyncStatusPanel />
+
+      <RelationInspector binding={REPLICAS.a} title="Replica A relations" />
+    </div>
+  )
+}
+
+// --- panels ----------------------------------------------------------
+
+function ProgramPanel() {
+  return (
+    <section className="program">
+      <details data-testid="program-panel">
+        <summary>Datalog program (shared)</summary>
+        <pre data-testid="program-source"><code>{TEXT_SOURCE.trim()}</code></pre>
+        <p className="muted">
+          Both replicas load the same program; they only differ in
+          which replica id (<code>1</code> vs <code>2</code>) they
+          stamp on locally-emitted ops.
+        </p>
+      </details>
+    </section>
+  )
+}
+
+function ReplicaPanel({
+  binding,
+  title,
+}: {
+  binding: ReplicaBindings
+  title: string
+}): JSX.Element {
+  const { id, repId, store, inserts, removes } = binding
+
   const ctrRef = useRef<number>(0)
   const nextCtr = () => ++ctrRef.current
 
   const elems = useLiveQuery<ListElemRow>(store, 'ListElem')
+  const allInserts = useLiveQuery<InsertRow>(store, 'Insert')
+  const allRemoves = useLiveQuery<RemoveRow>(store, 'Remove')
   const text = useMemo(() => renderText(elems), [elems])
 
-  // Synchronous "what we've typed so far" mirror. The CRDT mirror in
-  // `text` updates only after a microtask flush, but the textarea
-  // fires onChange synchronously for every keystroke — so we'd compute
-  // the diff against stale state and end up double-inserting. The
-  // `typedRef` + `visibleTailRef` pair tracks the local view of the
-  // CRDT *as if* every emitted op had already been applied. A useEffect
-  // resyncs them with the real CRDT state once the microtask lands.
-  const typedRef = useRef<string>('')
-  // Visible-tail = ids of each currently-visible character, in order.
-  // On insert we push; on backspace we pop and emit a Remove for it.
-  const visibleTailRef = useRef<ElemId[]>([])
+  // After remote inserts land in this store, refresh `ctrRef` so we
+  // don't reuse a counter for a new local insert. `ctr` is monotonic
+  // per replica, so it's fine to bump to the local max.
+  useEffect(() => {
+    let maxLocal = 0
+    for (const row of allInserts) {
+      if (row[0] === repId && row[1] > maxLocal) maxLocal = row[1]
+    }
+    if (maxLocal > ctrRef.current) ctrRef.current = maxLocal
+  }, [allInserts, repId])
 
-  // Preserve the textarea cursor across re-renders. React swaps the
-  // textarea's value when the CRDT-derived `text` updates, which on
-  // its own resets selectionStart to the end — so a middle-insert
-  // appears to "jump" the caret to the right. Capture the position in
-  // `onChange`, restore it after the render commits.
+  const typedRef = useRef<string>('')
+  const visibleTailRef = useRef<ElemId[]>([])
   const editorRef = useRef<HTMLTextAreaElement>(null)
   const pendingCursorRef = useRef<number | null>(null)
 
@@ -138,41 +211,23 @@ export function TextDemo(): JSX.Element {
     const next = e.target.value
     const prev = typedRef.current
     if (next === prev) return
-    // Remember where the browser put the caret *after* applying this
-    // edit; the layout effect above will restore it after React's
-    // re-render replaces the textarea value with the CRDT-derived one.
     pendingCursorRef.current = e.target.selectionStart
 
-    // Compute the single contiguous diff between `prev` and `next`:
-    // strip the longest common prefix and suffix, and everything left
-    // over in the middle is what changed. Handles append / backspace
-    // / middle-insert / middle-delete / replace-selection in one go.
     const { removeStart, removeEnd, insertChars } = diff(prev, next)
     const tail = visibleTailRef.current
-
-    // Tombstone every character in the removed range.
     for (let i = removeStart; i < removeEnd; i++) {
-      const id = tail[i]
-      if (id) removes.insert([id[0], id[1]])
+      const rowId = tail[i]
+      if (rowId) removes.insert([rowId[0], rowId[1]])
     }
-
-    // Insert each new character. The parent of the first new char is
-    // the visible element immediately before the edit point (or the
-    // sentinel if we're inserting at position 0). Each subsequent new
-    // char's parent is the char we just inserted — that's how RGA
-    // chains a multi-char paste so the elements stay adjacent.
     const newIds: ElemId[] = []
     let parent: ElemId = removeStart > 0 ? tail[removeStart - 1]! : SENTINEL
     for (const ch of insertChars) {
       const ctr = nextCtr()
-      const id: ElemId = [REPLICA_ID, ctr]
-      inserts.insert([REPLICA_ID, ctr, parent[0], parent[1], ch])
+      const id: ElemId = [repId, ctr]
+      inserts.insert([repId, ctr, parent[0], parent[1], ch])
       newIds.push(id)
       parent = id
     }
-
-    // Rebuild the local visible-tail mirror: the unchanged prefix,
-    // then the new inserts, then the unchanged suffix.
     visibleTailRef.current = [
       ...tail.slice(0, removeStart),
       ...newIds,
@@ -182,114 +237,99 @@ export function TextDemo(): JSX.Element {
   }
 
   return (
-    <div className="app">
-      <header>
-        <h1>flow-ts • collaborative text demo</h1>
-        <p>
-          Type into the box. Each keystroke fires an immutable{' '}
-          <code>Insert(rep, ctr, parent_rep, parent_ctr, value)</code> op
-          against the EDB; backspace fires a <code>Remove(rep, ctr)</code>.
-          The rendered text comes from walking the derived{' '}
-          <code>ListElem</code> linked list. Same Datalog as the bundled{' '}
-          <code>examples/list_crdt.dl</code>, just hooked up to a textarea.
-        </p>
-      </header>
-
-      <ProgramPanel />
-
-      <section className="grid">
-        <EditorPanel editorRef={editorRef} value={text.text} onChange={onChange} />
-        <StatsPanel inserts={useLiveQuery(store, 'Insert')} removes={useLiveQuery(store, 'Remove')} elems={elems} />
-      </section>
-
-      <RelationInspector />
-    </div>
-  )
-}
-
-// --- panels ----------------------------------------------------------
-
-function ProgramPanel() {
-  return (
-    <section className="program">
-      <details data-testid="program-panel">
-        <summary>Datalog program</summary>
-        <pre data-testid="program-source"><code>{TEXT_SOURCE.trim()}</code></pre>
-        <p className="muted">
-          Two EDBs (<code>Insert</code>, <code>Remove</code>) and a dozen
-          IDBs implementing a depth-first pre-order traversal of the
-          insertion tree, skipping tombstoned nodes. Walking{' '}
-          <code>ListElem</code> from <code>(0, 0)</code> reproduces the
-          current text.
-        </p>
-      </details>
-    </section>
-  )
-}
-
-function EditorPanel({
-  editorRef,
-  value,
-  onChange,
-}: {
-  editorRef: RefObject<HTMLTextAreaElement>
-  value: string
-  onChange: (e: ChangeEvent<HTMLTextAreaElement>) => void
-}): JSX.Element {
-  return (
-    <div className="card">
+    <div className="card replica-panel" data-testid={`replica-${id}`}>
       <div className="card-header">
-        <h2>Editor</h2>
-        <span className="muted text-hint">arbitrary inserts, deletes, and replacements</span>
+        <h2>{title}</h2>
+        <ReplicaControls id={id} />
       </div>
       <textarea
         ref={editorRef}
         className="text-editor"
-        data-testid="text-editor"
-        value={value}
+        data-testid={`text-editor-${id}`}
+        value={text.text}
         onChange={onChange}
         spellCheck={false}
         rows={6}
-        placeholder="start typing…"
+        placeholder="type here…"
       />
-    </div>
-  )
-}
-
-function StatsPanel({
-  inserts,
-  removes,
-  elems,
-}: {
-  inserts: ReadonlyArray<InsertRow>
-  removes: ReadonlyArray<RemoveRow>
-  elems: ReadonlyArray<ListElemRow>
-}): JSX.Element {
-  return (
-    <div className="card">
-      <h2>Stats</h2>
       <ul className="stat-line">
         <li>
-          <span data-testid="stat-inserts">{inserts.length}</span> inserts
+          <span data-testid={`stat-inserts-${id}`}>{allInserts.length}</span> inserts
         </li>
         <li>
-          <span data-testid="stat-removes">{removes.length}</span> removes
+          <span data-testid={`stat-removes-${id}`}>{allRemoves.length}</span> removes
         </li>
         <li>
-          <span data-testid="stat-visible">{elems.length}</span> visible chars
+          <span data-testid={`stat-visible-${id}`}>{elems.length}</span> visible
         </li>
       </ul>
-      <p className="muted">
-        Every keystroke adds a row to <code>Insert</code> (or, for
-        backspace, to <code>Remove</code>). Both are append-only — the
-        full edit history stays in the EDB, and the visible text is the
-        IDB projection.
-      </p>
     </div>
   )
 }
 
-function RelationInspector() {
+function ReplicaControls({ id }: { id: ReplicaId }): JSX.Element {
+  const state = useSyncState()
+  return (
+    <div className="replica-controls">
+      <label className="replica-online">
+        <input
+          type="checkbox"
+          checked={state.online[id]}
+          onChange={(e) => sync.setOnline(id, e.target.checked)}
+          data-testid={`online-${id}`}
+        />
+        <span>online</span>
+      </label>
+      <label className="replica-delay">
+        <span>delay</span>
+        <input
+          type="range"
+          min={0}
+          max={2000}
+          step={50}
+          value={state.delay[id]}
+          onChange={(e) => sync.setDelay(id, Number(e.target.value))}
+          data-testid={`delay-${id}`}
+        />
+        <span className="replica-delay-value" data-testid={`delay-value-${id}`}>
+          {state.delay[id]}ms
+        </span>
+      </label>
+    </div>
+  )
+}
+
+function SyncStatusPanel(): JSX.Element {
+  const state = useSyncState()
+  const partitioned = !state.online.a || !state.online.b
+  return (
+    <section className="sync-status" data-testid="sync-status">
+      <h2>Network</h2>
+      <ul className="stat-line">
+        <li>
+          A → B queued:{' '}
+          <span data-testid="sync-queue-a-to-b">{state.queueAtoB}</span>
+        </li>
+        <li>
+          B → A queued:{' '}
+          <span data-testid="sync-queue-b-to-a">{state.queueBtoA}</span>
+        </li>
+        <li className={partitioned ? 'network-status-partitioned' : ''} data-testid="sync-link-status">
+          {partitioned ? 'partitioned' : 'connected'}
+        </li>
+      </ul>
+    </section>
+  )
+}
+
+function RelationInspector({
+  binding,
+  title,
+}: {
+  binding: ReplicaBindings
+  title: string
+}): JSX.Element {
+  const { store, id } = binding
   const program = useProgram(store)
   const decls = useMemo(
     () => [
@@ -299,13 +339,13 @@ function RelationInspector() {
     [program],
   )
   return (
-    <section className="inspector">
-      <h2>All relations</h2>
+    <section className="inspector" data-testid={`inspector-${id}`}>
+      <h2>{title}</h2>
       <p className="muted">
-        The same generic <code>&lt;RelationTable&gt;</code> from the
-        friend-graph demo. <code>Insert</code> and <code>Remove</code>{' '}
-        are EDBs (add-row + delete buttons enabled); everything else is
-        derived.
+        The same generic <code>&lt;RelationTable&gt;</code> applied to
+        replica {id.toUpperCase()}'s store. Both replicas converge to
+        the same row sets once their queues drain, even after offline
+        editing.
       </p>
       <div className="tables">
         {decls.map(({ decl, isEdb }) => (

@@ -1,6 +1,6 @@
 # @flow-ts/example-web
 
-A small React + Vite demo showing flow-ts running in the browser, with a Tanstack-DB-inspired "one collection, many live-query hooks" pattern.
+A small React demo built on **Tanstack Start** (SPA mode — no SSR) showing flow-ts running in the browser, with a Tanstack-DB-inspired "one collection, many live-query hooks" pattern.
 
 ## Run it
 
@@ -13,7 +13,9 @@ Open http://localhost:5173.
 
 ## What's here
 
-The store / collection / hook glue lives in [`@flow-ts/react`](../react/README.md) — `Store` wraps one `openSession` from `@flow-ts/executing`, `Collection<T>` is a typed handle to an EDB you can `insert` / `delete` rows on, and `useLiveQuery(store, idbName)` is a React hook that subscribes to an IDB head and re-renders the component whenever its row set changes. This package just composes those primitives with a Vite shell, some bespoke panels, and a Tanstack-Table-driven generic inspector.
+The store / collection / hook glue lives in [`@flow-ts/react`](../react/README.md) — `Store` wraps one `openSession` from `@flow-ts/executing`, `Collection<T>` is a typed handle to an EDB you can `insert` / `delete` rows on, and `useLiveQuery(store, idbName)` is a React hook that subscribes to an IDB head and re-renders the component whenever its row set changes. This package composes those primitives with file-based routes under `src/routes/`, a bespoke People + Reachable view, and a Tanstack-Table-driven generic inspector.
+
+The Tanstack Start setup is SPA-only: `vite.config.ts` opts in with `spa: { enabled: true }`, so the build prerenders a `_shell.html` and the client hydrates the full document. There's no server runtime — the demo holds a stateful db-ivm session that doesn't serialise. The root route in `src/routes/__root.tsx` sets `data-hydrated="true"` on `<body>` once React mounts, which the e2e suite waits on before driving interactions.
 
 Two bespoke panels in the demo each subscribe through their own `useLiveQuery` — one People roster that flags who's reachable from "me" + headline stats, and one name-only "I can reach" list. Underneath them sits a generic `<RelationTable>` (one instance per declared relation), which derives its columns from the program's `.decl` and renders through `@tanstack/react-table` for free sortable headers. Edits made in any panel — including row-level deletes and the inline add-row that EDB tables grow at the bottom — ripple through the underlying Datalog program and update the rest incrementally.
 

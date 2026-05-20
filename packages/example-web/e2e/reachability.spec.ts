@@ -9,11 +9,20 @@
 // All edits go through the generic RelationInspector at the bottom of
 // the page — there is no bespoke editor form.
 
-import { expect, test } from '@playwright/test'
+import { type Page, expect, test } from '@playwright/test'
+
+// Tanstack Start serves a prerendered HTML shell, so the DOM is visible
+// before React has attached event handlers. The root route sets
+// `data-hydrated="true"` on <body> from a useEffect — wait for that
+// before any interaction, or clicks no-op against the unhydrated DOM.
+async function gotoApp(page: Page): Promise<void> {
+  await page.goto('/')
+  await expect(page.locator('body[data-hydrated="true"]')).toBeAttached()
+}
 
 test.describe('friend-graph demo', () => {
   test('renders the Datalog program source in an editable textarea', async ({ page }) => {
-    await page.goto('/')
+    await gotoApp(page)
     await expect(page.getByTestId('program-panel')).toBeVisible()
     const src = page.getByTestId('program-source')
     const value = await src.inputValue()
@@ -25,7 +34,7 @@ test.describe('friend-graph demo', () => {
   })
 
   test('renders seeded state on load', async ({ page }) => {
-    await page.goto('/')
+    await gotoApp(page)
     // Seed: 6 people, friendships 1→2, 2→3, 3→4, 1→5; Me = {1 alice}.
     // ICanReach from alice: {bob, carol, dave, eve}.
     await expect(page.getByTestId('stat-me')).toHaveText('alice')
@@ -48,7 +57,7 @@ test.describe('friend-graph demo', () => {
   })
 
   test('adding a friendship into the reachable component extends ICanReach', async ({ page }) => {
-    await page.goto('/')
+    await gotoApp(page)
 
     const addFriend = async (a: number, b: number) => {
       await page.getByTestId('add-Friend-a').fill(String(a))
@@ -64,7 +73,7 @@ test.describe('friend-graph demo', () => {
   })
 
   test('retracting a friendship prunes downstream ICanReach', async ({ page }) => {
-    await page.goto('/')
+    await gotoApp(page)
 
     // Removing 1 alice → 2 bob retracts bob, carol, and dave, leaving only
     // eve (still directly friended by alice via 1 → 5).
@@ -79,7 +88,7 @@ test.describe('friend-graph demo', () => {
   })
 
   test('changing Me rewires ICanReach', async ({ page }) => {
-    await page.goto('/')
+    await gotoApp(page)
 
     // Drop Me=1 and add Me=2. From bob, reachable = {carol, dave}.
     await page.getByRole('button', { name: 'remove Me 1' }).click()
@@ -96,7 +105,7 @@ test.describe('friend-graph demo', () => {
   })
 
   test('clearing Me empties ICanReach entirely', async ({ page }) => {
-    await page.goto('/')
+    await gotoApp(page)
     await page.getByRole('button', { name: 'remove Me 1' }).click()
 
     await expect(page.getByTestId('stat-me')).toHaveText('(none)')
@@ -105,7 +114,7 @@ test.describe('friend-graph demo', () => {
   })
 
   test('adding a brand-new person leaves ICanReach untouched', async ({ page }) => {
-    await page.goto('/')
+    await gotoApp(page)
 
     await page.getByTestId('add-Person-id').fill('99')
     await page.getByTestId('add-Person-name').fill('grace')
@@ -120,7 +129,7 @@ test.describe('friend-graph demo', () => {
   })
 
   test('relation inspector renders one table per declared relation', async ({ page }) => {
-    await page.goto('/')
+    await gotoApp(page)
     for (const rel of [
       'Person',
       'Me',
@@ -141,7 +150,7 @@ test.describe('friend-graph demo', () => {
   })
 
   test('inspector reacts to live edits and surfaces derived strings', async ({ page }) => {
-    await page.goto('/')
+    await gotoApp(page)
     // Add a fresh person + friendship that should land them in ICanReach.
     await page.getByTestId('add-Person-id').fill('99')
     await page.getByTestId('add-Person-name').fill('grace')
@@ -159,7 +168,7 @@ test.describe('friend-graph demo', () => {
   })
 
   test('EDB tables get an inline add-row; IDB tables do not', async ({ page }) => {
-    await page.goto('/')
+    await gotoApp(page)
     for (const rel of ['Person', 'Me', 'Friend', 'Weight']) {
       await expect(page.getByTestId(`add-row-${rel}`)).toBeVisible()
       await expect(page.getByTestId(`add-${rel}-submit`)).toBeVisible()
@@ -170,7 +179,7 @@ test.describe('friend-graph demo', () => {
   })
 
   test('Person add-row mixes a number column with a string column', async ({ page }) => {
-    await page.goto('/')
+    await gotoApp(page)
     await page.getByTestId('add-Person-id').fill('42')
     await page.getByTestId('add-Person-name').fill('mallory')
     await page.getByTestId('add-Person-submit').click()
@@ -183,7 +192,7 @@ test.describe('friend-graph demo', () => {
   })
 
   test('float column round-trips through a 4-way join', async ({ page }) => {
-    await page.goto('/')
+    await gotoApp(page)
     // Seed weights: alice 62.5, bob 78.4, carol 55.1, dave 91.2, eve 67.8,
     // frank 70.0. ReachableWeight is the join of Me ⋈ Reach ⋈ Person ⋈
     // Weight, so it should surface bob/carol/dave/eve with their kg.
@@ -197,7 +206,7 @@ test.describe('friend-graph demo', () => {
   })
 
   test('Weight add-row accepts decimal input', async ({ page }) => {
-    await page.goto('/')
+    await gotoApp(page)
     // Float column input is type="number" step="any" — decimals fly through.
     await expect(page.getByTestId('add-Weight-kg')).toHaveAttribute('type', 'number')
     await expect(page.getByTestId('add-Weight-kg')).toHaveAttribute('step', 'any')
@@ -212,7 +221,7 @@ test.describe('friend-graph demo', () => {
   })
 
   test('add-row inputs get the right type per declared column', async ({ page }) => {
-    await page.goto('/')
+    await gotoApp(page)
     // Numeric columns get type="number" so the browser rejects non-numeric
     // input before our codec ever sees it.
     await expect(page.getByTestId('add-Person-id')).toHaveAttribute('type', 'number')
@@ -223,7 +232,7 @@ test.describe('friend-graph demo', () => {
   })
 
   test('editing the program enables rebuild; rebuilding preserves EDB state', async ({ page }) => {
-    await page.goto('/')
+    await gotoApp(page)
 
     // Rebuild is disabled until the textarea diverges from the seed source.
     await expect(page.getByTestId('program-rebuild')).toBeDisabled()
@@ -249,7 +258,7 @@ test.describe('friend-graph demo', () => {
   })
 
   test('an invalid program shows a parse error and keeps the old session live', async ({ page }) => {
-    await page.goto('/')
+    await gotoApp(page)
 
     const textarea = page.getByTestId('program-source')
     await textarea.fill('this is not valid datalog')
@@ -263,7 +272,7 @@ test.describe('friend-graph demo', () => {
   })
 
   test('reset-to-seed restores the seed program and re-derives state', async ({ page }) => {
-    await page.goto('/')
+    await gotoApp(page)
 
     const textarea = page.getByTestId('program-source')
     // Replace the program with an empty (but valid) one, then reset.

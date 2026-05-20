@@ -35,6 +35,36 @@ function indexByPrev(elems: ReadonlyArray<ListElemRow>): Map<string, ListElemRow
   return out
 }
 
+/** Single-contiguous-edit diff between two strings: strip the longest
+ *  common prefix + suffix, the leftover middle is the change. Returns
+ *  `[removeStart, removeEnd)` as a half-open range into `prev`, and the
+ *  characters that need to be inserted at that position to get to
+ *  `next`. Covers everything a single keystroke or paste produces. */
+function diff(prev: string, next: string): {
+  removeStart: number
+  removeEnd: number
+  insertChars: string
+} {
+  let prefixLen = 0
+  const minLen = Math.min(prev.length, next.length)
+  while (prefixLen < minLen && prev[prefixLen] === next[prefixLen]) {
+    prefixLen++
+  }
+  let suffixLen = 0
+  while (
+    suffixLen < prev.length - prefixLen &&
+    suffixLen < next.length - prefixLen &&
+    prev[prev.length - 1 - suffixLen] === next[next.length - 1 - suffixLen]
+  ) {
+    suffixLen++
+  }
+  return {
+    removeStart: prefixLen,
+    removeEnd: prev.length - suffixLen,
+    insertChars: next.slice(prefixLen, next.length - suffixLen),
+  }
+}
+
 /** Reconstruct the rendered text by walking the linked list from the
  *  sentinel. Each `ListElem(prev, value, next)` row says "the element
  *  AFTER `prev` is `next`, and its character is `value`." Returns both
@@ -86,31 +116,42 @@ export function TextDemo(): JSX.Element {
     const prev = typedRef.current
     if (next === prev) return
 
-    if (next.startsWith(prev)) {
-      // Append. Each new char's parent is the previous tail element,
-      // which advances synchronously as we insert.
-      const suffix = next.slice(prev.length)
-      for (const ch of suffix) {
-        const tail = visibleTailRef.current
-        const parent = tail.length > 0 ? tail[tail.length - 1]! : SENTINEL
-        const ctr = nextCtr()
-        const id: ElemId = [REPLICA_ID, ctr]
-        inserts.insert([REPLICA_ID, ctr, parent[0], parent[1], ch])
-        visibleTailRef.current = [...tail, id]
-      }
-      typedRef.current = next
-    } else if (prev.startsWith(next)) {
-      // Backspace at the end. Pop N from the visible tail and emit a
-      // Remove op for each.
-      const toDelete = prev.length - next.length
-      for (let i = 0; i < toDelete; i++) {
-        const id = visibleTailRef.current.pop()
-        if (id) removes.insert([id[0], id[1]])
-      }
-      typedRef.current = next
+    // Compute the single contiguous diff between `prev` and `next`:
+    // strip the longest common prefix and suffix, and everything left
+    // over in the middle is what changed. Handles append / backspace
+    // / middle-insert / middle-delete / replace-selection in one go.
+    const { removeStart, removeEnd, insertChars } = diff(prev, next)
+    const tail = visibleTailRef.current
+
+    // Tombstone every character in the removed range.
+    for (let i = removeStart; i < removeEnd; i++) {
+      const id = tail[i]
+      if (id) removes.insert([id[0], id[1]])
     }
-    // else: middle edits aren't supported. Let `useEffect` resnap the
-    // textarea to the canonical CRDT view on the next render.
+
+    // Insert each new character. The parent of the first new char is
+    // the visible element immediately before the edit point (or the
+    // sentinel if we're inserting at position 0). Each subsequent new
+    // char's parent is the char we just inserted — that's how RGA
+    // chains a multi-char paste so the elements stay adjacent.
+    const newIds: ElemId[] = []
+    let parent: ElemId = removeStart > 0 ? tail[removeStart - 1]! : SENTINEL
+    for (const ch of insertChars) {
+      const ctr = nextCtr()
+      const id: ElemId = [REPLICA_ID, ctr]
+      inserts.insert([REPLICA_ID, ctr, parent[0], parent[1], ch])
+      newIds.push(id)
+      parent = id
+    }
+
+    // Rebuild the local visible-tail mirror: the unchanged prefix,
+    // then the new inserts, then the unchanged suffix.
+    visibleTailRef.current = [
+      ...tail.slice(0, removeStart),
+      ...newIds,
+      ...tail.slice(removeEnd),
+    ]
+    typedRef.current = next
   }
 
   return (
@@ -170,7 +211,7 @@ function EditorPanel({
     <div className="card">
       <div className="card-header">
         <h2>Editor</h2>
-        <span className="muted text-hint">append / backspace only — no middle edits</span>
+        <span className="muted text-hint">arbitrary inserts, deletes, and replacements</span>
       </div>
       <textarea
         className="text-editor"

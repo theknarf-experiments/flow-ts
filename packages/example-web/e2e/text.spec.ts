@@ -79,4 +79,55 @@ test.describe('text CRDT demo', () => {
     await expect(page.getByTestId('relation-row-Insert-1-1-0-0-a')).toBeVisible()
     await expect(page.getByTestId('relation-row-Insert-1-2-1-1-b')).toBeVisible()
   })
+
+  test('inserting in the middle of the text adds chars at the cursor', async ({ page }) => {
+    await gotoApp(page)
+    const editor = page.getByTestId('text-editor')
+    await editor.pressSequentially('hello')
+    // Cursor between 'e' and 'l' (position 2). Type a character that's
+    // unique to the string so the prefix/suffix diff is unambiguous.
+    await editor.evaluate((el: HTMLTextAreaElement) => el.setSelectionRange(2, 2))
+    await editor.pressSequentially('X')
+
+    await expect(editor).toHaveValue('heXllo')
+    await expect(page.getByTestId('stat-inserts')).toHaveText('6')
+    await expect(page.getByTestId('stat-removes')).toHaveText('0')
+    // The new insert (ctr 6) has the 'e' (ctr 2) as its parent — i.e.
+    // it points at the character it was inserted *after*.
+    await expect(page.getByTestId('relation-row-Insert-1-6-1-2-X')).toBeVisible()
+  })
+
+  test('deleting in the middle tombstones the right character', async ({ page }) => {
+    await gotoApp(page)
+    const editor = page.getByTestId('text-editor')
+    await editor.pressSequentially('hello')
+    // Move into the middle and backspace the second 'l' (position 3).
+    await editor.press('ArrowLeft') // cursor before 'o'
+    await editor.press('Backspace') // deletes 'l' at position 3
+
+    await expect(editor).toHaveValue('helo')
+    await expect(page.getByTestId('stat-inserts')).toHaveText('5')
+    await expect(page.getByTestId('stat-removes')).toHaveText('1')
+    await expect(page.getByTestId('stat-visible')).toHaveText('4')
+    // The tombstone targets ctr 4 (the second 'l') — not ctr 5 ('o').
+    await expect(page.getByTestId('relation-row-Remove-1-4')).toBeVisible()
+  })
+
+  test('selecting a range and typing replaces the selection in one go', async ({ page }) => {
+    await gotoApp(page)
+    const editor = page.getByTestId('text-editor')
+    await editor.pressSequentially('hello world')
+    // Select 'world' (positions 6..11) and replace with 'there'.
+    await editor.evaluate((el: HTMLTextAreaElement) => {
+      el.setSelectionRange(6, 11)
+    })
+    await editor.pressSequentially('there')
+
+    await expect(editor).toHaveValue('hello there')
+    // 11 original + 5 new inserts (the chars in 'there') = 16 inserts;
+    // 5 tombstones for the original 'world'.
+    await expect(page.getByTestId('stat-inserts')).toHaveText('16')
+    await expect(page.getByTestId('stat-removes')).toHaveText('5')
+    await expect(page.getByTestId('stat-visible')).toHaveText('11')
+  })
 })

@@ -147,4 +147,41 @@ test.describe('reachability demo', () => {
     await expect(page.getByTestId('relation-count-Reach')).toHaveText('6 rows')
     await expect(page.getByTestId('relation-row-Reach-6')).toBeVisible()
   })
+
+  test('EDB tables get an inline add-row; IDB tables do not', async ({ page }) => {
+    await page.goto('/')
+    // EDBs: Node, Source, Edge — all show an add-row.
+    for (const rel of ['Node', 'Source', 'Edge']) {
+      await expect(page.getByTestId(`add-row-${rel}`)).toBeVisible()
+      await expect(page.getByTestId(`add-${rel}-submit`)).toBeVisible()
+    }
+    // IDB: Reach — derived, no add-row.
+    await expect(page.getByTestId('add-row-Reach')).toHaveCount(0)
+  })
+
+  test('inserting a row via the add-row updates the live state', async ({ page }) => {
+    await page.goto('/')
+
+    // Use the Edge table's add-row to add 4 → 6 (same as the form
+    // does, but via the generic component).
+    await page.getByTestId('add-Edge-src').fill('4')
+    await page.getByTestId('add-Edge-dst').fill('6')
+    await page.getByTestId('add-Edge-submit').click()
+
+    await expect(page.getByTestId('relation-count-Edge')).toHaveText('5 rows')
+    await expect(page.getByTestId('relation-count-Reach')).toHaveText('6 rows')
+    // Inputs clear after a successful insert.
+    await expect(page.getByTestId('add-Edge-src')).toHaveValue('')
+    await expect(page.getByTestId('add-Edge-dst')).toHaveValue('')
+  })
+
+  test('add-row also works via Enter and clears on success', async ({ page }) => {
+    await page.goto('/')
+
+    await page.getByTestId('add-Node-id').fill('100')
+    await page.getByTestId('add-Node-id').press('Enter')
+
+    await expect(page.getByTestId('relation-count-Node')).toHaveText('8 rows')
+    await expect(page.getByTestId('add-Node-id')).toHaveValue('')
+  })
 })

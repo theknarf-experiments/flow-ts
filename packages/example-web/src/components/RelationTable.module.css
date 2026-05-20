@@ -89,3 +89,62 @@
   font-style: italic;
   color: #6a6f78;
 }
+
+/* Actions column: shrink to fit, no wrap. `width: 1%` is the
+ * standard CSS trick — combined with `white-space: nowrap`, the
+ * column ends up exactly as wide as its widest cell. */
+.actionsCell {
+  width: 1%;
+  white-space: nowrap;
+  text-align: right;
+}
+
+/* Add-row sits in <tfoot>. Visually separated from the data rows by
+ * a subtle top border. */
+.addRow {
+  background: #14171c;
+}
+
+.addRow td {
+  padding: 0.35rem 0.5rem;
+  border-top: 1px solid #2a2f37;
+  border-bottom: none;
+}
+
+.addInput {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.25rem 0.4rem;
+  background: #0f1115;
+  border: 1px solid #2a2f37;
+  border-radius: 0.25rem;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+}
+
+.addInput::placeholder {
+  color: #4a4f57;
+  font-style: italic;
+}
+
+.addInput:focus {
+  outline: none;
+  border-color: #3a5f8a;
+}
+
+.addButton {
+  padding: 0.25rem 0.7rem;
+  background: #2a2f37;
+  border: 1px solid #3a3f47;
+  border-radius: 0.25rem;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.addButton:hover {
+  background: #3a3f47;
+}

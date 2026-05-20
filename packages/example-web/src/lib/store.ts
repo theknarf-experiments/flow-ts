@@ -42,21 +42,120 @@ class RelationState {
 
 export class Store {
   #session: ProgramSession
+  #program: Program
   #relations = new Map<string, RelationState>()
+  /** Authoritative store of EDB rows the user has inserted, keyed by
+   *  relation name → encoded row → row tuple. Survives `replaceProgram`
+   *  so a user can iterate on rules without losing their EDB inputs,
+   *  even if the rule edit briefly drops some relations from the
+   *  program. Mutated only via `update()` (which knows the row passed
+   *  the session validation) and used to seed replays. */
+  #edbRows = new Map<string, Map<string, Row>>()
   /** Microtask flush guard. Set when an update is queued; cleared when
    *  the microtask runs. */
   #scheduled = false
   /** Set of relations touched during the in-progress tick. Used to
    *  decide which listener sets to notify after `advance()`. */
   #touchedThisTick = new Set<string>()
+  /** Subscribers notified whenever `replaceProgram` swaps the rules. */
+  #programListeners = new Set<Listener>()
 
   constructor(program: Program) {
+    this.#program = program
     // The sink only fires for IDB heads — the executor doesn't echo EDB
     // writes back through it. EDB live state is mirrored directly by
     // `update()` below so `useLiveQuery` on an EDB still works.
     this.#session = openSession(program, {}, (rel, row, diff) => {
       this.#queueDiff(rel, row, diff)
     })
+  }
+
+  /** Current parsed Program. Stable per session; changes only via
+   *  `replaceProgram`. Read by the inspector to know what schemas to
+   *  render. */
+  get program(): Program {
+    return this.#program
+  }
+
+  /** Subscribe to program swaps. The listener fires once per successful
+   *  `replaceProgram`, after the new session has flushed its initial
+   *  derivations. */
+  subscribeProgram(listener: Listener): () => void {
+    this.#programListeners.add(listener)
+    return () => {
+      this.#programListeners.delete(listener)
+    }
+  }
+
+  /** Swap the running program. Closes the old session, opens a new one
+   *  with the new rules, and replays every authoritative EDB row whose
+   *  relation still exists as an EDB (with matching arity) in the new
+   *  program. IDB derivations rebuild from those replayed inputs.
+   *
+   *  EDB rows for relations *not* in the new program stay parked in
+   *  `#edbRows` — if a later `replaceProgram` re-introduces the
+   *  relation, those rows come back automatically. Mismatched-arity
+   *  rows are skipped silently rather than crashing the replay. */
+  replaceProgram(newProgram: Program): void {
+    // 1. Flush any in-flight writes so the old session's IDB derivations
+    //    don't leak into the new one through stale sink invocations.
+    this.#flushNow()
+
+    // 2. Tear down the old session. `close()` runs one final advance;
+    //    we don't care about diffs it might produce since we're about
+    //    to wipe the derived state anyway.
+    try {
+      this.#session.close()
+    } catch {
+      // session already closed — ignore
+    }
+
+    // 3. Wipe every mirror so subscribers don't see stale rows post-
+    //    swap. Remember which ones had a non-empty snapshot so we can
+    //    fire their listeners even when the new program leaves them
+    //    empty. (The authoritative EDB rows live in `#edbRows`, which
+    //    we don't touch — those persist across rebuilds.)
+    const toNotify = new Set<string>()
+    for (const [name, state] of this.#relations) {
+      if (state.snapshot.length > 0) toNotify.add(name)
+      state.rows.clear()
+      state.pending.clear()
+      state.snapshot = []
+    }
+
+    // 4. Open the new session against the new program.
+    this.#program = newProgram
+    this.#session = openSession(newProgram, {}, (rel, row, diff) => {
+      this.#queueDiff(rel, row, diff)
+    })
+
+    // 5. Replay authoritative EDB rows that fit. Iterating `newProgram.edbs`
+    //    (rather than every name in `#edbRows`) ensures we don't try to
+    //    insert into IDBs or undeclared relations.
+    for (const edb of newProgram.edbs) {
+      const bucket = this.#edbRows.get(edb.name)
+      if (!bucket) continue
+      const arity = edb.arity()
+      for (const row of bucket.values()) {
+        if (row.length !== arity) continue
+        try {
+          this.#session.update(edb.name, row, +1)
+          this.#queueDiff(edb.name, row, +1)
+        } catch {
+          // row rejected — skip silently so one bad row doesn't poison
+          // the rest of the replay
+        }
+      }
+    }
+
+    // 6. Drive the new graph to fixpoint over the replayed EDB state
+    //    and notify both per-relation and program-level subscribers.
+    this.#flushNow()
+    for (const name of toNotify) {
+      const state = this.#relations.get(name)
+      if (state) for (const l of state.listeners) l()
+    }
+    for (const l of this.#programListeners) l()
   }
 
   #queueDiff(rel: string, row: Row, diff: number): void {
@@ -100,7 +199,23 @@ export class Store {
    *  locally so EDB live queries see the change — the executor only
    *  emits sink callbacks for IDB heads. */
   update(relation: string, row: Row, diff: number): void {
+    // Validate first — if `session.update` throws (unknown relation,
+    // closed session, etc.) we don't want to mutate any local state.
     this.#session.update(relation, row, diff)
+    // Track the row authoritatively so a future `replaceProgram` can
+    // replay it even if the user briefly swaps in a program that
+    // doesn't declare this relation.
+    const key = encodeRow(row)
+    let bucket = this.#edbRows.get(relation)
+    if (!bucket) {
+      bucket = new Map()
+      this.#edbRows.set(relation, bucket)
+    }
+    if (diff > 0) {
+      if (!bucket.has(key)) bucket.set(key, row)
+    } else if (diff < 0) {
+      bucket.delete(key)
+    }
     this.#queueDiff(relation, row, diff)
     this.#schedule()
   }
@@ -199,4 +314,17 @@ export function useLiveQuery<T extends Row>(
     () => store.snapshot(relation),
     () => store.snapshot(relation),
   ) as ReadonlyArray<T>
+}
+
+/**
+ * React hook: re-render when the store swaps program. Returns the
+ * currently-active parsed `Program`. The reference is stable until the
+ * next `replaceProgram` call, so it's safe to use as a dep.
+ */
+export function useProgram(store: Store): Program {
+  return useSyncExternalStore(
+    (cb) => store.subscribeProgram(cb),
+    () => store.program,
+    () => store.program,
+  )
 }

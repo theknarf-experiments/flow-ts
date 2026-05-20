@@ -9,14 +9,15 @@
 // ripple through the underlying flow-ts session and re-render the
 // others incrementally.
 
-import { useMemo } from 'react'
-import { Store, useLiveQuery } from './lib/store.js'
-import { program, SOURCE } from './program.js'
+import { useMemo, useState } from 'react'
+import { parseProgram } from '@flow-ts/parsing'
+import { Store, useLiveQuery, useProgram } from './lib/store.js'
+import { program as initialProgram, SOURCE } from './program.js'
 import { RelationTable } from './components/RelationTable.js'
 
 // One store per app. Seeded outside the React tree so HMR / strict-mode
 // double-mounts don't try to spin up a second graph.
-const store = new Store(program)
+const store = new Store(initialProgram)
 const persons = store.collection<readonly [number, string]>('Person')
 const me = store.collection<readonly [number]>('Me')
 const friends = store.collection<readonly [number, number]>('Friend')
@@ -74,23 +75,76 @@ export function App() {
 // --- program source ------------------------------------------------
 
 function ProgramPanel() {
-  // Show the actual Datalog source so readers can map what they're
-  // editing in the UI onto the rules driving the derivations. Wrapped
-  // in <details> so the section can be collapsed once you've seen it.
+  // Live-editable Datalog source. "Rebuild" parses the textarea, and if
+  // the new program parses cleanly, swaps it into the running store —
+  // existing EDB rows are captured and replayed against the new rules,
+  // so the demo's seed graph survives a rule edit.
+  const [draft, setDraft] = useState<string>(SOURCE.trim())
+  const [error, setError] = useState<string | null>(null)
+  const [status, setStatus] = useState<'idle' | 'dirty' | 'rebuilt'>('idle')
+
+  const onChange = (next: string) => {
+    setDraft(next)
+    setError(null)
+    setStatus(next.trim() === SOURCE.trim() ? 'idle' : 'dirty')
+  }
+
+  const rebuild = () => {
+    try {
+      const newProgram = parseProgram(draft, { grammarSource: 'live.dl' })
+      store.replaceProgram(newProgram)
+      setError(null)
+      setStatus('rebuilt')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      setStatus('dirty')
+    }
+  }
+
+  const reset = () => {
+    setDraft(SOURCE.trim())
+    setError(null)
+    try {
+      store.replaceProgram(parseProgram(SOURCE, { grammarSource: 'demo.dl' }))
+      setStatus('rebuilt')
+    } catch {
+      // The bundled SOURCE is known-good — this branch is unreachable.
+    }
+  }
+
   return (
     <section className="program">
       <details open data-testid="program-panel">
         <summary>Datalog program</summary>
-        <pre data-testid="program-source"><code>{SOURCE.trim()}</code></pre>
-        <p className="muted">
-          Three EDBs (<code>Person</code>, <code>Me</code>,{' '}
-          <code>Friend</code>) and two IDBs (<code>Reach</code> — recursive
-          transitive closure of <code>Friend</code> — and{' '}
-          <code>ICanReach</code>, which joins <code>Reach</code> back
-          against <code>Person</code> to surface human-readable names).
-          EDB rows are inserted from the UI via{' '}
-          <code>collection.insert()</code> — no fact files involved.
-        </p>
+        <textarea
+          className="program-editor"
+          data-testid="program-source"
+          value={draft}
+          onChange={(e) => onChange(e.target.value)}
+          spellCheck={false}
+          rows={Math.min(20, draft.split('\n').length + 1)}
+        />
+        <div className="program-actions">
+          <button
+            data-testid="program-rebuild"
+            onClick={rebuild}
+            disabled={status === 'idle'}
+          >rebuild</button>
+          <button
+            data-testid="program-reset"
+            onClick={reset}
+            disabled={draft.trim() === SOURCE.trim()}
+          >reset to seed</button>
+          <span className="program-status" data-testid="program-status">
+            {error
+              ? <span className="program-error">{error}</span>
+              : status === 'dirty'
+                ? <span className="muted">unsaved changes — click rebuild to apply</span>
+                : status === 'rebuilt'
+                  ? <span className="muted">program rebuilt · EDB rows replayed</span>
+                  : <span className="muted">edit the rules above, then rebuild — current EDB rows replay automatically.</span>}
+          </span>
+        </div>
       </details>
     </section>
   )
@@ -189,6 +243,18 @@ function RelationInspector() {
   // every diff via the same `useLiveQuery` hook as the bespoke panels
   // above. No per-relation glue. EDB tables grow an inline add-row;
   // IDB tables stay read-only.
+  //
+  // After a rule edit + rebuild, `useProgram` re-renders this section
+  // with the new EDB / IDB list — so adding a `.decl` and clicking
+  // rebuild surfaces a fresh table here automatically.
+  const program = useProgram(store)
+  const decls = useMemo(
+    () => [
+      ...program.edbs.map((d) => ({ decl: d, isEdb: true })),
+      ...program.idbs.map((d) => ({ decl: d, isEdb: false })),
+    ],
+    [program],
+  )
   return (
     <section className="inspector">
       <h2>All relations</h2>
@@ -200,44 +266,25 @@ function RelationInspector() {
         number.
       </p>
       <div className="tables">
-        <RelationTable
-          store={store}
-          program={program}
-          relation="Person"
-          actions={(row) => (
-            <button
-              aria-label={`remove person ${row[1]}`}
-              className="row-action"
-              onClick={() => persons.delete([row[0]!, row[1]!] as readonly [number, string])}
-            >×</button>
-          )}
-        />
-        <RelationTable
-          store={store}
-          program={program}
-          relation="Me"
-          actions={(row) => (
-            <button
-              aria-label={`remove me ${row[0]}`}
-              className="row-action"
-              onClick={() => me.delete([row[0]!] as readonly [number])}
-            >×</button>
-          )}
-        />
-        <RelationTable
-          store={store}
-          program={program}
-          relation="Friend"
-          actions={(row) => (
-            <button
-              aria-label={`remove friendship ${row[0]} to ${row[1]}`}
-              className="row-action"
-              onClick={() => friends.delete([row[0]!, row[1]!] as readonly [number, number])}
-            >×</button>
-          )}
-        />
-        <RelationTable store={store} program={program} relation="Reach" />
-        <RelationTable store={store} program={program} relation="ICanReach" />
+        {decls.map(({ decl, isEdb }) => (
+          <RelationTable
+            key={decl.name}
+            store={store}
+            program={program}
+            relation={decl.name}
+            actions={
+              isEdb
+                ? (row) => (
+                    <button
+                      aria-label={`remove ${decl.name} ${row.join(' ')}`}
+                      className="row-action"
+                      onClick={() => store.update(decl.name, [...row], -1)}
+                    >×</button>
+                  )
+                : undefined
+            }
+          />
+        ))}
       </div>
     </section>
   )

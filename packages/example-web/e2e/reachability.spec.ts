@@ -12,13 +12,14 @@
 import { expect, test } from '@playwright/test'
 
 test.describe('friend-graph demo', () => {
-  test('renders the Datalog program source', async ({ page }) => {
+  test('renders the Datalog program source in an editable textarea', async ({ page }) => {
     await page.goto('/')
     await expect(page.getByTestId('program-panel')).toBeVisible()
     const src = page.getByTestId('program-source')
-    await expect(src).toContainText('.decl Person(id: number, name: string)')
-    await expect(src).toContainText('Reach(x, y) :- Friend(x, y).')
-    await expect(src).toContainText(
+    const value = await src.inputValue()
+    expect(value).toContain('.decl Person(id: number, name: string)')
+    expect(value).toContain('Reach(x, y) :- Friend(x, y).')
+    expect(value).toContain(
       'ICanReach(name) :- Me(me), Reach(me, id), Person(id, name).',
     )
   })
@@ -67,7 +68,7 @@ test.describe('friend-graph demo', () => {
 
     // Removing 1 alice → 2 bob retracts bob, carol, and dave, leaving only
     // eve (still directly friended by alice via 1 → 5).
-    await page.getByRole('button', { name: 'remove friendship 1 to 2' }).click()
+    await page.getByRole('button', { name: 'remove Friend 1 2' }).click()
 
     await expect(page.getByTestId('stat-friends')).toHaveText('3')
     await expect(page.getByTestId('stat-reachable')).toHaveText('1')
@@ -81,7 +82,7 @@ test.describe('friend-graph demo', () => {
     await page.goto('/')
 
     // Drop Me=1 and add Me=2. From bob, reachable = {carol, dave}.
-    await page.getByRole('button', { name: 'remove me 1' }).click()
+    await page.getByRole('button', { name: 'remove Me 1' }).click()
     await page.getByTestId('add-Me-id').fill('2')
     await page.getByTestId('add-Me-id').press('Enter')
 
@@ -96,7 +97,7 @@ test.describe('friend-graph demo', () => {
 
   test('clearing Me empties ICanReach entirely', async ({ page }) => {
     await page.goto('/')
-    await page.getByRole('button', { name: 'remove me 1' }).click()
+    await page.getByRole('button', { name: 'remove Me 1' }).click()
 
     await expect(page.getByTestId('stat-me')).toHaveText('(none)')
     await expect(page.getByTestId('stat-reachable')).toHaveText('0')
@@ -179,5 +180,62 @@ test.describe('friend-graph demo', () => {
     // Me row count unchanged, and the input is preserved (no clear on bail).
     await expect(page.getByTestId('relation-count-Me')).toHaveText('1 row')
     await expect(page.getByTestId('add-Me-id')).toHaveValue('not-a-number')
+  })
+
+  test('editing the program enables rebuild; rebuilding preserves EDB state', async ({ page }) => {
+    await page.goto('/')
+
+    // Rebuild is disabled until the textarea diverges from the seed source.
+    await expect(page.getByTestId('program-rebuild')).toBeDisabled()
+
+    // Append a harmless second IDB rule: alias for ICanReach.
+    const textarea = page.getByTestId('program-source')
+    const current = await textarea.inputValue()
+    const next = `${current}\n\n.out\n.decl Buddy(name: string)\n\nBuddy(n) :- ICanReach(n).\n`
+    await textarea.fill(next)
+
+    await expect(page.getByTestId('program-rebuild')).toBeEnabled()
+    await page.getByTestId('program-rebuild').click()
+
+    // The new IDB appears in the inspector with the same row count as
+    // ICanReach (4 reachable), proving EDB state was replayed against
+    // the new graph rather than reset to empty.
+    await expect(page.getByTestId('relation-table-Buddy')).toBeVisible()
+    await expect(page.getByTestId('relation-count-Buddy')).toHaveText('4 rows')
+    await expect(page.getByTestId('relation-count-ICanReach')).toHaveText('4 rows')
+    // Headline stats survived the swap.
+    await expect(page.getByTestId('stat-people')).toHaveText('6')
+    await expect(page.getByTestId('stat-friends')).toHaveText('4')
+  })
+
+  test('an invalid program shows a parse error and keeps the old session live', async ({ page }) => {
+    await page.goto('/')
+
+    const textarea = page.getByTestId('program-source')
+    await textarea.fill('this is not valid datalog')
+    await page.getByTestId('program-rebuild').click()
+
+    // Error is surfaced inline.
+    await expect(page.getByTestId('program-status')).toContainText(/expected|parse/i)
+    // The old session is still answering queries.
+    await expect(page.getByTestId('stat-reachable')).toHaveText('4')
+    await expect(page.getByTestId('reachable-bob')).toBeVisible()
+  })
+
+  test('reset-to-seed restores the seed program and re-derives state', async ({ page }) => {
+    await page.goto('/')
+
+    const textarea = page.getByTestId('program-source')
+    // Replace the program with an empty (but valid) one, then reset.
+    await textarea.fill('.in\n.decl Person(id: number, name: string)\n\n.out\n.decl Pass(id: number)\n\nPass(id) :- Person(id, _).\n')
+    await page.getByTestId('program-rebuild').click()
+    await expect(page.getByTestId('relation-count-Pass')).toHaveText('6 rows')
+
+    await page.getByTestId('program-reset').click()
+
+    // Original IDBs come back; ICanReach derives the same 4 names.
+    await expect(page.getByTestId('relation-table-ICanReach')).toBeVisible()
+    await expect(page.getByTestId('relation-count-ICanReach')).toHaveText('4 rows')
+    await expect(page.getByTestId('stat-reachable')).toHaveText('4')
   })
 })

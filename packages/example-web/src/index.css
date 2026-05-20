@@ -88,6 +88,67 @@ header p {
   color: #b9e3b9;
 }
 
+.program-editor {
+  width: 100%;
+  box-sizing: border-box;
+  background: #0f1115;
+  border-radius: 0.25rem;
+  padding: 0.75rem 1rem;
+  margin: 0.75rem 0 0.5rem;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: #cfd3d8;
+  font-family: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  border: 1px solid #2a2f37;
+  resize: vertical;
+  min-height: 6rem;
+}
+
+.program-editor:focus {
+  outline: none;
+  border-color: #3a5f8a;
+}
+
+.program-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.25rem;
+}
+
+.program-actions button {
+  padding: 0.3rem 0.7rem;
+  background: #2a2f37;
+  border: 1px solid #3a3f47;
+  border-radius: 0.25rem;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.program-actions button:hover:not(:disabled) {
+  background: #3a3f47;
+}
+
+.program-actions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.program-status {
+  font-size: 0.85rem;
+  color: #6a6f78;
+}
+
+.program-error {
+  color: #d44;
+  font-family: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));

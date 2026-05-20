@@ -17,6 +17,8 @@ A `Store` wraps one `openSession` from `@flow-ts/executing`. `Collection<T>` is 
 
 Two bespoke panels in the demo each subscribe through their own `useLiveQuery` — one People roster that flags who's reachable from "me" + headline stats, and one name-only "I can reach" list. Underneath them sits a generic `<RelationTable>` (one instance per declared relation), which derives its columns from the program's `.decl` and renders through `@tanstack/react-table` for free sortable headers. Edits made in any panel — including row-level deletes and the inline add-row that EDB tables grow at the bottom — ripple through the underlying Datalog program and update the rest incrementally.
 
+The program panel at the top is **live-editable**: change a rule, click "rebuild", and `Store.replaceProgram` captures the current EDB rows, opens a fresh session against the new rules, and replays the EDBs against the new dataflow graph. Adding a new IDB rule surfaces a new table in the inspector immediately. Rule edits aren't incremental in the IVM sense — the graph rebuilds from scratch each time — but EDB state survives intermediate edits, so iterating on rules doesn't lose your inputs.
+
 The Datalog program (`src/program.ts`) is a friend-graph reachability example with both numeric (ids) and string (names) columns:
 
 ```datalog

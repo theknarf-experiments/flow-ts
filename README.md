@@ -199,10 +199,20 @@ The executor compiles a parsed `Program` into a db-ivm dataflow graph, one strat
 
 Rows cross the dataflow boundary as comma-joined strings (`"1,2,3,"`) rather than `number[]`: db-ivm uses JS `Map` for its top-level indexes, which means object identity matters, but JS hashes strings natively. The string boundary sidesteps both that and `JSON.stringify`'s aversion to `bigint`. Inside operators we project columns at the string level when possible, falling back to `number[]` only for arithmetic / compare evaluation.
 
+## Browser usage
+
+`@flow-ts/executing`, `@flow-ts/reading` and the rest of the stack are filesystem-free, so the whole engine runs in the browser unchanged. There's a working React demo in `packages/example-web/` with a Tanstack-DB-inspired pattern: one `Store` wraps a session, `Collection<T>` is a typed EDB handle, and `useLiveQuery(store, idb)` is a React hook that subscribes to an IDB head. Multiple components can subscribe to the same store and re-render incrementally as you edit the EDBs.
+
+```bash
+pnpm -F @flow-ts/example-web run dev
+```
+
+The whole pipeline (parser, planner, db-ivm runtime, React glue) ships in ~74 kB gzipped.
+
 ## Tests
 
 ```bash
-pnpm -r run test                       # 290 unit + property tests
+pnpm -r run test                       # 299 unit + property tests
 pnpm -F @flow-ts/cli test -- vs-rust   # diff TS output against the Rust binary
 ```
 

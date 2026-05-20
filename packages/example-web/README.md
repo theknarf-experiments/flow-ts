@@ -15,7 +15,7 @@ Open http://localhost:5173.
 
 A `Store` wraps one `openSession` from `@flow-ts/executing`. `Collection<T>` is a typed handle to an EDB you can `insert` / `delete` rows on. `useLiveQuery(store, idbName)` is a React hook that subscribes to an IDB head and re-renders the component whenever its row set changes.
 
-Four independent components in the demo each subscribe through their own `useLiveQuery` — one stats panel, one node list with reachability highlighting, one pure-reachable list, and one editor. Edits in any of them ripple through the underlying Datalog program and update the rest incrementally.
+Two bespoke panels in the demo each subscribe through their own `useLiveQuery` — one all-nodes list with reachability highlighting + headline stats, and one pure-reachable list. Underneath them sits a generic `<RelationTable>` (one instance per declared relation), which derives its columns from the program's `.decl` and renders through `@tanstack/react-table` for free sortable headers. Edits made in any panel — including row-level deletes and the inline add-row that EDB tables grow at the bottom — ripple through the underlying Datalog program and update the rest incrementally.
 
 The Datalog program (`src/program.ts`) is a tiny reachability example:
 
@@ -59,8 +59,8 @@ Updates auto-batch via a microtask flush — a flurry of writes produces a singl
 
 ```
 dist/index.html                  0.42 kB
-dist/assets/index-*.css          2.12 kB
-dist/assets/index-*.js         243.17 kB    74 kB gzipped
+dist/assets/index-*.css          4.89 kB
+dist/assets/index-*.js         297.86 kB    88.7 kB gzipped
 ```
 
-That's the whole flow-ts pipeline — parsing, stratification, planning, the db-ivm operator runtime, and the React glue — in 74 kB gzipped.
+That's the whole flow-ts pipeline — parsing, stratification, planning, the db-ivm operator runtime, Tanstack Table, and the React glue — in ~89 kB gzipped.

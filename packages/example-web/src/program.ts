@@ -1,35 +1,24 @@
-// The Datalog program backing the demo. Two EDBs (Node, Edge) and one
-// recursive IDB (Reach) that computes everything reachable from a
-// fixed `source` row in Node. The program is intentionally tiny so
-// the focus stays on the React integration, not the Datalog.
+// The Datalog program backing the demo. Three EDBs (Node, Source,
+// Edge) and one recursive IDB (Reach). The program is intentionally
+// tiny so the focus stays on the React integration, not the Datalog.
 //
-// Schema:
-//   .decl Node(id: number)                                   -- EDB
-//   .decl Source(id: number)                                 -- EDB
-//   .decl Edge(from: number, to: number)                     -- EDB
-//   .decl Reach(id: number)                                  -- IDB
-//
-// Rules:
-//   Reach(y) :- Source(y).
-//   Reach(z) :- Reach(y), Edge(y, z).
+// `.input <file>.csv` declarations only matter for the CLI's batch
+// mode (where the executor reads facts off disk). In the browser
+// we populate EDBs by calling `collection.insert(row)`, so they're
+// omitted here. Likewise `.rule` is just a section header for the
+// batch CLI's `.dl` files — the grammar treats it as optional.
 
 import { parseProgram } from '@flow-ts/parsing'
 
 export const SOURCE = `\
 .in
 .decl Node(id: number)
-.input Node.csv
-
 .decl Source(id: number)
-.input Source.csv
-
 .decl Edge(src: number, dst: number)
-.input Edge.csv
 
 .printsize
 .decl Reach(id: number)
 
-.rule
 Reach(y) :- Source(y).
 Reach(z) :- Reach(y), Edge(y, z).
 `

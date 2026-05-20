@@ -62,9 +62,11 @@ function ProgramPanel() {
         <summary>Datalog program</summary>
         <pre data-testid="program-source"><code>{SOURCE.trim()}</code></pre>
         <p className="muted">
-          Two EDBs (<code>Node</code>, <code>Source</code>, <code>Edge</code>) and
+          Three EDBs (<code>Node</code>, <code>Source</code>, <code>Edge</code>) and
           one recursive IDB (<code>Reach</code>). The first rule seeds reach with the
-          source; the second propagates reachability along edges.
+          source; the second propagates reachability along edges. EDB rows are
+          inserted from the UI via <code>collection.insert()</code> — no fact
+          files involved.
         </p>
       </details>
     </section>

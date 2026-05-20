@@ -96,8 +96,8 @@ function fdFor(filePath: string): number {
 }
 
 /** Append one CSV row to `filePath`, reusing a cached file descriptor. */
-export function appendCsvRow(filePath: string, row: readonly number[]): void {
-  fs.writeSync(fdFor(filePath), `${row.map((v) => v.toString()).join(',')}\n`)
+export function appendCsvRow(filePath: string, row: Row): void {
+  fs.writeSync(fdFor(filePath), `${row.map((v) => String(v)).join(',')}\n`)
 }
 
 /** Append one `name: size` line to `filePath`. */

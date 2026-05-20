@@ -10,7 +10,11 @@
 //   - K-only streams: `IStreamBuilder<string>`             (encoded row == key)
 //
 // String encoding sidesteps d2ts's two limitations on bigint-bearing
-// row arrays (JS Map identity + JSON.stringify in delta tracking).
+// row arrays (JS Map identity + JSON.stringify in delta tracking). The
+// wire format (see `@flow-ts/reading/encoding.ts`) is type-tagged per
+// field, so string columns survive the encode/decode round-trip
+// alongside numbers; see `evalCompare`'s fast path below for how the
+// runtime stays oblivious to the value type for equality/ordering.
 //
 // **Status**: handles single- and multi-IDB strata with the common
 // transformation kinds (RowTo*/KvTo*/Jn*/Nj*/Cartesian), constraint
@@ -57,7 +61,7 @@ import {
   transformationOutput,
   unaryInput,
 } from '@flow-ts/planning'
-import { type Row, decodeRow, encodeRow } from '@flow-ts/reading'
+import { type Row, type Value, constToValue, decodeRow, encodeRow } from '@flow-ts/reading'
 import { Strata } from '@flow-ts/strata'
 
 export type IdbSink = (relationName: string, row: Row, diff: number) => void
@@ -406,7 +410,13 @@ function applyAggregation(
         let count = 0
         for (const [encV, mult] of vals) {
           if (mult <= 0) continue
-          const v = decodeRow(encV)[0]!
+          const cell = decodeRow(encV)[0]!
+          if (operator !== 'Count' && typeof cell !== 'number') {
+            throw new Error(
+              `applyAggregation (${operator}): non-numeric value not supported`,
+            )
+          }
+          const v = cell as number
           for (let i = 0; i < mult; i++) {
             switch (operator) {
               case 'Max':
@@ -727,11 +737,11 @@ type ArithArg = import('@flow-ts/planning').ArithmeticArgument
 type CompareArg = import('@flow-ts/planning').ComparisonExprArgument
 type BaseConstraintsT = import('@flow-ts/planning').BaseConstraints
 
-/** Resolves a TransformationArgument to its concrete numeric value. */
-type ArgReader = (arg: TArg) => number
+/** Resolves a TransformationArgument to its concrete cell value. */
+type ArgReader = (arg: TArg) => Value
 
 /** Reader for KV-form inputs (one keyed pair). */
-function kvReader(key: readonly number[], value: readonly number[]): ArgReader {
+function kvReader(key: Row, value: Row): ArgReader {
   return (arg) => {
     if (arg.kind !== 'KV') throw new Error(`kvReader: expected KV arg, got ${arg.kind}`)
     const arr = arg.isValue ? value : key
@@ -743,9 +753,9 @@ function kvReader(key: readonly number[], value: readonly number[]): ArgReader {
 
 /** Reader for join-output inputs: shared key, left value, right value. */
 function jnReader(
-  key: readonly number[],
-  leftValue: readonly number[],
-  rightValue: readonly number[],
+  key: Row,
+  leftValue: Row,
+  rightValue: Row,
 ): ArgReader {
   return (arg) => {
     if (arg.kind !== 'Jn') throw new Error(`jnReader: expected Jn arg, got ${arg.kind}`)
@@ -761,24 +771,21 @@ function jnReader(
   }
 }
 
-function constToNumber(c: import('@flow-ts/parsing').Const): number {
-  if (c.kind === 'Integer') return c.value
-  if (c.kind === 'Float') {
-    const buf = new ArrayBuffer(8)
-    new BigInt64Array(buf)[0] = c.bits
-    return new Float64Array(buf)[0]!
-  }
-  throw new Error(`constToNumber: ${c.kind} constants not yet supported`)
+function evalFactor(f: FactorArg, read: ArgReader): Value {
+  return f.kind === 'Const' ? constToValue(f.value) : read(f.argument)
 }
 
-function evalFactor(f: FactorArg, read: ArgReader): number {
-  return f.kind === 'Const' ? constToNumber(f.value) : read(f.argument)
+function requireNumber(v: Value, ctx: string): number {
+  if (typeof v !== 'number') {
+    throw new Error(`${ctx}: arithmetic on non-numeric value (${typeof v})`)
+  }
+  return v
 }
 
 function evalArith(arith: ArithArg, read: ArgReader): number {
-  let acc = evalFactor(arith.init, read)
+  let acc = requireNumber(evalFactor(arith.init, read), 'evalArith')
   for (const [op, factor] of arith.rest) {
-    const x = evalFactor(factor, read)
+    const x = requireNumber(evalFactor(factor, read), 'evalArith')
     switch (op) {
       case 'Plus':    acc = acc + x; break
       case 'Minus':   acc = acc - x; break
@@ -790,7 +797,26 @@ function evalArith(arith: ArithArg, read: ArgReader): number {
   return acc
 }
 
+/** Compare two values for an `Equals`/`NotEquals`/ordering operator.
+ *  Lifts both sides through `evalArith` only when neither side is a bare
+ *  variable reference — string operands are handled with JS's native
+ *  lexicographic compare. A mixed number/string compare goes through the
+ *  arithmetic path and trips `requireNumber`, which is the right error. */
 function evalCompare(cmp: CompareArg, read: ArgReader): boolean {
+  // Fast path: both sides are bare arguments (no arithmetic). Compare the
+  // raw values, which works for strings AND numbers.
+  if (cmp.left.rest.length === 0 && cmp.right.rest.length === 0) {
+    const l = evalFactor(cmp.left.init, read)
+    const r = evalFactor(cmp.right.init, read)
+    switch (cmp.operator) {
+      case 'Equals':           return l === r
+      case 'NotEquals':        return l !== r
+      case 'GreaterThan':      return l > r
+      case 'GreaterEqualThan': return l >= r
+      case 'LessThan':         return l < r
+      case 'LessEqualThan':    return l <= r
+    }
+  }
   const l = evalArith(cmp.left, read)
   const r = evalArith(cmp.right, read)
   switch (cmp.operator) {
@@ -809,7 +835,7 @@ function passesFilters(
   read: ArgReader,
 ): boolean {
   for (const [arg, c] of constraints.constantEqConstraints) {
-    if (read(arg) !== constToNumber(c)) return false
+    if (read(arg) !== constToValue(c)) return false
   }
   for (const [a, b] of constraints.variableEqConstraints) {
     if (read(a) !== read(b)) return false
@@ -854,7 +880,7 @@ function makeRowToRowFn(flow: TransformationFlow): (encoded: string) => string |
     return (encoded) => {
       const row = decodeRow(encoded)
       const read = kvReader(EMPTY_KEY, row)
-      const out: number[] = projections.map((p) =>
+      const out: Value[] = projections.map((p) =>
         p.kind === 'Copy' ? row[p.index]! : evalArith(p.arithmetic, read),
       )
       return encodeRow(out)
@@ -1049,10 +1075,30 @@ function makeJoinOutFn(
 }
 
 /** Split an encoded row into its column-string parts without parsing
- *  numbers. Inverse of `encodeRow`. */
+ *  numbers. Inverse of `encodeRow`. Each returned element is the field's
+ *  still-encoded on-wire bytes (no terminator, escapes intact) so the
+ *  picker functions below can concatenate them back with `,` terminators
+ *  to re-form a valid encoded row. */
 function splitEncoded(encoded: string): string[] {
   if (encoded === '') return []
-  return encoded.slice(0, -1).split(',')
+  const out: string[] = []
+  let start = 0
+  let i = 0
+  while (i < encoded.length) {
+    const ch = encoded[i]!
+    if (ch === '\\') {
+      // `\` swallows the next character; escaped `,` doesn't terminate.
+      i += 2
+      continue
+    }
+    if (ch === ',') {
+      out.push(encoded.substring(start, i))
+      start = i + 1
+    }
+    i++
+  }
+  if (start < encoded.length) out.push(encoded.substring(start))
+  return out
 }
 
 /** Project Jn-flavoured `[isRight, isValue, id]` slots into a comma-

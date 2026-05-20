@@ -37,7 +37,7 @@ export function runCli(args: Args): Map<string, number> {
   // Accumulate per-row multiplicities. db-ivm emits intermediate diffs
   // during fixpoint iteration — same row can be +1 / -1 across ticks —
   // so we collapse to the final set after `executeProgram` returns.
-  const rowMultiplicities = new Map<string, Map<string, [number[], number]>>()
+  const rowMultiplicities = new Map<string, Map<string, [Row, number]>>()
   const sink: IdbSink = (rel, row, diff) => {
     let rels = rowMultiplicities.get(rel)
     if (!rels) {
@@ -148,9 +148,9 @@ export function runStreamCli(
   const program = parseProgram(source, { grammarSource: args.program })
 
   // Per-tick diff buffer; flushed on each advance.
-  type Pending = Map<string, Map<string, [number[], number]>>
+  type Pending = Map<string, Map<string, [Row, number]>>
   let pending: Pending = new Map()
-  const recordDiff = (rel: string, row: readonly number[], diff: number) => {
+  const recordDiff = (rel: string, row: Row, diff: number) => {
     let rels = pending.get(rel)
     if (!rels) {
       rels = new Map()

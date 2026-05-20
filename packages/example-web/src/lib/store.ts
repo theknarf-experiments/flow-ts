@@ -17,7 +17,7 @@
 import { useSyncExternalStore } from 'react'
 import { openSession, type ProgramSession } from '@flow-ts/executing'
 import type { Program } from '@flow-ts/parsing'
-import type { Row } from '@flow-ts/reading'
+import { encodeRow, type Row } from '@flow-ts/reading'
 
 type Listener = () => void
 
@@ -26,7 +26,7 @@ type Listener = () => void
  *  identity-based reconciliation works when we hand the same row
  *  reference back across ticks. */
 class RelationState {
-  /** Composite key (`row.join(',')`) → live row tuple. Excludes any
+  /** Composite key (`encodeRow(row)`) → live row tuple. Excludes any
    *  row whose net multiplicity dropped to zero. */
   readonly rows = new Map<string, Row>()
   /** Listeners (React subscribers) attached via `subscribe()`. */
@@ -61,7 +61,9 @@ export class Store {
 
   #queueDiff(rel: string, row: Row, diff: number): void {
     const state = this.#getState(rel)
-    const key = row.map((v) => v.toString()).join(',')
+    // Use the same encoding as the executor so a row containing `,` or `\`
+    // in a string column can't collide with a different row.
+    const key = encodeRow(row)
     const existing = state.pending.get(key)
     if (existing) {
       existing[1] += diff

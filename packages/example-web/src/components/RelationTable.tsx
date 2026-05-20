@@ -85,10 +85,12 @@ export function RelationTable({
   return (
     <table className={styles.table} data-testid={`relation-table-${relation}`}>
       <caption className={styles.caption}>
-        <span className={styles.relName}>{title ?? relation}</span>
-        <span className={styles.relSchema}>({schema})</span>
-        <span className={styles.relCount} data-testid={`relation-count-${relation}`}>
-          {rows.length} {rows.length === 1 ? 'row' : 'rows'}
+        <span className={styles.captionInner}>
+          <span className={styles.relName}>{title ?? relation}</span>
+          <span className={styles.relSchema}>({schema})</span>
+          <span className={styles.relCount} data-testid={`relation-count-${relation}`}>
+            {rows.length} {rows.length === 1 ? 'row' : 'rows'}
+          </span>
         </span>
       </caption>
       <thead>

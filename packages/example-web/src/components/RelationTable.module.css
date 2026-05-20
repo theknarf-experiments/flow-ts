@@ -3,24 +3,31 @@
   border-collapse: collapse;
   background: #14171c;
   border: 1px solid #2a2f37;
-  border-radius: 0.5rem;
-  overflow: hidden;
+  /* The caption box draws its own top corners (radius 0.5rem 0.5rem 0 0
+   * + own border); the table itself only needs its bottom corners. */
+  border-radius: 0 0 0.5rem 0.5rem;
   font-size: 0.85rem;
-  /* Without this caption + border-radius look wrong in Chromium */
   border-spacing: 0;
 }
 
+/* <caption> needs to keep its default `display: table-caption` so the
+   browser actually positions it above the table. Setting display:flex
+   here would knock it out of table-caption layout — flex layout lives
+   on the inner span instead. */
 .caption {
   caption-side: top;
-  padding: 0.5rem 0.75rem;
   text-align: left;
+}
+
+.captionInner {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
   background: #1a1e25;
   border: 1px solid #2a2f37;
   border-bottom: none;
   border-radius: 0.5rem 0.5rem 0 0;
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
 }
 
 .relName {

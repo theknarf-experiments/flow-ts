@@ -48,16 +48,10 @@ export interface ValueCodec<T extends Value> {
   matches(firstChar: string): boolean
 }
 
-function floatBitsToNumber(bits: bigint): number {
-  const buf = new ArrayBuffer(8)
-  new BigInt64Array(buf)[0] = bits
-  return new Float64Array(buf)[0]!
-}
-
 const INTEGER_CODEC: ValueCodec<number> = {
   fromConst(c) {
     if (c.kind === 'Integer') return c.value
-    if (c.kind === 'Float') return floatBitsToNumber(c.bits)
+    if (c.kind === 'Float') return c.value
     throw new Error(`integer codec: cannot lower ${c.kind} constant`)
   },
   fromText(s) {
@@ -108,10 +102,11 @@ const STRING_CODEC: ValueCodec<string> = {
   },
 }
 
-// Floats reuse the integer codec at the wire level — JS doesn't distinguish
-// `42` from `42.0` and the planner already collapses both into the same
-// arithmetic. Promote to a dedicated codec once `Const.Float`'s bit-
-// reinterpretation hack gets cleaned up.
+// Floats and integers share the same JS representation (float64), the
+// same wire format (`String(v)` — JS prints `42` for `42`, `3.14` for
+// `3.14`), and the same arithmetic. The codec slot still exists per
+// `DataType` so a future change that needs to distinguish them — e.g.
+// stricter parsing or a different render — has a place to live.
 const FLOAT_CODEC: ValueCodec<number> = INTEGER_CODEC
 
 const CODECS_BY_DATATYPE: Record<DataType, ValueCodec<Value>> = {

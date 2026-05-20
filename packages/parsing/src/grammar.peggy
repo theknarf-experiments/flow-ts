@@ -172,9 +172,15 @@ ArithmicOp
   / "/" { return "Divide"; }
   / "%" { return "Modulo"; }
 
+// Float must precede Integer so `3.14` doesn't greedily parse as `3` plus
+// stray `.14` chars. Both forms reject leading whitespace inside the literal.
 Constant
-  = i:Integer { return options.b.constInteger(i); }
+  = f:Float   { return options.b.constFloat(f); }
+  / i:Integer { return options.b.constInteger(i); }
   / s:String  { return options.b.constText(s); }
+
+Float
+  = $(("+" / "-")? [0-9]+ "." [0-9]+) { return Number(text()); }
 
 Integer
   = $(("+" / "-")? [0-9]+) { return Number(text()); }
@@ -196,6 +202,7 @@ Identifier
 DataType
   = "number" { return "Integer"; }
   / "string" { return "String"; }
+  / "float"  { return "Float"; }
 
 // Whitespace + comments. Skipped between every grammar token.
 _ "whitespace"

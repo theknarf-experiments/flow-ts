@@ -131,6 +131,73 @@ describe('constants', () => {
     const arg = (r.rhs[0]! as { kind: 'Atom'; atom: { args: unknown[] } }).atom.args[1]
     expect(arg).toMatchObject({ kind: 'Placeholder' })
   })
+
+  it('parses string literals in atom args', () => {
+    const r = parseRule('R(x) :- A(x, "alice").')
+    const arg = (r.rhs[0]! as { kind: 'Atom'; atom: { args: unknown[] } }).atom.args[1]
+    expect(arg).toMatchObject({
+      kind: 'Const',
+      value: { kind: 'Text', value: 'alice' },
+    })
+  })
+
+  it('parses float literals in atom args', () => {
+    const r = parseRule('R(x) :- A(x, 3.14).')
+    const arg = (r.rhs[0]! as { kind: 'Atom'; atom: { args: unknown[] } }).atom.args[1]
+    expect(arg).toMatchObject({
+      kind: 'Const',
+      value: { kind: 'Float', value: 3.14 },
+    })
+  })
+
+  it('parses negative float literals', () => {
+    const r = parseRule('R(x) :- A(x, -0.5).')
+    const arg = (r.rhs[0]! as { kind: 'Atom'; atom: { args: unknown[] } }).atom.args[1]
+    expect(arg).toMatchObject({
+      kind: 'Const',
+      value: { kind: 'Float', value: -0.5 },
+    })
+  })
+
+  it('still parses bare integers as Integer (not Float)', () => {
+    // The Float rule requires a `.`; `42` alone stays Integer.
+    const r = parseRule('R(x) :- A(x, 42).')
+    const arg = (r.rhs[0]! as { kind: 'Atom'; atom: { args: unknown[] } }).atom.args[1]
+    expect(arg).toMatchObject({
+      kind: 'Const',
+      value: { kind: 'Integer', value: 42 },
+    })
+  })
+})
+
+describe('declarations', () => {
+  it('parses .decl with a float column', () => {
+    const program = parseProgram(`\
+.in
+.decl Measure(id: number, value: float)
+
+.out
+.decl Pass(id: number)
+
+.rule
+Pass(id) :- Measure(id, _).
+`)
+    expect(program.edbs[0]!.attributes[1]!.dataType).toBe('Float')
+  })
+
+  it('parses .decl with a string column', () => {
+    const program = parseProgram(`\
+.in
+.decl Person(id: number, name: string)
+
+.out
+.decl Pass(id: number)
+
+.rule
+Pass(id) :- Person(id, _).
+`)
+    expect(program.edbs[0]!.attributes[1]!.dataType).toBe('String')
+  })
 })
 
 describe('optimisation hints', () => {

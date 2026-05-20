@@ -45,6 +45,7 @@ type Builders = {
   factorConst: (value: Const) => Factor
   constInteger: (value: number) => Const
   constText: (value: string) => Const
+  constFloat: (value: number) => Const
 }
 
 const builders: Builders = {
@@ -77,6 +78,7 @@ const builders: Builders = {
   factorConst: (value) => ({ kind: 'Const', value }),
   constInteger: (value) => ({ kind: 'Integer', value }),
   constText: (value) => ({ kind: 'Text', value }),
+  constFloat: (value) => ({ kind: 'Float', value }),
 }
 
 export interface ParseOptions {

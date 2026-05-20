@@ -5,7 +5,12 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { Attribute, RelDecl } from '@flow-ts/parsing'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { readRows, readRowsForRelDecl } from '../src/io.js'
+import {
+  appendCsvRow,
+  closeAllFiles,
+  readRows,
+  readRowsForRelDecl,
+} from '../src/io.js'
 
 let tmpDir: string
 
@@ -124,5 +129,74 @@ describe('readRowsForRelDecl', () => {
       'Bad.csv',
     )
     expect(() => readRowsForRelDecl(decl, tmpDir, ',')).toThrow(/expected 2 values/)
+  })
+
+  it('reads quoted string fields containing the delimiter', () => {
+    writeFacts('Tag.csv', '1,"hello, world"\n2,plain\n3,"with ""quotes"""\n')
+    const decl = new RelDecl(
+      'Tag',
+      [new Attribute('id', 'Integer'), new Attribute('label', 'String')],
+      'Tag.csv',
+    )
+    const rows = readRowsForRelDecl(decl, tmpDir, ',')
+    expect(rows).toEqual([
+      [1, 'hello, world'],
+      [2, 'plain'],
+      [3, 'with "quotes"'],
+    ])
+  })
+
+  it('rejects unterminated quoted fields with a clear error', () => {
+    writeFacts('Bad.csv', '1,"unterminated\n')
+    const decl = new RelDecl(
+      'Bad',
+      [new Attribute('id', 'Integer'), new Attribute('label', 'String')],
+      'Bad.csv',
+    )
+    expect(() => readRowsForRelDecl(decl, tmpDir, ',')).toThrow(/unterminated/i)
+  })
+})
+
+describe('appendCsvRow', () => {
+  afterEach(() => {
+    closeAllFiles()
+  })
+
+  it('writes numeric rows verbatim, no quoting', () => {
+    const p = path.join(tmpDir, 'nums.csv')
+    appendCsvRow(p, [1, 2])
+    appendCsvRow(p, [3, 4])
+    closeAllFiles()
+    expect(fs.readFileSync(p, 'utf8')).toBe('1,2\n3,4\n')
+  })
+
+  it('quotes string fields that contain the delimiter or "', () => {
+    const p = path.join(tmpDir, 'tags.csv')
+    appendCsvRow(p, [1, 'plain'])
+    appendCsvRow(p, [2, 'has, comma'])
+    appendCsvRow(p, [3, 'has "quotes"'])
+    closeAllFiles()
+    expect(fs.readFileSync(p, 'utf8')).toBe(
+      '1,plain\n2,"has, comma"\n3,"has ""quotes"""\n',
+    )
+  })
+
+  it('round-trips through readRowsForRelDecl', () => {
+    const p = path.join(tmpDir, 'Tag.csv')
+    appendCsvRow(p, [1, 'a, b'])
+    appendCsvRow(p, [2, 'back\\slash'])
+    appendCsvRow(p, [3, ''])
+    closeAllFiles()
+    const decl = new RelDecl(
+      'Tag',
+      [new Attribute('id', 'Integer'), new Attribute('label', 'String')],
+      'Tag.csv',
+    )
+    const rows = readRowsForRelDecl(decl, tmpDir, ',')
+    expect(rows).toEqual([
+      [1, 'a, b'],
+      [2, 'back\\slash'],
+      [3, ''],
+    ])
   })
 })

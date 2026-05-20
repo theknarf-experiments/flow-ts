@@ -10,10 +10,88 @@ import * as path from 'node:path'
 import type { Attribute, RelDecl } from '@flow-ts/parsing'
 import { codecFor, type Row, type Value } from '@flow-ts/reading'
 
-/** Yield all non-empty lines of a file as strings. */
+/** Yield all non-empty lines of a file as strings. Tolerates `\r\n`
+ *  line endings — trailing `\r` is stripped so downstream parsers see
+ *  a clean payload. Multi-line quoted CSV fields aren't supported. */
 export function readerLines(filePath: string): string[] {
   const content = fs.readFileSync(filePath, 'utf8')
-  return content.split('\n').filter((line) => line.length > 0)
+  return content
+    .split(/\r?\n/)
+    .filter((line) => line.length > 0)
+}
+
+/** Format a single value as one CSV field, applying RFC-4180-style
+ *  quoting only when the field would otherwise be ambiguous (contains
+ *  the delimiter, a `"`, or a newline). Numbers never need quoting. */
+function csvFormatField(v: Value, delimiter: string): string {
+  if (typeof v !== 'string') return String(v)
+  if (v === '') return '""'
+  if (
+    v.indexOf(delimiter) === -1 &&
+    v.indexOf('"') === -1 &&
+    v.indexOf('\n') === -1 &&
+    v.indexOf('\r') === -1
+  ) {
+    return v
+  }
+  return `"${v.replace(/"/g, '""')}"`
+}
+
+/** Parse one CSV line into raw field strings, honouring RFC-4180-style
+ *  quoting. Inputs MUST be single-line — a `\n` inside a quoted string
+ *  would split the row at file-read time before we get here. */
+function parseCsvLine(line: string, delimiter: string): string[] {
+  const out: string[] = []
+  let i = 0
+  while (i <= line.length) {
+    // Lenient leading whitespace (handles `, value` style).
+    while (i < line.length && (line[i] === ' ' || line[i] === '\t')) i++
+
+    if (i < line.length && line[i] === '"') {
+      // Quoted field. `""` inside collapses to a literal `"`.
+      let buf = ''
+      let p = i + 1
+      let closed = false
+      while (p < line.length) {
+        if (line[p] === '"') {
+          if (line[p + 1] === '"') {
+            buf += '"'
+            p += 2
+            continue
+          }
+          closed = true
+          p++
+          break
+        }
+        buf += line[p]
+        p++
+      }
+      if (!closed) {
+        throw new Error(`csv: unterminated quoted field (line: ${line})`)
+      }
+      // Trailing whitespace, then delimiter or EOL.
+      while (p < line.length && (line[p] === ' ' || line[p] === '\t')) p++
+      out.push(buf)
+      if (p >= line.length) return out
+      if (line[p] !== delimiter) {
+        throw new Error(
+          `csv: junk after quoted field at position ${p} (line: ${line})`,
+        )
+      }
+      i = p + 1
+    } else {
+      // Unquoted field: read until the next delimiter (or EOL). Trim so
+      // `1, 2` reads the same as `1,2`.
+      const next = line.indexOf(delimiter, i)
+      if (next === -1) {
+        out.push(line.slice(i).trim())
+        return out
+      }
+      out.push(line.slice(i, next).trim())
+      i = next + 1
+    }
+  }
+  return out
 }
 
 /**
@@ -59,9 +137,11 @@ export function readRows(
 /**
  * Codec-aware variant of `readRows`. Each column is parsed via the
  * `ValueCodec` registered for its declared `DataType` — strings stay as
- * strings, floats stay as floats, ints stay as ints. No CSV quoting yet:
- * string fields cannot contain the configured delimiter; pick a delimiter
- * (e.g. `\t`) that isn't expected to appear in your data.
+ * strings, floats stay as floats, ints stay as ints. Lines are parsed
+ * with RFC-4180-style quoting, so a `"a,b"` field can contain the
+ * delimiter without splitting the row. Multi-line strings (a `\n`
+ * inside a quoted field) aren't supported — the file reader splits on
+ * raw newlines before we see the line here.
  */
 function readRowsTyped(
   relPath: string,
@@ -73,22 +153,23 @@ function readRowsTyped(
   const codecs = attributes.map((a) => codecFor(a.dataType))
   const out: Row[] = []
   for (const line of readerLines(relPath)) {
-    const fields = line.split(delimiter)
-    if (fields.length === 0) continue
-    const trimmed = fields.map((f) => f.trim()).filter((f) => f.length > 0)
-    if (trimmed.length !== attributes.length) {
+    const fields = parseCsvLine(line, delimiter)
+    if (fields.length !== attributes.length) {
       throw new Error(
-        `expected ${attributes.length} values, got ${trimmed.length} (line: ${line})`,
+        `expected ${attributes.length} values, got ${fields.length} (line: ${line})`,
       )
     }
     // Worker sharding still keys off the first column. For non-numeric
     // first columns the modulus is taken on a string hash — but since
     // peers defaults to 1, the practical effect for typical single-worker
     // runs is that every row is accepted.
-    const firstShard = shardKey(trimmed[0]!, codecs[0]!.matches(trimmed[0]![0] ?? '-') ? 'numeric' : 'string')
+    const firstShard = shardKey(
+      fields[0]!,
+      codecs[0]!.matches(fields[0]![0] ?? '-') ? 'numeric' : 'string',
+    )
     if (firstShard % peers !== id) continue
 
-    const row: Value[] = trimmed.map((raw, i) => codecs[i]!.fromText(raw))
+    const row: Value[] = fields.map((raw, i) => codecs[i]!.fromText(raw))
     out.push(row)
   }
   return out
@@ -152,9 +233,14 @@ function fdFor(filePath: string): number {
   return fd
 }
 
-/** Append one CSV row to `filePath`, reusing a cached file descriptor. */
+/** Append one CSV row to `filePath`, reusing a cached file descriptor.
+ *  Each field is formatted with RFC-4180-style quoting only when the
+ *  raw value would otherwise collide with the delimiter, a `"`, or a
+ *  newline — numeric columns and "boring" string columns stay unquoted
+ *  so the output diffs cleanly against pre-quoting baselines. */
 export function appendCsvRow(filePath: string, row: Row): void {
-  fs.writeSync(fdFor(filePath), `${row.map((v) => String(v)).join(',')}\n`)
+  const formatted = row.map((v) => csvFormatField(v, ',')).join(',')
+  fs.writeSync(fdFor(filePath), `${formatted}\n`)
 }
 
 /** Append one `name: size` line to `filePath`. */

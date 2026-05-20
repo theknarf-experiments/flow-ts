@@ -16,7 +16,7 @@ import { type Page, expect, test } from '@playwright/test'
 // `data-hydrated="true"` on <body> from a useEffect — wait for that
 // before any interaction, or clicks no-op against the unhydrated DOM.
 async function gotoApp(page: Page): Promise<void> {
-  await page.goto('/')
+  await page.goto('/friends')
   await expect(page.locator('body[data-hydrated="true"]')).toBeAttached()
 }
 

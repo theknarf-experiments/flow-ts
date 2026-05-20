@@ -5,6 +5,7 @@
 
 import {
   HeadContent,
+  Link,
   Outlet,
   Scripts,
   createRootRoute,
@@ -39,6 +40,15 @@ function RootDocument() {
         <HeadContent />
       </head>
       <body>
+        <nav className="topnav" data-testid="topnav">
+          <Link to="/" className="topnav-brand">flow-ts</Link>
+          <Link to="/friends" activeProps={{ className: 'active' }}>
+            Friends
+          </Link>
+          <Link to="/text" activeProps={{ className: 'active' }}>
+            Text CRDT
+          </Link>
+        </nav>
         <Outlet />
         <Scripts />
       </body>

@@ -13,7 +13,13 @@ Open http://localhost:5173.
 
 ## What's here
 
-The store / collection / hook glue lives in [`@flow-ts/react`](../react/README.md) — `Store` wraps one `openSession` from `@flow-ts/executing`, `Collection<T>` is a typed handle to an EDB you can `insert` / `delete` rows on, and `useLiveQuery(store, idbName)` is a React hook that subscribes to an IDB head and re-renders the component whenever its row set changes. This package composes those primitives with file-based routes under `src/routes/`, a bespoke People + Reachable view, and a Tanstack-Table-driven generic inspector.
+Two demos behind file-based routes:
+
+- **`/friends`** — recursive reachability over a directed friend graph (`src/App.tsx` + `src/program.ts`).
+- **`/text`** — Stewen's RGA-like list CRDT (`src/TextDemo.tsx` + `src/textProgram.ts`) driving a textarea: each keystroke becomes an immutable `Insert` op, backspace becomes a `Remove`, and the rendered text comes from walking the derived `ListElem` linked list.
+- **`/`** — a small landing page linking to both.
+
+The store / collection / hook glue lives in [`@flow-ts/react`](../react/README.md) — `Store` wraps one `openSession` from `@flow-ts/executing`, `Collection<T>` is a typed handle to an EDB you can `insert` / `delete` rows on, and `useLiveQuery(store, idbName)` is a React hook that subscribes to an IDB head and re-renders the component whenever its row set changes. Each route holds its own `Store` so the two programs don't share state.
 
 The Tanstack Start setup is SPA-only: `vite.config.ts` opts in with `spa: { enabled: true }`, so the build prerenders a `_shell.html` and the client hydrates the full document. There's no server runtime — the demo holds a stateful db-ivm session that doesn't serialise. The root route in `src/routes/__root.tsx` sets `data-hydrated="true"` on `<body>` once React mounts, which the e2e suite waits on before driving interactions.
 

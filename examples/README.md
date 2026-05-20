@@ -22,3 +22,4 @@ per-relation CSV files instead.
 | [`friends.dl`](friends.dl) | `number`, `string` | Friend-of-friend resolved back to human-readable names; joins flow through a numeric edge relation but the head carries strings. |
 | [`taxonomy.dl`](taxonomy.dl) | `string` only | Recursive transitive closure over a category hierarchy — every join key is a string. |
 | [`stocks.dl`](stocks.dl) | `number`, `string`, `float` | Market-cap calculation: head arithmetic that multiplies a `float` price by an `integer` share count. Demonstrates that float and int interoperate in a single arithmetic expression. |
+| [`mvr.dl`](mvr.dl) | `number`, `string` | Multi-value-register key-value store as a Datalog query (Stewen 2025, §4.2.1). An immutable log of `Set` operations plus a `Pred` causal-edge relation; the IDB `MvrStore` keeps every value not yet overwritten — concurrent winners coexist. |

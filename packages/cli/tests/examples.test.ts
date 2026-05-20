@@ -38,4 +38,13 @@ describe('bundled example programs', () => {
     // 6 direct + 4 transitive (fruit → {fuji, granny-smith, lemon, orange}).
     expect(counts.get('Descendant')).toBe(10)
   })
+
+  it('mvr.dl: multi-value register surfaces non-overwritten writes', () => {
+    // Stewen thesis §4.2.1. Six set ops on two keys (k1, k2); four causal
+    // edges retract three of them; survivors are the concurrent winners.
+    // Expected MvrStore = {(k1, v2), (k1, v3), (k2, u3)}.
+    const counts = runExample('mvr')
+    expect(counts.get('MvrStore')).toBe(3)
+    expect(counts.get('Overwritten')).toBe(3)
+  })
 })

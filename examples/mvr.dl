@@ -1,0 +1,36 @@
+// Multi-Value Register (MVR) key-value store as a Datalog query.
+//
+// Adapted from Leo Stewen's MSc thesis "Expressing CRDTs with Datalog"
+// (TUM, 2025), §4.2.1. The original uses name-based field access and an
+// explicit `distinct` keyword; this port translates it into flow-ts's
+// positional dialect (and drops `distinct` since set semantics are the
+// default here).
+//
+// Two EDBs carry the immutable operation log:
+//   Set(RepId, Ctr, Key, Value)   — "this replica wrote this value to this key"
+//   Pred(FromRep, FromCtr, ToRep, ToCtr) — "this op causally precedes this op"
+//
+// One IDB surfaces the current state:
+//   MvrStore(Key, Value) — every value that hasn't been overwritten yet.
+//
+// "Overwritten" = "appears as the source of a Pred edge". A value is in
+// MvrStore if no later operation has overwritten it. Concurrent writers
+// for the same key are *both* kept — that's the multi-value part: the
+// application sees the conflict and decides how to resolve.
+//
+// This version assumes operations arrive in causal order. The
+// causal-broadcast-aware variant is a follow-up (`mvr_cb.dl`).
+
+.in
+.decl Set(rep_id: number, ctr: number, key: string, value: string)
+.input Set.csv
+
+.decl Pred(from_rep: number, from_ctr: number, to_rep: number, to_ctr: number)
+.input Pred.csv
+
+.out
+.decl Overwritten(rep_id: number, ctr: number)
+.decl MvrStore(key: string, value: string)
+
+Overwritten(r, c) :- Pred(r, c, _, _).
+MvrStore(k, v)    :- Set(r, c, k, v), !Overwritten(r, c).

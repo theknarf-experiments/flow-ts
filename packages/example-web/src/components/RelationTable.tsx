@@ -23,7 +23,7 @@ import {
   useReactTable,
 } from '@tanstack/react-table'
 import type { Program, RelDecl } from '@flow-ts/parsing'
-import type { Row } from '@flow-ts/reading'
+import { codecFor, type Row, type Value } from '@flow-ts/reading'
 import { Store, useLiveQuery } from '../lib/store.js'
 import styles from './RelationTable.module.css'
 
@@ -73,7 +73,7 @@ export function RelationTable({
       id: attr.name,
       header: attr.name,
       accessorFn: (row: Row) => row[i],
-      cell: (info) => info.getValue() as number,
+      cell: (info) => String(info.getValue()),
     }))
     if (hasActionsColumn) {
       cols.push({
@@ -174,11 +174,16 @@ function AddRow({
   const [values, setValues] = useState<string[]>(() => decl.attributes.map(() => ''))
 
   const submit = () => {
-    const row: number[] = []
-    for (const v of values) {
-      const n = Number(v.trim())
-      if (!Number.isFinite(n) || v.trim() === '') return // invalid; bail silently
-      row.push(n)
+    const row: Value[] = []
+    for (let i = 0; i < values.length; i++) {
+      const raw = values[i]!.trim()
+      if (raw === '') return // any empty cell bails silently
+      const attr = decl.attributes[i]!
+      try {
+        row.push(codecFor(attr.dataType).fromText(raw))
+      } catch {
+        return // invalid (e.g. non-numeric in a number column)
+      }
     }
     store.update(decl.name, row, +1)
     setValues(decl.attributes.map(() => ''))

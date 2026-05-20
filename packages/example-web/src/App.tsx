@@ -1,11 +1,13 @@
-// Demo: a tiny reachability graph editor.
+// Demo: a small friend graph that exercises both numeric and string
+// columns end-to-end.
 //
-// One shared `Store` powers two specialised React panels (an all-nodes
-// view that highlights reachability, and a reachable-only view) plus
-// a generic `RelationInspector` that renders one `<RelationTable>` per
-// declared relation. Edits in the inspector (add/delete rows) and in
-// the bespoke panels (delete a node) ripple through the underlying
-// flow-ts session and re-render the others incrementally.
+// One shared `Store` powers two bespoke React panels (a roster of all
+// people that flags who's reachable from `Me`, and a name-only "I can
+// reach" list) plus a generic `RelationInspector` that renders one
+// `<RelationTable>` per declared relation. Edits in the inspector
+// (add/delete rows) and in the bespoke panels (remove a person)
+// ripple through the underlying flow-ts session and re-render the
+// others incrementally.
 
 import { useMemo } from 'react'
 import { Store, useLiveQuery } from './lib/store.js'
@@ -15,37 +17,52 @@ import { RelationTable } from './components/RelationTable.js'
 // One store per app. Seeded outside the React tree so HMR / strict-mode
 // double-mounts don't try to spin up a second graph.
 const store = new Store(program)
-const nodes = store.collection<readonly [number]>('Node')
-const source = store.collection<readonly [number]>('Source')
-const edges = store.collection<readonly [number, number]>('Edge')
+const persons = store.collection<readonly [number, string]>('Person')
+const me = store.collection<readonly [number]>('Me')
+const friends = store.collection<readonly [number, number]>('Friend')
 
-// Seed a small graph so the page has something interesting on first load.
-//   1 → 2 → 3 → 4
-//   2 → 5
-// Source = {1}, so 1, 2, 3, 4, 5 should all be reachable.
-for (const id of [1, 2, 3, 4, 5, 6, 7]) nodes.insert([id])
-source.insert([1])
-for (const [a, b] of [[1, 2], [2, 3], [3, 4], [2, 5]] as Array<[number, number]>) {
-  edges.insert([a, b])
+// Seed a small social graph.
+//   1 alice ─▶ 2 bob ─▶ 3 carol ─▶ 4 dave
+//   1 alice ─▶ 5 eve
+// Me = {1}, so from alice the reachable set is {bob, carol, dave, eve}.
+// 6 frank has no incoming friendship from alice's component.
+for (const [id, name] of [
+  [1, 'alice'],
+  [2, 'bob'],
+  [3, 'carol'],
+  [4, 'dave'],
+  [5, 'eve'],
+  [6, 'frank'],
+] as Array<[number, string]>) {
+  persons.insert([id, name])
 }
-// Node 6 and 7 exist but aren't connected — they should NOT appear in Reach.
+me.insert([1])
+for (const [a, b] of [
+  [1, 2],
+  [2, 3],
+  [3, 4],
+  [1, 5],
+] as Array<[number, number]>) {
+  friends.insert([a, b])
+}
 
 export function App() {
   return (
     <div className="app">
       <header>
-        <h1>flow-ts • reachability demo</h1>
+        <h1>flow-ts • friend-graph demo</h1>
         <p>
-          One Datalog program. Three React views, each with its own live query.
-          Edit the graph in the inspector at the bottom, watch the derived
-          state update incrementally up top.
+          One Datalog program with both numeric and string columns. Three
+          React views, each with its own live query. Edit the graph in the
+          inspector at the bottom, watch the derived state update
+          incrementally up top.
         </p>
       </header>
 
       <ProgramPanel />
 
       <section className="grid">
-        <NodesPanel />
+        <PeoplePanel />
         <ReachablePanel />
       </section>
 
@@ -66,11 +83,13 @@ function ProgramPanel() {
         <summary>Datalog program</summary>
         <pre data-testid="program-source"><code>{SOURCE.trim()}</code></pre>
         <p className="muted">
-          Three EDBs (<code>Node</code>, <code>Source</code>, <code>Edge</code>) and
-          one recursive IDB (<code>Reach</code>). The first rule seeds reach with the
-          source; the second propagates reachability along edges. EDB rows are
-          inserted from the UI via <code>collection.insert()</code> — no fact
-          files involved.
+          Three EDBs (<code>Person</code>, <code>Me</code>,{' '}
+          <code>Friend</code>) and two IDBs (<code>Reach</code> — recursive
+          transitive closure of <code>Friend</code> — and{' '}
+          <code>ICanReach</code>, which joins <code>Reach</code> back
+          against <code>Person</code> to surface human-readable names).
+          EDB rows are inserted from the UI via{' '}
+          <code>collection.insert()</code> — no fact files involved.
         </p>
       </details>
     </section>
@@ -79,63 +98,83 @@ function ProgramPanel() {
 
 // --- live-query consumers -------------------------------------------
 
-function NodesPanel() {
-  // Renders every node, highlighting the ones reachable from the source.
-  // Also surfaces the high-level counts at the top — same info as a
+function PeoplePanel() {
+  // Roster of every person, badging the ones reachable from Me. Also
+  // surfaces the high-level counts at the top — same info as a
   // dedicated stats panel, just colocated with the most natural reader.
-  const allNodes = useLiveQuery<readonly [number]>(store, 'Node')
-  const allEdges = useLiveQuery<readonly [number, number]>(store, 'Edge')
-  const reachable = useLiveQuery<readonly [number]>(store, 'Reach')
+  const allPersons = useLiveQuery<readonly [number, string]>(store, 'Person')
+  const friendEdges = useLiveQuery<readonly [number, number]>(store, 'Friend')
+  const reach = useLiveQuery<readonly [string]>(store, 'ICanReach')
+  const meRows = useLiveQuery<readonly [number]>(store, 'Me')
   const reachSet = useMemo(
-    () => new Set(reachable.map((r) => r[0])),
-    [reachable],
+    () => new Set(reach.map((r) => r[0])),
+    [reach],
   )
+  const meName = useMemo(() => {
+    const meId = meRows[0]?.[0]
+    if (meId === undefined) return null
+    return allPersons.find((p) => p[0] === meId)?.[1] ?? `#${meId}`
+  }, [meRows, allPersons])
   const sorted = useMemo(
-    () => [...allNodes].sort((a, b) => a[0] - b[0]),
-    [allNodes],
+    () => [...allPersons].sort((a, b) => a[0] - b[0]),
+    [allPersons],
   )
   return (
     <div className="card">
       <div className="card-header">
-        <h2>All nodes</h2>
+        <h2>People</h2>
         <ul className="stat-line" data-testid="stat-line">
-          <li><span data-testid="stat-nodes">{allNodes.length}</span> nodes</li>
-          <li><span data-testid="stat-edges">{allEdges.length}</span> edges</li>
-          <li><span data-testid="stat-reachable">{reachable.length}</span> reachable</li>
+          <li>me: <span data-testid="stat-me">{meName ?? '(none)'}</span></li>
+          <li><span data-testid="stat-people">{allPersons.length}</span> people</li>
+          <li><span data-testid="stat-friends">{friendEdges.length}</span> friendships</li>
+          <li><span data-testid="stat-reachable">{reach.length}</span> reachable</li>
         </ul>
       </div>
-      <ul className="nodes" data-testid="nodes-list">
-        {sorted.map(([id]) => (
-          <li
-            key={id}
-            data-testid={`node-${id}`}
-            data-reachable={reachSet.has(id) ? 'true' : 'false'}
-            className={reachSet.has(id) ? 'reachable' : ''}
-          >
-            {id} {reachSet.has(id) ? '· reachable' : ''}
-            <button onClick={() => nodes.delete([id])} aria-label={`remove node ${id}`}>×</button>
-          </li>
-        ))}
+      <ul className="nodes" data-testid="people-list">
+        {sorted.map(([id, name]) => {
+          const isReachable = reachSet.has(name)
+          return (
+            <li
+              key={id}
+              data-testid={`person-${id}`}
+              data-name={name}
+              data-reachable={isReachable ? 'true' : 'false'}
+              className={isReachable ? 'reachable' : ''}
+            >
+              <span>
+                <code>#{id}</code> {name}
+                {meName === name && ' · me'}
+                {isReachable && ' · reachable'}
+              </span>
+              <button
+                onClick={() => persons.delete([id, name])}
+                aria-label={`remove person ${name}`}
+              >×</button>
+            </li>
+          )
+        })}
       </ul>
     </div>
   )
 }
 
 function ReachablePanel() {
-  // The pure derived view: only what's currently reachable.
-  const reachable = useLiveQuery<readonly [number]>(store, 'Reach')
+  // The pure derived view: only the names currently reachable from Me.
+  const reach = useLiveQuery<readonly [string]>(store, 'ICanReach')
   const sorted = useMemo(
-    () => [...reachable].sort((a, b) => a[0] - b[0]),
-    [reachable],
+    () => [...reach].map((r) => r[0]).sort((a, b) => a.localeCompare(b)),
+    [reach],
   )
   return (
     <div className="card">
-      <h2>Reachable from source</h2>
+      <h2>I can reach</h2>
       {sorted.length === 0 ? (
-        <p className="muted" data-testid="reachable-empty">(none — add a row to Source in the inspector below)</p>
+        <p className="muted" data-testid="reachable-empty">(none — add a row to Me, or a friendship from me, in the inspector below)</p>
       ) : (
         <ul className="reachable" data-testid="reachable-list">
-          {sorted.map(([id]) => <li key={id} data-testid={`reachable-${id}`}>{id}</li>)}
+          {sorted.map((name) => (
+            <li key={name} data-testid={`reachable-${name}`}>{name}</li>
+          ))}
         </ul>
       )}
     </div>
@@ -157,45 +196,48 @@ function RelationInspector() {
         Schema-driven view powered by <code>@tanstack/react-table</code>. One
         generic <code>&lt;RelationTable&gt;</code> per declared relation —
         click a column header to sort, type into the bottom row to insert.
+        String columns accept any text; numeric columns must parse as a
+        number.
       </p>
       <div className="tables">
         <RelationTable
           store={store}
           program={program}
-          relation="Node"
+          relation="Person"
           actions={(row) => (
             <button
-              aria-label={`remove node ${row[0]}`}
+              aria-label={`remove person ${row[1]}`}
               className="row-action"
-              onClick={() => nodes.delete([row[0]!] as readonly [number])}
+              onClick={() => persons.delete([row[0]!, row[1]!] as readonly [number, string])}
             >×</button>
           )}
         />
         <RelationTable
           store={store}
           program={program}
-          relation="Source"
+          relation="Me"
           actions={(row) => (
             <button
-              aria-label={`remove source ${row[0]}`}
+              aria-label={`remove me ${row[0]}`}
               className="row-action"
-              onClick={() => source.delete([row[0]!] as readonly [number])}
+              onClick={() => me.delete([row[0]!] as readonly [number])}
             >×</button>
           )}
         />
         <RelationTable
           store={store}
           program={program}
-          relation="Edge"
+          relation="Friend"
           actions={(row) => (
             <button
-              aria-label={`remove edge ${row[0]} to ${row[1]}`}
+              aria-label={`remove friendship ${row[0]} to ${row[1]}`}
               className="row-action"
-              onClick={() => edges.delete([row[0]!, row[1]!] as readonly [number, number])}
+              onClick={() => friends.delete([row[0]!, row[1]!] as readonly [number, number])}
             >×</button>
           )}
         />
         <RelationTable store={store} program={program} relation="Reach" />
+        <RelationTable store={store} program={program} relation="ICanReach" />
       </div>
     </section>
   )

@@ -1,0 +1,114 @@
+// List CRDT (RGA-like) as a Datalog query.
+//
+// Adapted from Stewen §4.2.2. The thesis derives this from Kleppmann's
+// 2018 "Data laws for distributed consensus" paper.
+//
+// State:
+//   Insert(rep, ctr, parent_rep, parent_ctr, value)
+//     — insertion of `value` as a child of (parent_rep, parent_ctr).
+//   Remove(elem_rep, elem_ctr)
+//     — deletes an element, but its slot stays as a tombstone so any
+//       inserts that referenced it as a parent keep working.
+//
+// Each parent's children are ordered descendingly by their (ctr, rep)
+// id pair. The final list is the depth-first pre-order traversal of
+// the tree, skipping tombstoned nodes. The sentinel root (0, 0) is
+// always considered present.
+//
+// Output:
+//   ListElem(prev_rep, prev_ctr, value, next_rep, next_ctr)
+//     — a linked list of visible elements; walking it from (0, 0) and
+//       collecting the `value` columns yields the list content.
+//
+// Stewen's dialect uses an inline disjunction `(a; (b, c))` inside a
+// rule body for the "later than" total-order check; flow-ts doesn't,
+// so each disjunction expands to two rules with the same head.
+
+.in
+.decl Insert(rep_id: number, ctr: number, parent_rep: number, parent_ctr: number, value: string)
+.input Insert.csv
+
+.decl Remove(elem_rep: number, elem_ctr: number)
+.input Remove.csv
+
+.out
+.decl FirstChild(parent_rep: number, parent_ctr: number, child_rep: number, child_ctr: number)
+.decl NextSibling(c1_rep: number, c1_ctr: number, c2_rep: number, c2_ctr: number)
+.decl NextElem(prev_rep: number, prev_ctr: number, next_rep: number, next_ctr: number)
+.decl NextVisible(prev_rep: number, prev_ctr: number, next_rep: number, next_ctr: number)
+.decl ListElem(prev_rep: number, prev_ctr: number, value: string, next_rep: number, next_ctr: number)
+
+// Helpers (also need .decl entries even though they're internal).
+.decl LaterChild(parent_rep: number, parent_ctr: number, child_rep: number, child_ctr: number)
+.decl Sibling(c1_rep: number, c1_ctr: number, c2_rep: number, c2_ctr: number)
+.decl LaterSibling(c1_rep: number, c1_ctr: number, c2_rep: number, c2_ctr: number)
+.decl LaterIndirectSibling(c1_rep: number, c1_ctr: number, c3_rep: number, c3_ctr: number)
+.decl HasNextSibling(c_rep: number, c_ctr: number)
+.decl NextSiblingAnc(c_rep: number, c_ctr: number, anc_rep: number, anc_ctr: number)
+.decl HasChild(parent_rep: number, parent_ctr: number)
+.decl HasValue(elem_rep: number, elem_ctr: number)
+.decl NextElemSkipTombstones(prev_rep: number, prev_ctr: number, next_rep: number, next_ctr: number)
+
+// --- Part 1: firstChild ----------------------------------------------
+// Under a given parent, a "later child" is one with at least one sibling
+// whose id (ctr, rep) is strictly greater.
+LaterChild(pr, pc, cr, cc) :- Insert(sr, sc, pr, pc, _), Insert(cr, cc, pr, pc, _), sc > cc.
+LaterChild(pr, pc, cr, cc) :- Insert(sr, sc, pr, pc, _), Insert(cr, cc, pr, pc, _), sc = cc, sr > cr.
+
+// The first (= largest-id, leftmost in pre-order) child under a parent.
+FirstChild(pr, pc, cr, cc) :- Insert(cr, cc, pr, pc, _), !LaterChild(pr, pc, cr, cc).
+
+// --- Part 2: nextSibling ---------------------------------------------
+Sibling(c1r, c1c, c2r, c2c) :- Insert(c1r, c1c, pr, pc, _), Insert(c2r, c2c, pr, pc, _).
+LaterSibling(c1r, c1c, c2r, c2c) :- Sibling(c1r, c1c, c2r, c2c), c1c > c2c.
+LaterSibling(c1r, c1c, c2r, c2c) :- Sibling(c1r, c1c, c2r, c2c), c1c = c2c, c1r > c2r.
+
+// "Indirect" = there's another sibling strictly between us in the order.
+LaterIndirectSibling(c1r, c1c, c3r, c3c) :-
+    LaterSibling(c1r, c1c, c2r, c2c),
+    LaterSibling(c2r, c2c, c3r, c3c).
+
+// The immediate next sibling (in descending order): later, but no one
+// between us.
+NextSibling(c1r, c1c, c2r, c2c) :-
+    LaterSibling(c1r, c1c, c2r, c2c),
+    !LaterIndirectSibling(c1r, c1c, c2r, c2c).
+
+// --- Part 3: nextSiblingAnc + nextElem -------------------------------
+HasNextSibling(cr, cc) :- NextSibling(cr, cc, _, _).
+
+// The first ancestor (via parent links) that *has* a next sibling, plus
+// that next sibling — used to "step out" of a subtree in the traversal.
+NextSiblingAnc(cr, cc, ar, ac) :- NextSibling(cr, cc, ar, ac).
+NextSiblingAnc(cr, cc, ar, ac) :-
+    Insert(cr, cc, pr, pc, _),
+    !HasNextSibling(cr, cc),
+    NextSiblingAnc(pr, pc, ar, ac).
+
+HasChild(pr, pc) :- Insert(_, _, pr, pc, _).
+
+// The DFS-pre-order "next" pointer: dive into first child if any, else
+// jump out via nextSiblingAnc.
+NextElem(pr, pc, nr, nc) :- FirstChild(pr, pc, nr, nc).
+NextElem(pr, pc, nr, nc) :- !HasChild(pr, pc), NextSiblingAnc(pr, pc, nr, nc).
+
+// --- Part 4: listElem (skip tombstones) ------------------------------
+// The sentinel root (0, 0) is always considered present (it's never in
+// `Insert`, so we pull it from the parent column of any insert).
+HasValue(e, c) :- Insert(_, _, e, c, _), e = 0, c = 0.
+HasValue(e, c) :- Insert(e, c, _, _, _), !Remove(e, c).
+
+NextElemSkipTombstones(pr, pc, nr, nc) :- NextElem(pr, pc, nr, nc).
+NextElemSkipTombstones(pr, pc, nr, nc) :-
+    NextElem(pr, pc, vr, vc),
+    !HasValue(vr, vc),
+    NextElemSkipTombstones(vr, vc, nr, nc).
+
+NextVisible(pr, pc, nr, nc) :-
+    HasValue(pr, pc),
+    NextElemSkipTombstones(pr, pc, nr, nc),
+    HasValue(nr, nc).
+
+ListElem(pr, pc, value, nr, nc) :-
+    NextVisible(pr, pc, nr, nc),
+    Insert(nr, nc, _, _, value).

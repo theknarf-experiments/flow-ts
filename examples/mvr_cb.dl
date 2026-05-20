@@ -1,0 +1,39 @@
+// Multi-Value Register key-value store WITH causal broadcast.
+//
+// Adapted from Stewen §4.2.1 (mvr-crdt-datalog-dialect). The
+// no-causal-broadcast variant lives in `mvr.dl`; this one extends it
+// to handle out-of-order delivery: a Set op is only published to
+// MvrStore if it's both (a) a *leaf* of the causal graph (not yet
+// overwritten) AND (b) *reachable* from a root of the graph (all its
+// causal predecessors have been delivered).
+//
+// The reachability check is a textbook transitive closure expressed
+// as a self-recursive IDB seeded from the roots. Stratified negation
+// ties the layers together — `IsRoot` / `IsLeaf` depend on negated
+// IDBs, but those IDBs sit in earlier strata.
+
+.in
+.decl Set(rep_id: number, ctr: number, key: string, value: string)
+.input Set.csv
+
+.decl Pred(from_rep: number, from_ctr: number, to_rep: number, to_ctr: number)
+.input Pred.csv
+
+.out
+.decl Overwritten(rep_id: number, ctr: number)
+.decl Overwrites(rep_id: number, ctr: number)
+.decl IsRoot(rep_id: number, ctr: number)
+.decl IsLeaf(rep_id: number, ctr: number)
+.decl IsCausallyReady(rep_id: number, ctr: number)
+.decl MvrStore(key: string, value: string)
+
+Overwritten(r, c) :- Pred(r, c, _, _).
+Overwrites(r, c)  :- Pred(_, _, r, c).
+
+IsRoot(r, c)      :- Set(r, c, _, _), !Overwrites(r, c).
+IsLeaf(r, c)      :- Set(r, c, _, _), !Overwritten(r, c).
+
+IsCausallyReady(r, c) :- IsRoot(r, c).
+IsCausallyReady(r, c) :- IsCausallyReady(from_r, from_c), Pred(from_r, from_c, r, c).
+
+MvrStore(k, v) :- IsLeaf(r, c), IsCausallyReady(r, c), Set(r, c, k, v).

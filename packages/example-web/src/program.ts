@@ -16,7 +16,7 @@ export const SOURCE = `\
 .decl Source(id: number)
 .decl Edge(src: number, dst: number)
 
-.printsize
+.out
 .decl Reach(id: number)
 
 Reach(y) :- Source(y).

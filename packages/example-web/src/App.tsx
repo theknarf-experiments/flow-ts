@@ -60,9 +60,9 @@ function StatsPanel() {
     <div className="card stats">
       <h2>Stats</h2>
       <dl>
-        <dt>Nodes</dt><dd>{allNodes.length}</dd>
-        <dt>Edges</dt><dd>{allEdges.length}</dd>
-        <dt>Reachable</dt><dd>{reachable.length}</dd>
+        <dt>Nodes</dt><dd data-testid="stat-nodes">{allNodes.length}</dd>
+        <dt>Edges</dt><dd data-testid="stat-edges">{allEdges.length}</dd>
+        <dt>Reachable</dt><dd data-testid="stat-reachable">{reachable.length}</dd>
       </dl>
     </div>
   )
@@ -83,11 +83,16 @@ function NodesPanel() {
   return (
     <div className="card">
       <h2>All nodes</h2>
-      <ul className="nodes">
+      <ul className="nodes" data-testid="nodes-list">
         {sorted.map(([id]) => (
-          <li key={id} className={reachSet.has(id) ? 'reachable' : ''}>
+          <li
+            key={id}
+            data-testid={`node-${id}`}
+            data-reachable={reachSet.has(id) ? 'true' : 'false'}
+            className={reachSet.has(id) ? 'reachable' : ''}
+          >
             {id} {reachSet.has(id) ? '· reachable' : ''}
-            <button onClick={() => nodes.delete([id])}>×</button>
+            <button onClick={() => nodes.delete([id])} aria-label={`remove node ${id}`}>×</button>
           </li>
         ))}
       </ul>
@@ -106,10 +111,10 @@ function ReachablePanel() {
     <div className="card">
       <h2>Reachable from source</h2>
       {sorted.length === 0 ? (
-        <p className="muted">(none — pick a source below)</p>
+        <p className="muted" data-testid="reachable-empty">(none — pick a source below)</p>
       ) : (
-        <ul className="reachable">
-          {sorted.map(([id]) => <li key={id}>{id}</li>)}
+        <ul className="reachable" data-testid="reachable-list">
+          {sorted.map(([id]) => <li key={id} data-testid={`reachable-${id}`}>{id}</li>)}
         </ul>
       )}
     </div>
@@ -147,6 +152,8 @@ function AddNode() {
         value={value}
         onChange={(e) => setValue(e.target.value)}
         placeholder="42"
+        aria-label="new node id"
+        data-testid="add-node-input"
       />
     </Form>
   )
@@ -159,7 +166,7 @@ function SetSource() {
     <div className="row">
       <label>
         Source:{' '}
-        <span className="src">
+        <span className="src" data-testid="current-source">
           {current.length === 0 ? '(none)' : current.map((r) => r[0]).join(', ')}
         </span>
       </label>
@@ -168,8 +175,11 @@ function SetSource() {
         onChange={(e) => setValue(e.target.value)}
         placeholder="1"
         style={{ width: '4em' }}
+        aria-label="new source id"
+        data-testid="source-input"
       />
       <button
+        data-testid="set-source"
         onClick={() => {
           const n = parseTuple(value, 1)
           if (!n) return
@@ -182,6 +192,7 @@ function SetSource() {
         set
       </button>
       <button
+        data-testid="clear-source"
         onClick={() => {
           for (const [old] of current) source.delete([old])
         }}
@@ -207,9 +218,9 @@ function AddEdge() {
         setDst('')
       }}
     >
-      <input value={src} onChange={(e) => setSrc(e.target.value)} placeholder="from" style={{ width: '4em' }} />
+      <input value={src} onChange={(e) => setSrc(e.target.value)} placeholder="from" style={{ width: '4em' }} aria-label="edge from" data-testid="edge-from-input" />
       <span>→</span>
-      <input value={dst} onChange={(e) => setDst(e.target.value)} placeholder="to" style={{ width: '4em' }} />
+      <input value={dst} onChange={(e) => setDst(e.target.value)} placeholder="to" style={{ width: '4em' }} aria-label="edge to" data-testid="edge-to-input" />
     </Form>
   )
 }
@@ -226,11 +237,11 @@ function EdgeList() {
       {sorted.length === 0
         ? <p className="muted">(no edges)</p>
         : (
-          <ul>
+          <ul data-testid="edge-list">
             {sorted.map(([a, b]) => (
-              <li key={`${a}-${b}`}>
+              <li key={`${a}-${b}`} data-testid={`edge-${a}-${b}`}>
                 {a} → {b}
-                <button onClick={() => edges.delete([a, b])}>×</button>
+                <button onClick={() => edges.delete([a, b])} aria-label={`remove edge ${a} to ${b}`}>×</button>
               </li>
             ))}
           </ul>

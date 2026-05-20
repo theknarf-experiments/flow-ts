@@ -51,17 +51,24 @@ export class Store {
   #touchedThisTick = new Set<string>()
 
   constructor(program: Program) {
+    // The sink only fires for IDB heads — the executor doesn't echo EDB
+    // writes back through it. EDB live state is mirrored directly by
+    // `update()` below so `useLiveQuery` on an EDB still works.
     this.#session = openSession(program, {}, (rel, row, diff) => {
-      const state = this.#getState(rel)
-      const key = row.map((v) => v.toString()).join(',')
-      const existing = state.pending.get(key)
-      if (existing) {
-        existing[1] += diff
-      } else {
-        state.pending.set(key, [[...row], diff])
-      }
-      this.#touchedThisTick.add(rel)
+      this.#queueDiff(rel, row, diff)
     })
+  }
+
+  #queueDiff(rel: string, row: Row, diff: number): void {
+    const state = this.#getState(rel)
+    const key = row.map((v) => v.toString()).join(',')
+    const existing = state.pending.get(key)
+    if (existing) {
+      existing[1] += diff
+    } else {
+      state.pending.set(key, [[...row], diff])
+    }
+    this.#touchedThisTick.add(rel)
   }
 
   /** Create a typed handle to an EDB. The EDB must be declared in the
@@ -87,9 +94,12 @@ export class Store {
     return this.#getState(relation).snapshot
   }
 
-  /** Queue an EDB update. Used by `Collection`. */
+  /** Queue an EDB update. Used by `Collection`. Mirrors the diff
+   *  locally so EDB live queries see the change — the executor only
+   *  emits sink callbacks for IDB heads. */
   update(relation: string, row: Row, diff: number): void {
     this.#session.update(relation, row, diff)
+    this.#queueDiff(relation, row, diff)
     this.#schedule()
   }
 

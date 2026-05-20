@@ -8,7 +8,9 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist .vite"
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "clean": "rm -rf dist .vite test-results"
   },
   "dependencies": {
     "@flow-ts/executing": "workspace:*",
@@ -18,6 +20,7 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",

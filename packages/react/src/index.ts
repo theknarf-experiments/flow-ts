@@ -1,12 +1,13 @@
-// React-friendly Datalog store, inspired by Tanstack DB's
-// Collection / live-query split.
+// React bindings for the flow-ts Datalog runtime, inspired by Tanstack
+// DB's Collection / live-query split.
 //
 // One `Store` wraps a single `openSession` from `@flow-ts/executing`.
 // Each `Collection` is a typed handle to one EDB you can `insert` /
 // `delete` rows on. Each IDB head is materialised internally as a set
 // of live rows, and `useLiveQuery(store, idbName)` is a React hook
 // that subscribes to that set and re-renders the component whenever
-// it changes.
+// it changes. `useProgram(store)` re-renders on program swaps so
+// schema-driven UI (e.g. inspectors) picks up rule edits.
 //
 // Updates auto-batch. Multiple `collection.insert(...)` calls in the
 // same tick are queued together; we drive `session.advance()` on the

@@ -111,6 +111,9 @@ importers:
       '@flow-ts/parsing':
         specifier: workspace:*
         version: link:../parsing
+      '@flow-ts/react':
+        specifier: workspace:*
+        version: link:../react
       '@flow-ts/reading':
         specifier: workspace:*
         version: link:../reading
@@ -244,6 +247,28 @@ importers:
       vitest:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.19.19)
+
+  packages/react:
+    dependencies:
+      '@flow-ts/executing':
+        specifier: workspace:*
+        version: link:../executing
+      '@flow-ts/parsing':
+        specifier: workspace:*
+        version: link:../parsing
+      '@flow-ts/reading':
+        specifier: workspace:*
+        version: link:../reading
+    devDependencies:
+      '@types/react':
+        specifier: ^18.3.12
+        version: 18.3.29
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
 
   packages/reading:
     dependencies:

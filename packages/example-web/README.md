@@ -13,7 +13,7 @@ Open http://localhost:5173.
 
 ## What's here
 
-A `Store` wraps one `openSession` from `@flow-ts/executing`. `Collection<T>` is a typed handle to an EDB you can `insert` / `delete` rows on. `useLiveQuery(store, idbName)` is a React hook that subscribes to an IDB head and re-renders the component whenever its row set changes.
+The store / collection / hook glue lives in [`@flow-ts/react`](../react/README.md) — `Store` wraps one `openSession` from `@flow-ts/executing`, `Collection<T>` is a typed handle to an EDB you can `insert` / `delete` rows on, and `useLiveQuery(store, idbName)` is a React hook that subscribes to an IDB head and re-renders the component whenever its row set changes. This package just composes those primitives with a Vite shell, some bespoke panels, and a Tanstack-Table-driven generic inspector.
 
 Two bespoke panels in the demo each subscribe through their own `useLiveQuery` — one People roster that flags who's reachable from "me" + headline stats, and one name-only "I can reach" list. Underneath them sits a generic `<RelationTable>` (one instance per declared relation), which derives its columns from the program's `.decl` and renders through `@tanstack/react-table` for free sortable headers. Edits made in any panel — including row-level deletes and the inline add-row that EDB tables grow at the bottom — ripple through the underlying Datalog program and update the rest incrementally.
 

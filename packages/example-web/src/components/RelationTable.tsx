@@ -24,7 +24,7 @@ import {
 } from '@tanstack/react-table'
 import type { Program, RelDecl } from '@flow-ts/parsing'
 import { codecFor, type Row, type Value } from '@flow-ts/reading'
-import { Store, useLiveQuery } from '../lib/store.js'
+import { Store, useLiveQuery } from '@flow-ts/react'
 import styles from './RelationTable.module.css'
 
 export interface RelationTableProps {

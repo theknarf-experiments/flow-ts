@@ -11,7 +11,7 @@
 
 import { useMemo, useState } from 'react'
 import { parseProgram } from '@flow-ts/parsing'
-import { Store, useLiveQuery, useProgram } from './lib/store.js'
+import { Store, useLiveQuery, useProgram } from '@flow-ts/react'
 import { program as initialProgram, SOURCE } from './program.js'
 import { RelationTable } from './components/RelationTable.js'
 

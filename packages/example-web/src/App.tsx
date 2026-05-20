@@ -7,7 +7,7 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import type { Row } from '@flow-ts/reading'
 import { Collection, Store, useLiveQuery } from './lib/store.js'
-import { program } from './program.js'
+import { program, SOURCE } from './program.js'
 
 // One store per app. Seeded outside the React tree so HMR / strict-mode
 // double-mounts don't try to spin up a second graph.
@@ -38,6 +38,8 @@ export function App() {
         </p>
       </header>
 
+      <ProgramPanel />
+
       <section className="grid">
         <StatsPanel />
         <EditorPanel />
@@ -45,6 +47,27 @@ export function App() {
         <ReachablePanel />
       </section>
     </div>
+  )
+}
+
+// --- program source ------------------------------------------------
+
+function ProgramPanel() {
+  // Show the actual Datalog source so readers can map what they're
+  // editing in the UI onto the rules driving the derivations. Wrapped
+  // in <details> so the section can be collapsed once you've seen it.
+  return (
+    <section className="program">
+      <details open data-testid="program-panel">
+        <summary>Datalog program</summary>
+        <pre data-testid="program-source"><code>{SOURCE.trim()}</code></pre>
+        <p className="muted">
+          Two EDBs (<code>Node</code>, <code>Source</code>, <code>Edge</code>) and
+          one recursive IDB (<code>Reach</code>). The first rule seeds reach with the
+          source; the second propagates reachability along edges.
+        </p>
+      </details>
+    </section>
   )
 }
 

@@ -9,6 +9,17 @@
 import { expect, test } from '@playwright/test'
 
 test.describe('reachability demo', () => {
+  test('renders the Datalog program source', async ({ page }) => {
+    await page.goto('/')
+    // The program panel shows the actual `.dl` source so readers can map
+    // the live UI back onto the rules driving it.
+    await expect(page.getByTestId('program-panel')).toBeVisible()
+    const src = page.getByTestId('program-source')
+    await expect(src).toContainText('.decl Reach(id: number)')
+    await expect(src).toContainText('Reach(y) :- Source(y).')
+    await expect(src).toContainText('Reach(z) :- Reach(y), Edge(y, z).')
+  })
+
   test('renders seeded graph state on load', async ({ page }) => {
     await page.goto('/')
     // Seed: nodes 1..7, source 1, edges 1→2, 2→3, 3→4, 2→5.

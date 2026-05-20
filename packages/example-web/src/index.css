@@ -30,6 +30,64 @@ header p {
   font-size: 0.9rem;
 }
 
+.program {
+  margin-bottom: 1rem;
+}
+
+.program details {
+  background: #14171c;
+  border: 1px solid #2a2f37;
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+}
+
+.program summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #cfd3d8;
+  list-style: none;
+}
+
+.program summary::-webkit-details-marker {
+  display: none;
+}
+
+.program summary::before {
+  content: '▸ ';
+  display: inline-block;
+  width: 1em;
+  color: #6a6f78;
+  transition: transform 0.1s ease;
+}
+
+.program details[open] summary::before {
+  content: '▾ ';
+}
+
+.program pre {
+  background: #0f1115;
+  border-radius: 0.25rem;
+  padding: 0.75rem 1rem;
+  margin: 0.75rem 0 0.5rem;
+  overflow-x: auto;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: #cfd3d8;
+  font-family: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+
+.program .muted {
+  margin: 0;
+}
+
+.program .muted code {
+  background: #0f1115;
+  border-radius: 0.2rem;
+  padding: 0 0.3em;
+  font-size: 0.85em;
+  color: #b9e3b9;
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));

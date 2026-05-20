@@ -5,14 +5,15 @@
 //   • adding an edge to an already-reachable node propagates to Reach
 //   • retracting an edge prunes the now-unreachable derivations
 //   • changing the source rewires Reach without leftover state
+//
+// All edits go through the generic RelationInspector at the bottom of
+// the page — there is no bespoke editor form anymore.
 
 import { expect, test } from '@playwright/test'
 
 test.describe('reachability demo', () => {
   test('renders the Datalog program source', async ({ page }) => {
     await page.goto('/')
-    // The program panel shows the actual `.dl` source so readers can map
-    // the live UI back onto the rules driving it.
     await expect(page.getByTestId('program-panel')).toBeVisible()
     const src = page.getByTestId('program-source')
     await expect(src).toContainText('.decl Reach(id: number)')
@@ -27,7 +28,9 @@ test.describe('reachability demo', () => {
     await expect(page.getByTestId('stat-nodes')).toHaveText('7')
     await expect(page.getByTestId('stat-edges')).toHaveText('4')
     await expect(page.getByTestId('stat-reachable')).toHaveText('5')
-    await expect(page.getByTestId('current-source')).toHaveText('1')
+    // Source table in the inspector reflects the single seeded source.
+    await expect(page.getByTestId('relation-count-Source')).toHaveText('1 row')
+    await expect(page.getByTestId('relation-row-Source-1')).toBeVisible()
 
     // Reachable list renders {1, 2, 3, 4, 5}.
     for (const id of [1, 2, 3, 4, 5]) {
@@ -45,12 +48,10 @@ test.describe('reachability demo', () => {
   test('adding an edge into a reachable node extends Reach', async ({ page }) => {
     await page.goto('/')
 
-    // The page has two `add` submit buttons (AddNode and AddEdge forms).
-    // Submit via Enter on the second input to keep the path unambiguous.
     const addEdge = async (from: number, to: number) => {
-      await page.getByTestId('edge-from-input').fill(String(from))
-      await page.getByTestId('edge-to-input').fill(String(to))
-      await page.getByTestId('edge-to-input').press('Enter')
+      await page.getByTestId('add-Edge-src').fill(String(from))
+      await page.getByTestId('add-Edge-dst').fill(String(to))
+      await page.getByTestId('add-Edge-dst').press('Enter')
     }
 
     // Bridge 4 → 6. 4 ∈ Reach, so 6 becomes reachable. 7 has no
@@ -72,10 +73,7 @@ test.describe('reachability demo', () => {
 
     // Seed has 1→2. Removing it should retract 2, 3, 4, 5 from Reach,
     // leaving only {1} (the source itself, from `Reach(y) :- Source(y)`).
-    // The "remove edge" button appears twice on the page (once in the
-    // editor panel, once in the inspector's Edge table); both target
-    // the same store row, so `.first()` is fine.
-    await page.getByRole('button', { name: 'remove edge 1 to 2' }).first().click()
+    await page.getByRole('button', { name: 'remove edge 1 to 2' }).click()
 
     await expect(page.getByTestId('stat-edges')).toHaveText('3')
     await expect(page.getByTestId('stat-reachable')).toHaveText('1')
@@ -87,12 +85,14 @@ test.describe('reachability demo', () => {
   test('changing the source rewires Reach', async ({ page }) => {
     await page.goto('/')
 
-    // Switch source to 3. From 3, reachable = {3, 4} (nothing reaches 5
-    // through 3).
-    await page.getByTestId('source-input').fill('3')
-    await page.getByTestId('set-source').click()
+    // Drop source 1 and add source 3 via the inspector. From 3,
+    // reachable = {3, 4} (nothing reaches 5 through 3).
+    await page.getByRole('button', { name: 'remove source 1' }).click()
+    await page.getByTestId('add-Source-id').fill('3')
+    await page.getByTestId('add-Source-id').press('Enter')
 
-    await expect(page.getByTestId('current-source')).toHaveText('3')
+    await expect(page.getByTestId('relation-count-Source')).toHaveText('1 row')
+    await expect(page.getByTestId('relation-row-Source-3')).toBeVisible()
     await expect(page.getByTestId('stat-reachable')).toHaveText('2')
     await expect(page.getByTestId('reachable-3')).toBeVisible()
     await expect(page.getByTestId('reachable-4')).toBeVisible()
@@ -103,9 +103,9 @@ test.describe('reachability demo', () => {
   test('clearing the source empties Reach entirely', async ({ page }) => {
     await page.goto('/')
 
-    await page.getByTestId('clear-source').click()
+    await page.getByRole('button', { name: 'remove source 1' }).click()
 
-    await expect(page.getByTestId('current-source')).toHaveText('(none)')
+    await expect(page.getByTestId('relation-count-Source')).toHaveText('0 rows')
     await expect(page.getByTestId('stat-reachable')).toHaveText('0')
     await expect(page.getByTestId('reachable-empty')).toBeVisible()
   })
@@ -113,8 +113,8 @@ test.describe('reachability demo', () => {
   test('adding a brand-new node leaves Reach untouched', async ({ page }) => {
     await page.goto('/')
 
-    await page.getByTestId('add-node-input').fill('99')
-    await page.getByTestId('add-node-input').press('Enter')
+    await page.getByTestId('add-Node-id').fill('99')
+    await page.getByTestId('add-Node-id').press('Enter')
 
     await expect(page.getByTestId('stat-nodes')).toHaveText('8')
     // Reach unchanged: 99 has no incoming edges.
@@ -139,9 +139,9 @@ test.describe('reachability demo', () => {
   test('inspector reacts to live edits', async ({ page }) => {
     await page.goto('/')
     // Adding 4 → 6 should grow both Edge and Reach by one row.
-    await page.getByTestId('edge-from-input').fill('4')
-    await page.getByTestId('edge-to-input').fill('6')
-    await page.getByTestId('edge-to-input').press('Enter')
+    await page.getByTestId('add-Edge-src').fill('4')
+    await page.getByTestId('add-Edge-dst').fill('6')
+    await page.getByTestId('add-Edge-dst').press('Enter')
 
     await expect(page.getByTestId('relation-count-Edge')).toHaveText('5 rows')
     await expect(page.getByTestId('relation-count-Reach')).toHaveText('6 rows')
@@ -162,8 +162,6 @@ test.describe('reachability demo', () => {
   test('inserting a row via the add-row updates the live state', async ({ page }) => {
     await page.goto('/')
 
-    // Use the Edge table's add-row to add 4 → 6 (same as the form
-    // does, but via the generic component).
     await page.getByTestId('add-Edge-src').fill('4')
     await page.getByTestId('add-Edge-dst').fill('6')
     await page.getByTestId('add-Edge-submit').click()

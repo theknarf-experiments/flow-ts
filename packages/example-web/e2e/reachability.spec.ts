@@ -72,7 +72,10 @@ test.describe('reachability demo', () => {
 
     // Seed has 1→2. Removing it should retract 2, 3, 4, 5 from Reach,
     // leaving only {1} (the source itself, from `Reach(y) :- Source(y)`).
-    await page.getByRole('button', { name: 'remove edge 1 to 2' }).click()
+    // The "remove edge" button appears twice on the page (once in the
+    // editor panel, once in the inspector's Edge table); both target
+    // the same store row, so `.first()` is fine.
+    await page.getByRole('button', { name: 'remove edge 1 to 2' }).first().click()
 
     await expect(page.getByTestId('stat-edges')).toHaveText('3')
     await expect(page.getByTestId('stat-reachable')).toHaveText('1')
@@ -118,5 +121,30 @@ test.describe('reachability demo', () => {
     await expect(page.getByTestId('stat-reachable')).toHaveText('5')
     await expect(page.getByTestId('node-99')).toBeVisible()
     await expect(page.getByTestId('node-99')).toHaveAttribute('data-reachable', 'false')
+  })
+
+  test('relation inspector renders one table per declared relation', async ({ page }) => {
+    await page.goto('/')
+    for (const rel of ['Node', 'Source', 'Edge', 'Reach']) {
+      await expect(page.getByTestId(`relation-table-${rel}`)).toBeVisible()
+    }
+    // Seed sizes match the bespoke panels.
+    await expect(page.getByTestId('relation-count-Node')).toHaveText('7 rows')
+    await expect(page.getByTestId('relation-count-Source')).toHaveText('1 row')
+    await expect(page.getByTestId('relation-count-Edge')).toHaveText('4 rows')
+    await expect(page.getByTestId('relation-count-Reach')).toHaveText('5 rows')
+    await expect(page.getByTestId('relation-row-Reach-4')).toBeVisible()
+  })
+
+  test('inspector reacts to live edits', async ({ page }) => {
+    await page.goto('/')
+    // Adding 4 → 6 should grow both Edge and Reach by one row.
+    await page.getByTestId('edge-from-input').fill('4')
+    await page.getByTestId('edge-to-input').fill('6')
+    await page.getByTestId('edge-to-input').press('Enter')
+
+    await expect(page.getByTestId('relation-count-Edge')).toHaveText('5 rows')
+    await expect(page.getByTestId('relation-count-Reach')).toHaveText('6 rows')
+    await expect(page.getByTestId('relation-row-Reach-6')).toBeVisible()
   })
 })

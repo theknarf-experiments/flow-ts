@@ -8,6 +8,7 @@ import { useMemo, useState, type FormEvent } from 'react'
 import type { Row } from '@flow-ts/reading'
 import { Collection, Store, useLiveQuery } from './lib/store.js'
 import { program, SOURCE } from './program.js'
+import { RelationTable } from './components/RelationTable.js'
 
 // One store per app. Seeded outside the React tree so HMR / strict-mode
 // double-mounts don't try to spin up a second graph.
@@ -46,7 +47,56 @@ export function App() {
         <NodesPanel />
         <ReachablePanel />
       </section>
+
+      <RelationInspector />
     </div>
+  )
+}
+
+// --- generic relation inspector -------------------------------------
+
+function RelationInspector() {
+  // A single generic table component, instantiated once per relation,
+  // drives its columns from the program's `.decl` and re-renders on
+  // every diff via the same `useLiveQuery` hook as the bespoke panels
+  // above. No per-relation glue.
+  return (
+    <section className="inspector">
+      <h2>All relations</h2>
+      <p className="muted">
+        Schema-driven view powered by <code>@tanstack/react-table</code>. One
+        generic <code>&lt;RelationTable&gt;</code> per declared relation —
+        click a column header to sort.
+      </p>
+      <div className="tables">
+        <RelationTable
+          store={store}
+          program={program}
+          relation="Node"
+          actions={(row) => (
+            <button
+              aria-label={`remove node ${row[0]}`}
+              className="row-action"
+              onClick={() => nodes.delete([row[0]!] as readonly [number])}
+            >×</button>
+          )}
+        />
+        <RelationTable store={store} program={program} relation="Source" />
+        <RelationTable
+          store={store}
+          program={program}
+          relation="Edge"
+          actions={(row) => (
+            <button
+              aria-label={`remove edge ${row[0]} to ${row[1]}`}
+              className="row-action"
+              onClick={() => edges.delete([row[0]!, row[1]!] as readonly [number, number])}
+            >×</button>
+          )}
+        />
+        <RelationTable store={store} program={program} relation="Reach" />
+      </div>
+    </section>
   )
 }
 

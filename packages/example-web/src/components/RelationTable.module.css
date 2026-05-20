@@ -1,0 +1,84 @@
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #14171c;
+  border: 1px solid #2a2f37;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  font-size: 0.85rem;
+  /* Without this caption + border-radius look wrong in Chromium */
+  border-spacing: 0;
+}
+
+.caption {
+  caption-side: top;
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  background: #1a1e25;
+  border: 1px solid #2a2f37;
+  border-bottom: none;
+  border-radius: 0.5rem 0.5rem 0 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.relName {
+  font-weight: 600;
+  color: #cfd3d8;
+}
+
+.relSchema {
+  color: #6a6f78;
+  font-family: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+}
+
+.relCount {
+  margin-left: auto;
+  color: #9aa0a6;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8rem;
+}
+
+.table th {
+  text-align: left;
+  padding: 0.4rem 0.75rem;
+  color: #9aa0a6;
+  font-weight: 500;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid #2a2f37;
+  user-select: none;
+}
+
+.sortable {
+  cursor: pointer;
+}
+
+.sortable:hover {
+  color: #cfd3d8;
+}
+
+.sort {
+  color: #b9e3b9;
+  margin-left: 0.25em;
+}
+
+.table td {
+  padding: 0.35rem 0.75rem;
+  border-bottom: 1px solid #1a1e25;
+  font-variant-numeric: tabular-nums;
+}
+
+.table tr:last-child td {
+  border-bottom: none;
+}
+
+.empty {
+  text-align: center;
+  padding: 1.5rem !important;
+  font-style: italic;
+  color: #6a6f78;
+}

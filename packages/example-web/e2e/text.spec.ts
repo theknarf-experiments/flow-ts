@@ -95,6 +95,25 @@ test.describe('text CRDT demo', () => {
     // The new insert (ctr 6) has the 'e' (ctr 2) as its parent — i.e.
     // it points at the character it was inserted *after*.
     await expect(page.getByTestId('relation-row-Insert-1-6-1-2-X')).toBeVisible()
+    // The cursor stays where the user typed (after 'X', position 3),
+    // not at the end of the text.
+    const cursor = await editor.evaluate((el: HTMLTextAreaElement) => el.selectionStart)
+    expect(cursor).toBe(3)
+  })
+
+  test('typing multiple chars in the middle keeps the cursor in place', async ({ page }) => {
+    await gotoApp(page)
+    const editor = page.getByTestId('text-editor')
+    await editor.pressSequentially('hello')
+    await editor.evaluate((el: HTMLTextAreaElement) => el.setSelectionRange(2, 2))
+    // After each keystroke the cursor should advance by one, NOT jump
+    // back to position 2 (because we'd reset) or to the end (because
+    // React replaced the value).
+    await editor.pressSequentially('XYZ')
+
+    await expect(editor).toHaveValue('heXYZllo')
+    const cursor = await editor.evaluate((el: HTMLTextAreaElement) => el.selectionStart)
+    expect(cursor).toBe(5)
   })
 
   test('deleting in the middle tombstones the right character', async ({ page }) => {

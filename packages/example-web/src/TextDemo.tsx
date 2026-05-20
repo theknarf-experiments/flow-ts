@@ -9,7 +9,14 @@
 // no undo) — it's a demo to show CRDT ops driving live derived state.
 // Scope: append + backspace at the end of the document.
 
-import { useEffect, useMemo, useRef, type ChangeEvent } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  type ChangeEvent,
+  type RefObject,
+} from 'react'
 import { Store, useLiveQuery, useProgram } from '@flow-ts/react'
 import { RelationTable } from './components/RelationTable.js'
 import { textProgram, TEXT_SOURCE } from './textProgram.js'
@@ -106,15 +113,35 @@ export function TextDemo(): JSX.Element {
   // On insert we push; on backspace we pop and emit a Remove for it.
   const visibleTailRef = useRef<ElemId[]>([])
 
+  // Preserve the textarea cursor across re-renders. React swaps the
+  // textarea's value when the CRDT-derived `text` updates, which on
+  // its own resets selectionStart to the end — so a middle-insert
+  // appears to "jump" the caret to the right. Capture the position in
+  // `onChange`, restore it after the render commits.
+  const editorRef = useRef<HTMLTextAreaElement>(null)
+  const pendingCursorRef = useRef<number | null>(null)
+
   useEffect(() => {
     typedRef.current = text.text
     visibleTailRef.current = text.tail
   }, [text])
 
+  useLayoutEffect(() => {
+    const target = pendingCursorRef.current
+    if (target === null) return
+    pendingCursorRef.current = null
+    const el = editorRef.current
+    if (el) el.setSelectionRange(target, target)
+  })
+
   const onChange = (e: ChangeEvent<HTMLTextAreaElement>) => {
     const next = e.target.value
     const prev = typedRef.current
     if (next === prev) return
+    // Remember where the browser put the caret *after* applying this
+    // edit; the layout effect above will restore it after React's
+    // re-render replaces the textarea value with the CRDT-derived one.
+    pendingCursorRef.current = e.target.selectionStart
 
     // Compute the single contiguous diff between `prev` and `next`:
     // strip the longest common prefix and suffix, and everything left
@@ -171,7 +198,7 @@ export function TextDemo(): JSX.Element {
       <ProgramPanel />
 
       <section className="grid">
-        <EditorPanel value={text.text} onChange={onChange} />
+        <EditorPanel editorRef={editorRef} value={text.text} onChange={onChange} />
         <StatsPanel inserts={useLiveQuery(store, 'Insert')} removes={useLiveQuery(store, 'Remove')} elems={elems} />
       </section>
 
@@ -201,9 +228,11 @@ function ProgramPanel() {
 }
 
 function EditorPanel({
+  editorRef,
   value,
   onChange,
 }: {
+  editorRef: RefObject<HTMLTextAreaElement>
   value: string
   onChange: (e: ChangeEvent<HTMLTextAreaElement>) => void
 }): JSX.Element {
@@ -214,6 +243,7 @@ function EditorPanel({
         <span className="muted text-hint">arbitrary inserts, deletes, and replacements</span>
       </div>
       <textarea
+        ref={editorRef}
         className="text-editor"
         data-testid="text-editor"
         value={value}

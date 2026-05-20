@@ -1,0 +1,17 @@
+// Transitive closure of a category hierarchy. Demonstrates:
+//   • pure-string EDB columns
+//   • recursive joins keyed entirely on strings
+//
+// Run it:
+//     pnpm -F @flow-ts/cli run cli -- examples/taxonomy.dl --facts examples
+
+.in
+.decl Subcat(parent: string, child: string)
+.input Subcat.csv
+
+.out
+.decl Descendant(ancestor: string, descendant: string)
+
+.rule
+Descendant(p, c) :- Subcat(p, c).
+Descendant(a, d) :- Descendant(a, x), Subcat(x, d).

@@ -83,4 +83,46 @@ describe('readRowsForRelDecl', () => {
     const rows = readRowsForRelDecl(decl, tmpDir, ',')
     expect(rows).toEqual([[1], [2], [3]])
   })
+
+  it('parses string columns as strings, not NaN', () => {
+    writeFacts('Person.csv', '1,alice\n2,bob\n3,carol\n')
+    const decl = new RelDecl(
+      'Person',
+      [new Attribute('id', 'Integer'), new Attribute('name', 'String')],
+      'Person.csv',
+    )
+    const rows = readRowsForRelDecl(decl, tmpDir, ',')
+    expect(rows).toEqual([
+      [1, 'alice'],
+      [2, 'bob'],
+      [3, 'carol'],
+    ])
+    expect(typeof rows[0]![1]).toBe('string')
+  })
+
+  it('parses float columns preserving decimal precision', () => {
+    writeFacts('Measure.csv', '1,3.14\n2,-0.5\n3,42\n')
+    const decl = new RelDecl(
+      'Measure',
+      [new Attribute('id', 'Integer'), new Attribute('value', 'Float')],
+      'Measure.csv',
+    )
+    const rows = readRowsForRelDecl(decl, tmpDir, ',')
+    expect(rows).toEqual([
+      [1, 3.14],
+      [2, -0.5],
+      [3, 42],
+    ])
+    expect(typeof rows[0]![1]).toBe('number')
+  })
+
+  it('throws on row arity mismatch', () => {
+    writeFacts('Bad.csv', '1,2,3\n')
+    const decl = new RelDecl(
+      'Bad',
+      [new Attribute('x', 'Integer'), new Attribute('y', 'Integer')],
+      'Bad.csv',
+    )
+    expect(() => readRowsForRelDecl(decl, tmpDir, ',')).toThrow(/expected 2 values/)
+  })
 })

@@ -1,0 +1,23 @@
+// Friend-of-friend by name. Demonstrates:
+//   • string and number columns side by side in one EDB
+//   • joins on string columns (Person.name flows into the head)
+//   • a join graph that hops twice through a numeric edge relation
+//     before resolving each endpoint back to its name
+//
+// Run it:
+//     pnpm -F @flow-ts/cli run cli -- examples/friends.dl --facts examples
+//
+// See examples/Person.csv, examples/Friend.csv for the seed data.
+
+.in
+.decl Person(id: number, name: string)
+.input Person.csv
+
+.decl Friend(a: number, b: number)
+.input Friend.csv
+
+.out
+.decl FoaF(a_name: string, b_name: string)
+
+.rule
+FoaF(na, nb) :- Person(a, na), Friend(a, mid), Friend(mid, b), Person(b, nb).

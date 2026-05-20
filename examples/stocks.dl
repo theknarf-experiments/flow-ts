@@ -1,0 +1,21 @@
+// Toy market-cap calculation. Demonstrates:
+//   • all three value types in one program (string symbol, integer
+//     share count, float price)
+//   • head arithmetic that mixes a float with an integer (`p * n`),
+//     producing a float — JS auto-coerces the int operand
+//
+// Run it:
+//     pnpm -F @flow-ts/cli run cli -- examples/stocks.dl --facts examples
+
+.in
+.decl Stock(symbol: string, price: float)
+.input Stock.csv
+
+.decl Volume(symbol: string, shares: number)
+.input Volume.csv
+
+.out
+.decl MarketCap(symbol: string, cap: float)
+
+.rule
+MarketCap(s, p * n) :- Stock(s, p), Volume(s, n).

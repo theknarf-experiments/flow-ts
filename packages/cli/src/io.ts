@@ -7,8 +7,8 @@
 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import type { RelDecl } from '@flow-ts/parsing'
-import type { Row } from '@flow-ts/reading'
+import type { Attribute, RelDecl } from '@flow-ts/parsing'
+import { codecFor, type Row, type Value } from '@flow-ts/reading'
 
 /** Yield all non-empty lines of a file as strings. */
 export function readerLines(filePath: string): string[] {
@@ -17,12 +17,13 @@ export function readerLines(filePath: string): string[] {
 }
 
 /**
- * Read a CSV/facts file into rows. Each value is parsed as a JS number (safe
- * integer range — Datalog IDs and counts fit comfortably).
+ * Read a CSV/facts file into rows. The legacy integer-only entry point:
+ * every column is parsed as a JS `number`. Use `readRowsForRelDecl` to
+ * dispatch through the per-column value codecs (string / float / etc).
  *
- * `id` / `peers` implement the FlowLog worker-sharding rule: the first column
- * mod `peers` selects which worker owns the row. With `peers = 1`, every row
- * is accepted (single-worker mode, which is the db-ivm default).
+ * `id` / `peers` implement the FlowLog worker-sharding rule: the first
+ * column mod `peers` selects which worker owns the row. With `peers = 1`,
+ * every row is accepted (single-worker mode, which is the db-ivm default).
  */
 export function readRows(
   relPath: string,
@@ -56,6 +57,59 @@ export function readRows(
 }
 
 /**
+ * Codec-aware variant of `readRows`. Each column is parsed via the
+ * `ValueCodec` registered for its declared `DataType` — strings stay as
+ * strings, floats stay as floats, ints stay as ints. No CSV quoting yet:
+ * string fields cannot contain the configured delimiter; pick a delimiter
+ * (e.g. `\t`) that isn't expected to appear in your data.
+ */
+function readRowsTyped(
+  relPath: string,
+  delimiter: string,
+  attributes: readonly Attribute[],
+  id = 0,
+  peers = 1,
+): Row[] {
+  const codecs = attributes.map((a) => codecFor(a.dataType))
+  const out: Row[] = []
+  for (const line of readerLines(relPath)) {
+    const fields = line.split(delimiter)
+    if (fields.length === 0) continue
+    const trimmed = fields.map((f) => f.trim()).filter((f) => f.length > 0)
+    if (trimmed.length !== attributes.length) {
+      throw new Error(
+        `expected ${attributes.length} values, got ${trimmed.length} (line: ${line})`,
+      )
+    }
+    // Worker sharding still keys off the first column. For non-numeric
+    // first columns the modulus is taken on a string hash — but since
+    // peers defaults to 1, the practical effect for typical single-worker
+    // runs is that every row is accepted.
+    const firstShard = shardKey(trimmed[0]!, codecs[0]!.matches(trimmed[0]![0] ?? '-') ? 'numeric' : 'string')
+    if (firstShard % peers !== id) continue
+
+    const row: Value[] = trimmed.map((raw, i) => codecs[i]!.fromText(raw))
+    out.push(row)
+  }
+  return out
+}
+
+function shardKey(raw: string, kind: 'numeric' | 'string'): number {
+  if (kind === 'numeric') {
+    const n = Number(raw)
+    return Number.isFinite(n) ? n : 0
+  }
+  // Simple FNV-1a-like fold so string-keyed sharding is at least
+  // deterministic. Not cryptographic; not load-balanced; just stable.
+  let h = 2166136261
+  for (let i = 0; i < raw.length; i++) {
+    h ^= raw.charCodeAt(i)
+    h = (h * 16777619) >>> 0
+  }
+  return h
+}
+
+/**
  * Resolve a RelDecl's effective input filename. When `.input <path>` is
  * declared, that path is used; otherwise the upstream convention is
  * `<rel_name>.facts` (see `flowlog/src/executing/src/dataflow.rs`).
@@ -65,8 +119,11 @@ export function relDeclInputPath(relDecl: RelDecl): string {
 }
 
 /**
- * Convenience: resolve a RelDecl into a path under `factsDir` and read it.
- * Mirrors the upstream `read_row_generic` entry point.
+ * Convenience: resolve a RelDecl into a path under `factsDir` and read it,
+ * dispatching through the per-column value codecs. Mirrors the upstream
+ * `read_row_generic` entry point. All-numeric programs run via the codec
+ * path too — the integer codec's `fromText` matches the old `Number(...)`
+ * behaviour.
  */
 export function readRowsForRelDecl(
   relDecl: RelDecl,
@@ -76,7 +133,7 @@ export function readRowsForRelDecl(
   peers = 1,
 ): Row[] {
   const fullPath = `${factsDir.replace(/\/$/, '')}/${relDeclInputPath(relDecl)}`
-  return readRows(fullPath, delimiter, relDecl.arity(), id, peers)
+  return readRowsTyped(fullPath, delimiter, relDecl.attributes, id, peers)
 }
 
 // ---------------------------------------------------------------------

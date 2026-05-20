@@ -23,15 +23,18 @@ export const SOURCE = `\
 .decl Person(id: number, name: string)
 .decl Me(id: number)
 .decl Friend(a: number, b: number)
+.decl Weight(id: number, kg: float)
 
 .out
 .decl Reach(a: number, b: number)
 .decl ICanReach(name: string)
+.decl ReachableWeight(name: string, kg: float)
 
 Reach(x, y) :- Friend(x, y).
 Reach(x, z) :- Reach(x, y), Friend(y, z).
 
 ICanReach(name) :- Me(me), Reach(me, id), Person(id, name).
+ReachableWeight(name, kg) :- Me(me), Reach(me, id), Person(id, name), Weight(id, kg).
 `
 
 export const program = parseProgram(SOURCE, { grammarSource: 'demo.dl' })

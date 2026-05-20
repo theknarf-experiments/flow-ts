@@ -121,13 +121,23 @@ test.describe('friend-graph demo', () => {
 
   test('relation inspector renders one table per declared relation', async ({ page }) => {
     await page.goto('/')
-    for (const rel of ['Person', 'Me', 'Friend', 'Reach', 'ICanReach']) {
+    for (const rel of [
+      'Person',
+      'Me',
+      'Friend',
+      'Weight',
+      'Reach',
+      'ICanReach',
+      'ReachableWeight',
+    ]) {
       await expect(page.getByTestId(`relation-table-${rel}`)).toBeVisible()
     }
     await expect(page.getByTestId('relation-count-Person')).toHaveText('6 rows')
     await expect(page.getByTestId('relation-count-Me')).toHaveText('1 row')
     await expect(page.getByTestId('relation-count-Friend')).toHaveText('4 rows')
+    await expect(page.getByTestId('relation-count-Weight')).toHaveText('6 rows')
     await expect(page.getByTestId('relation-count-ICanReach')).toHaveText('4 rows')
+    await expect(page.getByTestId('relation-count-ReachableWeight')).toHaveText('4 rows')
   })
 
   test('inspector reacts to live edits and surfaces derived strings', async ({ page }) => {
@@ -150,11 +160,11 @@ test.describe('friend-graph demo', () => {
 
   test('EDB tables get an inline add-row; IDB tables do not', async ({ page }) => {
     await page.goto('/')
-    for (const rel of ['Person', 'Me', 'Friend']) {
+    for (const rel of ['Person', 'Me', 'Friend', 'Weight']) {
       await expect(page.getByTestId(`add-row-${rel}`)).toBeVisible()
       await expect(page.getByTestId(`add-${rel}-submit`)).toBeVisible()
     }
-    for (const rel of ['Reach', 'ICanReach']) {
+    for (const rel of ['Reach', 'ICanReach', 'ReachableWeight']) {
       await expect(page.getByTestId(`add-row-${rel}`)).toHaveCount(0)
     }
   })
@@ -172,14 +182,44 @@ test.describe('friend-graph demo', () => {
     await expect(page.getByTestId('person-42')).toHaveAttribute('data-name', 'mallory')
   })
 
-  test('add-row refuses to insert when a numeric column is non-numeric', async ({ page }) => {
+  test('float column round-trips through a 4-way join', async ({ page }) => {
     await page.goto('/')
-    // Type a string into the Me id column — submit should silently bail.
-    await page.getByTestId('add-Me-id').fill('not-a-number')
-    await page.getByTestId('add-Me-submit').click()
-    // Me row count unchanged, and the input is preserved (no clear on bail).
-    await expect(page.getByTestId('relation-count-Me')).toHaveText('1 row')
-    await expect(page.getByTestId('add-Me-id')).toHaveValue('not-a-number')
+    // Seed weights: alice 62.5, bob 78.4, carol 55.1, dave 91.2, eve 67.8,
+    // frank 70.0. ReachableWeight is the join of Me ⋈ Reach ⋈ Person ⋈
+    // Weight, so it should surface bob/carol/dave/eve with their kg.
+    await expect(page.getByTestId('relation-row-ReachableWeight-bob-78.4')).toBeVisible()
+    await expect(page.getByTestId('relation-row-ReachableWeight-carol-55.1')).toBeVisible()
+    await expect(page.getByTestId('relation-row-ReachableWeight-dave-91.2')).toBeVisible()
+    await expect(page.getByTestId('relation-row-ReachableWeight-eve-67.8')).toBeVisible()
+    // alice (= me) and frank (unreachable) shouldn't appear.
+    await expect(page.getByTestId('relation-row-ReachableWeight-alice-62.5')).toHaveCount(0)
+    await expect(page.getByTestId('relation-row-ReachableWeight-frank-70')).toHaveCount(0)
+  })
+
+  test('Weight add-row accepts decimal input', async ({ page }) => {
+    await page.goto('/')
+    // Float column input is type="number" step="any" — decimals fly through.
+    await expect(page.getByTestId('add-Weight-kg')).toHaveAttribute('type', 'number')
+    await expect(page.getByTestId('add-Weight-kg')).toHaveAttribute('step', 'any')
+
+    await page.getByTestId('add-Weight-id').fill('99')
+    await page.getByTestId('add-Weight-kg').fill('72.3')
+    await page.getByTestId('add-Weight-kg').press('Enter')
+
+    await expect(page.getByTestId('relation-count-Weight')).toHaveText('7 rows')
+    // No friendship to 99 yet → still 4 ReachableWeight rows.
+    await expect(page.getByTestId('relation-count-ReachableWeight')).toHaveText('4 rows')
+  })
+
+  test('add-row inputs get the right type per declared column', async ({ page }) => {
+    await page.goto('/')
+    // Numeric columns get type="number" so the browser rejects non-numeric
+    // input before our codec ever sees it.
+    await expect(page.getByTestId('add-Person-id')).toHaveAttribute('type', 'number')
+    await expect(page.getByTestId('add-Me-id')).toHaveAttribute('type', 'number')
+    await expect(page.getByTestId('add-Friend-a')).toHaveAttribute('type', 'number')
+    // String columns stay on text so the user can type anything.
+    await expect(page.getByTestId('add-Person-name')).toHaveAttribute('type', 'text')
   })
 
   test('editing the program enables rebuild; rebuilding preserves EDB state', async ({ page }) => {

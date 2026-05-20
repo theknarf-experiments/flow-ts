@@ -192,28 +192,40 @@ function AddRow({
   return (
     <tfoot>
       <tr className={styles.addRow} data-testid={`add-row-${decl.name}`}>
-        {decl.attributes.map((attr, i) => (
-          <td key={attr.name}>
-            <input
-              className={styles.addInput}
-              value={values[i] ?? ''}
-              onChange={(e) => {
-                const next = [...values]
-                next[i] = e.target.value
-                setValues(next)
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  submit()
-                }
-              }}
-              placeholder={attr.name}
-              aria-label={`new ${decl.name} ${attr.name}`}
-              data-testid={`add-${decl.name}-${attr.name}`}
-            />
-          </td>
-        ))}
+        {decl.attributes.map((attr, i) => {
+          // Pick the right input affordance per column type. `type="number"`
+          // surfaces a numeric keypad on mobile and rejects most non-numeric
+          // input at the browser level; `step="any"` lets floats use the
+          // arrow controls without snapping. Strings stay on plain text.
+          const isFloat = attr.dataType === 'Float'
+          const isInt = attr.dataType === 'Integer'
+          const inputType = isFloat || isInt ? 'number' : 'text'
+          return (
+            <td key={attr.name}>
+              <input
+                className={styles.addInput}
+                type={inputType}
+                step={isFloat ? 'any' : undefined}
+                inputMode={isFloat ? 'decimal' : isInt ? 'numeric' : undefined}
+                value={values[i] ?? ''}
+                onChange={(e) => {
+                  const next = [...values]
+                  next[i] = e.target.value
+                  setValues(next)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    submit()
+                  }
+                }}
+                placeholder={attr.name}
+                aria-label={`new ${decl.name} ${attr.name}`}
+                data-testid={`add-${decl.name}-${attr.name}`}
+              />
+            </td>
+          )
+        })}
         {hasActionsColumn && (
           <td className={styles.actionsCell}>
             <button

@@ -21,6 +21,7 @@ const store = new Store(initialProgram)
 const persons = store.collection<readonly [number, string]>('Person')
 const me = store.collection<readonly [number]>('Me')
 const friends = store.collection<readonly [number, number]>('Friend')
+const weights = store.collection<readonly [number, number]>('Weight')
 
 // Seed a small social graph.
 //   1 alice ─▶ 2 bob ─▶ 3 carol ─▶ 4 dave
@@ -45,6 +46,19 @@ for (const [a, b] of [
   [1, 5],
 ] as Array<[number, number]>) {
   friends.insert([a, b])
+}
+// Seed a weight (in kg, as a float column) for each person. Only the
+// reachable ones surface in ReachableWeight — frank's row sits idle
+// until you friend him in.
+for (const [id, kg] of [
+  [1, 62.5],
+  [2, 78.4],
+  [3, 55.1],
+  [4, 91.2],
+  [5, 67.8],
+  [6, 70.0],
+] as Array<[number, number]>) {
+  weights.insert([id, kg])
 }
 
 export function App() {

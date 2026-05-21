@@ -40,6 +40,16 @@ function Landing() {
             text is derived live from <code>ListElem</code>.
           </p>
         </Link>
+
+        <Link to="/mvr" className="card demo-link" data-testid="link-mvr">
+          <h2>Multi-value key-value store (MVR CRDT)</h2>
+          <p className="muted">
+            Stewen's MVR §4.2.1 — concurrent writes to the same key
+            coexist as a set rather than overriding each other.
+            Includes a toggle for the causal-broadcast variant that
+            gates ops until their predecessors arrive.
+          </p>
+        </Link>
       </section>
     </div>
   )

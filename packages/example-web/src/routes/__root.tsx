@@ -48,6 +48,9 @@ function RootDocument() {
           <Link to="/text" activeProps={{ className: 'active' }}>
             Text CRDT
           </Link>
+          <Link to="/mvr" activeProps={{ className: 'active' }}>
+            MVR CRDT
+          </Link>
         </nav>
         <Outlet />
         <Scripts />

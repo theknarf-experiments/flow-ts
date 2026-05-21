@@ -13,11 +13,12 @@ Open http://localhost:5173.
 
 ## What's here
 
-Two demos behind file-based routes:
+Three demos behind file-based routes:
 
 - **`/friends`** — recursive reachability over a directed friend graph (`src/App.tsx` + `src/program.ts`).
-- **`/text`** — Stewen's RGA-like list CRDT (`src/TextDemo.tsx` + `src/textProgram.ts`) driving a textarea: each keystroke becomes an immutable `Insert` op, backspace becomes a `Remove`, and the rendered text comes from walking the derived `ListElem` linked list.
-- **`/`** — a small landing page linking to both.
+- **`/text`** — Stewen's RGA-like list CRDT (`src/TextDemo.tsx` + `src/textProgram.ts`) driving a textarea: each keystroke becomes an immutable `Insert` op, backspace becomes a `Remove`, and the rendered text comes from walking the derived `ListElem` linked list. Two replicas + a `SyncLink` that simulates a flaky network.
+- **`/mvr`** — Stewen's MVR key-value store (§4.2.1) with the same two-replica + sync setup. Concurrent writes to the same key coexist as a set rather than overriding each other; a toggle flips between the no-causal-broadcast and with-causal-broadcast program variants.
+- **`/`** — a small landing page linking to all three.
 
 The store / collection / hook glue lives in [`@flow-ts/react`](../react/README.md) — `Store` wraps one `openSession` from `@flow-ts/executing`, `Collection<T>` is a typed handle to an EDB you can `insert` / `delete` rows on, and `useLiveQuery(store, idbName)` is a React hook that subscribes to an IDB head and re-renders the component whenever its row set changes. Each route holds its own `Store` so the two programs don't share state.
 

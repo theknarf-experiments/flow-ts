@@ -161,6 +161,97 @@ body {
   font-weight: 600;
 }
 
+.variant-toggle {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+  flex-wrap: wrap;
+}
+
+.variant-toggle-label {
+  color: #9aa0a6;
+}
+
+.variant-toggle label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  cursor: pointer;
+}
+
+.mvr-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.mvr-table th {
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  color: #9aa0a6;
+  font-weight: 500;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid #2a2f37;
+}
+
+.mvr-table td {
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid #1a1e25;
+  vertical-align: middle;
+}
+
+.mvr-table tr:last-child td {
+  border-bottom: none;
+}
+
+.mvr-key {
+  font-family: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  color: #cfd3d8;
+}
+
+.mvr-conflict {
+  color: #d4a44a;
+  font-weight: 600;
+}
+
+.mvr-write-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.25rem 0.4rem;
+  background: #0f1115;
+  border: 1px solid #2a2f37;
+  border-radius: 0.25rem;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.mvr-write-input:focus {
+  outline: none;
+  border-color: #3a5f8a;
+}
+
+.mvr-add-button {
+  padding: 0.25rem 0.7rem;
+  background: #2a2f37;
+  border: 1px solid #3a3f47;
+  border-radius: 0.25rem;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.mvr-add-button:hover {
+  background: #3a3f47;
+}
+
 header h1 {
   margin: 0 0 0.5rem;
   font-weight: 600;

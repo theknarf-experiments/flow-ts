@@ -782,8 +782,13 @@ function requireNumber(v: Value, ctx: string): number {
   return v
 }
 
-function evalArith(arith: ArithArg, read: ArgReader): number {
-  let acc = requireNumber(evalFactor(arith.init, read), 'evalArith')
+function evalArith(arith: ArithArg, read: ArgReader): Value {
+  const init = evalFactor(arith.init, read)
+  // No arithmetic operations — the factor passes through unchanged.
+  // This lets a head projection of just a string (or any non-numeric)
+  // constant flow into the head without tripping `requireNumber`.
+  if (arith.rest.length === 0) return init
+  let acc = requireNumber(init, 'evalArith')
   for (const [op, factor] of arith.rest) {
     const x = requireNumber(evalFactor(factor, read), 'evalArith')
     switch (op) {

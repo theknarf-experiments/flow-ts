@@ -1,0 +1,86 @@
+// CRDT shared-text-editor benchmark, ported from Frank McSherry's
+// `dynamic-datalog/problems/crdt/query.dl` (originally Martin
+// Kleppmann's example).
+//
+// Translation notes:
+//   • Souffle composite ids `[ctr, node]` → flat 2-tuple columns
+//     `(ctr, n)`. Same shape as our internal list_crdt.dl, but the
+//     replica id has been kept as McSherry named it (`n`, "node") and
+//     the value column is dropped from `Insert` — McSherry's input
+//     log is value-less; every visible element gets the constant
+//     string "hi".
+//   • Inline disjunction `(Ctr1 > Ctr2; (Ctr1 = Ctr2, N1 > N2))` →
+//     two same-head rules.
+//   • Souffle's `insert_input` / `insert` indirection (used because
+//     Souffle can't read composite tuples directly) collapses to a
+//     single EDB `Insert(ctr, n, p_ctr, p_n)`.
+//
+// Data: `unzip input.zip` under `dynamic-datalog/problems/crdt/`.
+// Files are space-delimited — invoke with `--delimiter ' '`.
+
+.in
+.decl Insert(ctr: number, n: number, p_ctr: number, p_n: number)
+.input insert.txt
+
+.decl Remove(ctr: number, n: number)
+.input remove.txt
+
+.out
+.decl Result(prev_ctr: number, next_ctr: number, value: string)
+.decl NextVisible(p_ctr: number, p_n: number, n_ctr: number, n_n: number)
+
+.decl HasChild(p_ctr: number, p_n: number)
+.decl LaterChild(p_ctr: number, p_n: number, c_ctr: number, c_n: number)
+.decl FirstChild(p_ctr: number, p_n: number, c_ctr: number, c_n: number)
+.decl Sibling(c1_ctr: number, c1_n: number, c2_ctr: number, c2_n: number)
+.decl LaterSibling(c1_ctr: number, c1_n: number, c2_ctr: number, c2_n: number)
+.decl LaterSibling2(c1_ctr: number, c1_n: number, c3_ctr: number, c3_n: number)
+.decl NextSibling(c1_ctr: number, c1_n: number, c2_ctr: number, c2_n: number)
+.decl HasNextSibling(c_ctr: number, c_n: number)
+.decl NextSiblingAnc(s_ctr: number, s_n: number, anc_ctr: number, anc_n: number)
+.decl NextElem(p_ctr: number, p_n: number, n_ctr: number, n_n: number)
+.decl HasValue(ctr: number, n: number)
+.decl SkipBlank(f_ctr: number, f_n: number, t_ctr: number, t_n: number)
+
+HasChild(pc, pn) :- Insert(_, _, pc, pn).
+
+LaterChild(pc, pn, cc, cn) :- Insert(sc, sn, pc, pn), Insert(cc, cn, pc, pn), sc > cc.
+LaterChild(pc, pn, cc, cn) :- Insert(sc, sn, pc, pn), Insert(cc, cn, pc, pn), sc = cc, sn > cn.
+
+FirstChild(pc, pn, cc, cn) :- Insert(cc, cn, pc, pn), !LaterChild(pc, pn, cc, cn).
+
+Sibling(c1c, c1n, c2c, c2n) :- Insert(c1c, c1n, pc, pn), Insert(c2c, c2n, pc, pn).
+
+LaterSibling(c1c, c1n, c2c, c2n) :- Sibling(c1c, c1n, c2c, c2n), c1c > c2c.
+LaterSibling(c1c, c1n, c2c, c2n) :- Sibling(c1c, c1n, c2c, c2n), c1c = c2c, c1n > c2n.
+
+LaterSibling2(c1c, c1n, c3c, c3n) :-
+    LaterSibling(c1c, c1n, c2c, c2n),
+    LaterSibling(c2c, c2n, c3c, c3n).
+
+NextSibling(c1c, c1n, c2c, c2n) :-
+    LaterSibling(c1c, c1n, c2c, c2n),
+    !LaterSibling2(c1c, c1n, c2c, c2n).
+
+HasNextSibling(cc, cn) :- LaterSibling(cc, cn, _, _).
+
+NextSiblingAnc(sc, sn, ac, an) :- NextSibling(sc, sn, ac, an).
+NextSiblingAnc(sc, sn, ac, an) :-
+    !HasNextSibling(sc, sn),
+    Insert(sc, sn, pc, pn),
+    NextSiblingAnc(pc, pn, ac, an).
+
+NextElem(pc, pn, nc, nn) :- FirstChild(pc, pn, nc, nn).
+NextElem(pc, pn, nc, nn) :- !HasChild(pc, pn), NextSiblingAnc(pc, pn, nc, nn).
+
+HasValue(c, n) :- Insert(c, n, _, _), !Remove(c, n).
+
+SkipBlank(fc, fn, tc, tn) :- NextElem(fc, fn, tc, tn).
+SkipBlank(fc, fn, tc, tn) :-
+    SkipBlank(vc, vn, tc, tn),
+    NextElem(fc, fn, vc, vn),
+    !HasValue(vc, vn).
+
+NextVisible(pc, pn, nc, nn) :- HasValue(pc, pn), SkipBlank(pc, pn, nc, nn), HasValue(nc, nn).
+
+Result(pc, nc, "hi") :- NextVisible(pc, _, nc, _).

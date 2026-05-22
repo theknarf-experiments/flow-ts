@@ -22,6 +22,9 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist src/__generated__"
   },
+  "dependencies": {
+    "flow-ts": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "peggy": "^4.2.0",

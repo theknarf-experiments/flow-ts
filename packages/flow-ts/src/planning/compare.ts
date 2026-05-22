@@ -1,8 +1,8 @@
 // Port of flowlog/src/planning/src/compare.rs
 
 import type { ComparisonExprPos } from '../catalog/index.js'
-import type { ComparisonOperator } from '@flow-ts/parsing'
-import { comparisonOperatorToString } from '@flow-ts/parsing'
+import type { ComparisonOperator } from '../ast/index.js'
+import { comparisonOperatorToString } from '../ast/index.js'
 import type { TransformationArgument } from './arguments.js'
 import { ArithmeticArgument } from './arithmetic.js'
 

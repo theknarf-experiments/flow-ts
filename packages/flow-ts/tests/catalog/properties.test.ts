@@ -8,7 +8,7 @@ import {
   FLRule,
   Head,
   type Predicate,
-} from '@flow-ts/parsing'
+} from 'flow-ts'
 import fc from 'fast-check'
 import { describe, it } from 'vitest'
 import { type AtomSignature, Catalog } from '../../src/catalog/index.js'

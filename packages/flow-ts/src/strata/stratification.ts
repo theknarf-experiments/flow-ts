@@ -6,7 +6,7 @@
 //   2. Merge independent non-recursive strata in topological order; each
 //      recursive stratum stays separate.
 
-import type { FLRule, Program } from '@flow-ts/parsing'
+import type { FLRule, Program } from '../ast/index.js'
 import { DependencyGraph } from './dependencies.js'
 
 export class Strata {

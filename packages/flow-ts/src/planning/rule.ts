@@ -10,9 +10,9 @@ import {
   type Catalog,
   ComparisonExprPos,
 } from '../catalog/index.js'
-import type { ComparisonExpr } from '@flow-ts/parsing'
+import type { ComparisonExpr } from '../ast/index.js'
 import { PlanTree } from '../optimizing/index.js'
-import type { Arithmetic, FLRule, Factor } from '@flow-ts/parsing'
+import type { Arithmetic, FLRule, Factor } from '../ast/index.js'
 import { Collection, newAtomSignature } from './collections.js'
 import { ArithmeticArgument, type FactorArgument } from './arithmetic.js'
 import {
@@ -166,7 +166,7 @@ function buildHeadArithArg(
     return { kind: 'Const', value: factor.value }
   }
   const init = convertFactor(arith.init)
-  const rest: Array<readonly [import('@flow-ts/parsing').ArithmeticOperator, FactorArgument]> = []
+  const rest: Array<readonly [import('../ast/index.js').ArithmeticOperator, FactorArgument]> = []
   for (const [op, factor] of arith.rest) {
     rest.push([op, convertFactor(factor)] as const)
   }

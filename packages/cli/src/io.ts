@@ -7,8 +7,7 @@
 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import type { Attribute, RelDecl } from '@flow-ts/parsing'
-import { codecFor, type Row, type Value } from 'flow-ts'
+import { codecFor, type Attribute, type RelDecl, type Row, type Value } from 'flow-ts'
 
 /** Yield all non-empty lines of a file as strings. Tolerates `\r\n`
  *  line endings — trailing `\r` is stripped so downstream parsers see

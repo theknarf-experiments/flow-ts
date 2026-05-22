@@ -1,19 +1,27 @@
 // Top-level parser. Uses a pre-generated peggy parser
 // (see src/grammar.peggy → src/__generated__/grammar.js).
 
-import { Aggregation, type AggregationOperator } from './aggregation.js'
 import {
+  Aggregation,
+  type AggregationOperator,
   Arithmetic,
   type ArithmeticOperator,
+  Atom,
+  type AtomArg,
+  Attribute,
+  ComparisonExpr,
+  type ComparisonOperator,
+  type Const,
+  type DataType,
   type Factor,
-} from './arithmetic.js'
-import { ComparisonExpr, type ComparisonOperator } from './compare.js'
-import type { Const } from './constant.js'
-import { Attribute, type DataType, RelDecl } from './decl.js'
+  FLRule,
+  Head,
+  type HeadArg,
+  type Predicate,
+  Program,
+  RelDecl,
+} from 'flow-ts'
 import { parse as peggyParse } from './__generated__/grammar.js'
-import { Head, type HeadArg } from './head.js'
-import { Program } from './program.js'
-import { Atom, type AtomArg, FLRule, type Predicate } from './rule.js'
 
 type Builders = {
   program: (edbs: RelDecl[], idbs: RelDecl[], rules: FLRule[]) => Program

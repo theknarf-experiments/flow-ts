@@ -3,7 +3,7 @@
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { Attribute, RelDecl } from '@flow-ts/parsing'
+import { Attribute, RelDecl } from 'flow-ts'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   appendCsvRow,

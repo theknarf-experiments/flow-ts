@@ -1,12 +1,4 @@
-// Public API of @flow-ts/parsing.
+// Public API of @flow-ts/parsing. The AST types themselves live in
+// `flow-ts`; this package wraps them with a peggy-generated parser.
 
-export * from './aggregation.js'
-export * from './arithmetic.js'
-export * from './compare.js'
-export * from './constant.js'
-export * from './decl.js'
-export * from './head.js'
 export * from './parser.js'
-export * from './program.js'
-export * from './rule.js'
-export * from './serialize.js'

@@ -16,8 +16,7 @@
 // render, not one per row.
 
 import { useSyncExternalStore } from 'react'
-import { openSession, type ProgramSession } from 'flow-ts'
-import type { Program } from '@flow-ts/parsing'
+import { openSession, type Program, type ProgramSession } from 'flow-ts'
 import { encodeRow, type Row } from 'flow-ts'
 
 type Listener = () => void

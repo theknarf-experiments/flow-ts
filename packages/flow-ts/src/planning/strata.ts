@@ -4,7 +4,7 @@
 // stratum (recursive or non-recursive) into one or more execution lists,
 // sharing intermediate signatures where allowed.
 
-import type { FLRule } from '@flow-ts/parsing'
+import type { FLRule } from '../ast/index.js'
 import {
   type CollectionSignature,
   newAtomSignature,

@@ -48,7 +48,7 @@ import {
   type AggregationHeadIDB,
   aggregationCatalogFromProgram,
 } from '../catalog/index.js'
-import type { Program } from '@flow-ts/parsing'
+import type { Program } from '../ast/index.js'
 import {
   type BinaryTransformation,
   type GroupStrataQueryPlan,

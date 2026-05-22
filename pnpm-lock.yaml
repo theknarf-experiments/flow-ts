@@ -122,10 +122,10 @@ importers:
       '@flow-ts/db-ivm':
         specifier: workspace:*
         version: link:../db-ivm
+    devDependencies:
       '@flow-ts/parsing':
         specifier: workspace:*
         version: link:../parsing
-    devDependencies:
       '@types/node':
         specifier: ^22.10.0
         version: 22.19.19
@@ -140,6 +140,10 @@ importers:
         version: 2.1.9(@types/node@22.19.19)(lightningcss@1.32.0)
 
   packages/parsing:
+    dependencies:
+      flow-ts:
+        specifier: workspace:*
+        version: link:../flow-ts
     devDependencies:
       '@types/node':
         specifier: ^22.10.0

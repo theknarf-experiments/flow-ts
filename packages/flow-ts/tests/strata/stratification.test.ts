@@ -9,7 +9,7 @@ import {
   Program,
   type Predicate,
   RelDecl,
-} from '@flow-ts/parsing'
+} from 'flow-ts'
 import { describe, expect, it } from 'vitest'
 import { Strata } from '../../src/strata/index.js'
 

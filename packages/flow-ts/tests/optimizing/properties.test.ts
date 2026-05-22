@@ -7,7 +7,7 @@ import {
   FLRule,
   Head,
   type Predicate,
-} from '@flow-ts/parsing'
+} from 'flow-ts'
 import fc from 'fast-check'
 import { describe, it } from 'vitest'
 import { PlanTree } from '../../src/optimizing/index.js'

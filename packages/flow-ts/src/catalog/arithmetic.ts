@@ -1,7 +1,7 @@
 // Port of flowlog/src/catalog/src/arithmetic.rs
 
-import type { Arithmetic, ArithmeticOperator, Const, DataType } from '@flow-ts/parsing'
-import { arithmeticOperatorToString, constToString } from '@flow-ts/parsing'
+import type { Arithmetic, ArithmeticOperator, Const, DataType } from '../ast/index.js'
+import { arithmeticOperatorToString, constToString } from '../ast/index.js'
 import type { AtomArgumentSignature } from './atoms.js'
 
 /** Positional analog of `parsing::Factor`: variables are resolved to argument signatures. */
@@ -35,7 +35,7 @@ export class ArithmeticPos {
   ): ArithmeticPos {
     let varId = 0
     const liftFactor = (
-      f: import('@flow-ts/parsing').Factor,
+      f: import('../ast/index.js').Factor,
     ): FactorPos => {
       if (f.kind === 'Var') {
         const sig = varSignatures[varId++]

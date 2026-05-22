@@ -1,7 +1,7 @@
 // Port of flowlog/src/catalog/src/compare.rs
 
-import type { ComparisonExpr, ComparisonOperator } from '@flow-ts/parsing'
-import { comparisonOperatorToString } from '@flow-ts/parsing'
+import type { ComparisonExpr, ComparisonOperator } from '../ast/index.js'
+import { comparisonOperatorToString } from '../ast/index.js'
 import { ArithmeticPos } from './arithmetic.js'
 import type { AtomArgumentSignature } from './atoms.js'
 

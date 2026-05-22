@@ -10,7 +10,7 @@ import {
   type ComparisonExprPos,
   SignatureMap,
 } from '../catalog/index.js'
-import type { Const } from '@flow-ts/parsing'
+import type { Const } from '../ast/index.js'
 import {
   type TransformationArgument,
   jnFlip,

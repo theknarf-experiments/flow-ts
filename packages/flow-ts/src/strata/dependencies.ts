@@ -1,6 +1,6 @@
 // Port of flowlog/src/strata/src/dependencies.rs
 
-import type { Program } from '@flow-ts/parsing'
+import type { Program } from '../ast/index.js'
 
 /** Rule-level dependency graph derived from a parsed FlowLog program. */
 export class DependencyGraph {

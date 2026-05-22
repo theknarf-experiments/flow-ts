@@ -1,13 +1,9 @@
 // Targeted tests for the more interesting parser features: negation,
 // comparisons, arithmetic, aggregation, constants, and rule optimisation hints.
 
+import { Aggregation, Arithmetic, ComparisonExpr } from 'flow-ts'
 import { describe, expect, it } from 'vitest'
-import {
-  Aggregation,
-  Arithmetic,
-  ComparisonExpr,
-  parseProgram,
-} from '../src/index.js'
+import { parseProgram } from '../src/index.js'
 
 const HEADER = `\
 .in

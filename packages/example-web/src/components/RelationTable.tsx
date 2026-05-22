@@ -22,8 +22,7 @@ import {
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table'
-import type { Program, RelDecl } from '@flow-ts/parsing'
-import { codecFor, type Row, type Value } from 'flow-ts'
+import { codecFor, type Program, type RelDecl, type Row, type Value } from 'flow-ts'
 import { Store, useLiveQuery } from '@flow-ts/react'
 import styles from './RelationTable.module.css'
 

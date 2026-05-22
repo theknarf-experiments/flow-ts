@@ -1,6 +1,6 @@
 // Port of flowlog/src/catalog/src/head.rs
 
-import type { Aggregation, Head, Program } from '@flow-ts/parsing'
+import type { Aggregation, Head, Program } from '../ast/index.js'
 
 /**
  * Structural analysis of an aggregation rule head — only valid when the head

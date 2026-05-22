@@ -8,7 +8,7 @@ import {
   Head,
   type HeadArg,
   type Predicate,
-} from '@flow-ts/parsing'
+} from 'flow-ts'
 import { describe, expect, it } from 'vitest'
 import { Catalog } from '../../src/catalog/index.js'
 

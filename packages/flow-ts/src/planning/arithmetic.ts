@@ -5,8 +5,8 @@ import {
   type FactorPos,
   factorPosSignatures as _unused1,
 } from '../catalog/index.js'
-import type { ArithmeticOperator, Const, DataType } from '@flow-ts/parsing'
-import { arithmeticOperatorToString, constToString } from '@flow-ts/parsing'
+import type { ArithmeticOperator, Const, DataType } from '../ast/index.js'
+import { arithmeticOperatorToString, constToString } from '../ast/index.js'
 import {
   type TransformationArgument,
   jnFlip,

@@ -7,19 +7,19 @@
 // purely on the program.
 
 import * as fs from 'node:fs'
-import { aggregationCatalogFromProgram } from 'flow-ts'
 import { parseProgram } from '@flow-ts/parsing'
-import type { Program } from '@flow-ts/parsing'
 import {
   ProgramQueryPlan,
+  Strata,
+  type FLRule,
+  type Program,
   type Transformation,
+  aggregationCatalogFromProgram,
   binaryInputs,
   isUnary,
   transformationOutput,
   unaryInput,
 } from 'flow-ts'
-import type { FLRule } from '@flow-ts/parsing'
-import { Strata } from 'flow-ts'
 
 export interface InspectOptions {
   /** Emit JSON instead of human-readable text. */

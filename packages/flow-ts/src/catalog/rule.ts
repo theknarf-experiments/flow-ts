@@ -19,7 +19,7 @@ import {
   atomArgAsVar,
   atomArgIsVar,
   headArgToString,
-} from '@flow-ts/parsing'
+} from '../ast/index.js'
 import {
   AtomArgumentSignature,
   AtomSignature,

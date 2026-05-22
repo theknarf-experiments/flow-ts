@@ -1,7 +1,7 @@
 // Port of flowlog/src/planning/src/constraints.rs
 
-import type { Const } from '@flow-ts/parsing'
-import { constToString } from '@flow-ts/parsing'
+import type { Const } from '../ast/index.js'
+import { constToString } from '../ast/index.js'
 import {
   type TransformationArgument,
   transformationArgumentToString,

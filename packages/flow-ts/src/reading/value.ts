@@ -27,7 +27,7 @@
 // codec — no changes to the planner, the operator runtime, or the wire
 // format of other types.
 
-import type { Const, DataType } from '@flow-ts/parsing'
+import type { Const, DataType } from '../ast/index.js'
 
 /** Union of all in-memory row cell types. Widen as new codecs land. */
 export type Value = number | string

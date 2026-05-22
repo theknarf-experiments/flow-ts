@@ -5,7 +5,7 @@
 // how arguments thread through.
 
 import type { AtomArgumentSignature, ComparisonExprPos } from '../catalog/index.js'
-import type { Const } from '@flow-ts/parsing'
+import type { Const } from '../ast/index.js'
 import { type CollectionSignature, Collection } from './collections.js'
 import { type TransformationFlow, flowJoinToKv, flowKvToKv, transformationFlowToString } from './flow.js'
 

@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "TypeScript port of FlowLog (a Datalog engine) on top of a vendored Tanstack db-ivm",
+  "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@9.15.0",
   "scripts": {

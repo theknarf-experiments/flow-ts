@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel in-flight runs when a new push lands on the same ref.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # `mise.toml` pins the node version; corepack handles pnpm via the
+      # `packageManager` field in package.json.
+      - uses: jdx/mise-action@v2
+        with:
+          experimental: true
+
+      - name: Enable pnpm via corepack
+        run: corepack enable
+
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install playwright browser (chromium)
+        # example-web's e2e suite runs against headless chromium. ubuntu
+        # runners ship the system libs already; just pull the browser.
+        run: pnpm -F @flow-ts/example-web exec playwright install chromium
+
+      - name: Build grammar (peggy)
+        run: pnpm build:grammar
+
+      - name: Build packages
+        run: pnpm build
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test

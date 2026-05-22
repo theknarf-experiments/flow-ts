@@ -1,0 +1,10 @@
+# mprocs config — launched by `pnpm dev` at the repo root.
+#
+# Add new processes here as the dev story grows. Each entry runs in its
+# own pane; press `q` to quit the whole thing, or use `s`/`x` to stop /
+# restart an individual process. `?` shows the keybindings.
+
+procs:
+  example-web:
+    shell: pnpm -F @flow-ts/example-web run dev
+    cwd: .

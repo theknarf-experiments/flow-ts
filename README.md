@@ -14,7 +14,7 @@ flow-ts is a port of the Rust [FlowLog](https://github.com/dbflow-project/flowlo
 
 - 17 of 18 upstream FlowLog example programs match the Rust engine row-for-row on synthetic test data. The one mismatch (`cc.dl`) is a semantic divergence around how aggregation logs are written under recursion, not a bug.
 - Datalog features supported: stratified recursion, negation, head arithmetic, `min`/`max`/`sum`/`count` aggregations, sideways info passing (SIP, `-O 1`), planning optimisation (`-O 2`).
-- Property-based + integration tests in `packages/executing/tests/`.
+- Property-based + integration tests in `packages/flow-ts/tests/`.
 
 ## Install
 
@@ -138,12 +138,12 @@ Add `--json` for machine-readable output, or `-O 1` / `--no-sharing` to inspect 
 
 ## Library usage
 
-The executor is published-shaped (not on npm yet) as `@flow-ts/executing`. Two entry points:
+The executor is published-shaped (not on npm yet) as `flow-ts`. Two entry points:
 
 ### Batch — `executeProgram`
 
 ```ts
-import { executeProgram } from '@flow-ts/executing'
+import { executeProgram } from 'flow-ts'
 import { parseProgram } from '@flow-ts/parsing'
 
 const program = parseProgram(source)
@@ -161,7 +161,7 @@ executeProgram(program, facts, {}, (rel, row, diff) => {
 ### Streaming — `openSession`
 
 ```ts
-import { openSession } from '@flow-ts/executing'
+import { openSession } from 'flow-ts'
 
 const session = openSession(program, {}, (rel, row, diff) => {
   console.log(`${diff > 0 ? '+' : ''}${diff}`, rel, row)
@@ -184,15 +184,19 @@ Operators carry their own state across `advance()` calls (the join indexes, the 
 
 ```
 packages/
-  parsing/      Datalog grammar (peggy) → typed AST
-  strata/       Kosaraju's SCC → stratified evaluation order
-  catalog/      Per-rule signatures, SIP rewriting, dependent atoms
-  optimizing/   Prim's MST join-order optimisation
-  planning/     Logical IR: TransformationFlow trees, head arithmetic
-  reading/      Row type, encoding, in-memory rels (no I/O)
-  executing/    Dataflow assembly + executor (executeProgram, openSession)
+  flow-ts/      The engine. One package with several internal modules:
+                  ast/         Typed AST (shared with parsing)
+                  strata/      Kosaraju's SCC → stratified evaluation order
+                  catalog/     Per-rule signatures, SIP rewriting, dependent atoms
+                  optimizing/  Prim's MST join-order optimisation
+                  planning/    Logical IR: TransformationFlow trees, head arithmetic
+                  reading/     Row type, encoding, in-memory rels (no I/O)
+                  executing/   Dataflow assembly + executor (executeProgram, openSession)
+  parsing/      Datalog grammar (peggy) → parseProgram. Depends on flow-ts for the AST.
   db-ivm/       Vendored Tanstack db-ivm + a queue-based `iterate` operator
   cli/          flow-ts binary, argv parsing (commander+zod), fact CSV I/O
+  react/        React bindings: Store / Collection / useLiveQuery
+  example-web/  Tanstack-Start SPA demo (friend-graph, text CRDT, MVR k/v)
 ```
 
 The executor compiles a parsed `Program` into a db-ivm dataflow graph, one stratum at a time. Recursive strata get a queue-driven `iterate` operator (defined in `packages/db-ivm/src/operators/iterate.ts`) that's the moral equivalent of differential-dataflow's `scope.iterative` but without the time-tracking machinery — operators are stateful, so each iteration's body sees only the new diff, and convergence is detected by db-ivm's standard "no pending work" loop.
@@ -201,7 +205,7 @@ Rows cross the dataflow boundary as comma-joined strings (`"1,2,3,"`) rather tha
 
 ## Browser usage
 
-`@flow-ts/executing`, `@flow-ts/reading` and the rest of the stack are filesystem-free, so the whole engine runs in the browser unchanged. There's a working React demo in `packages/example-web/` with a Tanstack-DB-inspired pattern: one `Store` wraps a session, `Collection<T>` is a typed EDB handle, and `useLiveQuery(store, idb)` is a React hook that subscribes to an IDB head. Multiple components can subscribe to the same store and re-render incrementally as you edit the EDBs.
+`flow-ts` and the rest of the stack are filesystem-free, so the whole engine runs in the browser unchanged. There's a working React demo in `packages/example-web/` with a Tanstack-DB-inspired pattern: one `Store` wraps a session, `Collection<T>` is a typed EDB handle, and `useLiveQuery(store, idb)` is a React hook that subscribes to an IDB head. Multiple components can subscribe to the same store and re-render incrementally as you edit the EDBs.
 
 ```bash
 pnpm -F @flow-ts/example-web run dev
@@ -212,7 +216,7 @@ The whole pipeline (parser, planner, db-ivm runtime, React glue) ships in ~74 kB
 ## Tests
 
 ```bash
-pnpm -r run test                       # 299 unit + property tests
+pnpm test                              # 367 unit + property + e2e tests
 pnpm -F @flow-ts/cli test -- vs-rust   # diff TS output against the Rust binary
 ```
 

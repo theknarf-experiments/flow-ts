@@ -17,7 +17,7 @@
 // (`subscribe`, `snapshot`, `update`). It never reaches into Store
 // internals — the same primitives a user has.
 
-import { encodeRow, type Row } from '@flow-ts/reading'
+import { encodeRow, type Row } from 'flow-ts'
 import type { Store } from '@flow-ts/react'
 
 export type ReplicaId = 'a' | 'b'

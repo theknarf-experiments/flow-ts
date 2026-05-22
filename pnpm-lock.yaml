@@ -24,51 +24,17 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.19.19)(lightningcss@1.32.0)
 
-  packages/catalog:
-    dependencies:
-      '@flow-ts/parsing':
-        specifier: workspace:*
-        version: link:../parsing
-      '@flow-ts/strata':
-        specifier: workspace:*
-        version: link:../strata
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.0
-        version: 22.19.19
-      fast-check:
-        specifier: ^4.8.0
-        version: 4.8.0
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.0
-        version: 2.1.9(@types/node@22.19.19)(lightningcss@1.32.0)
-
   packages/cli:
     dependencies:
-      '@flow-ts/catalog':
-        specifier: workspace:*
-        version: link:../catalog
-      '@flow-ts/executing':
-        specifier: workspace:*
-        version: link:../executing
       '@flow-ts/parsing':
         specifier: workspace:*
         version: link:../parsing
-      '@flow-ts/planning':
-        specifier: workspace:*
-        version: link:../planning
-      '@flow-ts/reading':
-        specifier: workspace:*
-        version: link:../reading
-      '@flow-ts/strata':
-        specifier: workspace:*
-        version: link:../strata
       commander:
         specifier: ^14.0.3
         version: 14.0.3
+      flow-ts:
+        specifier: workspace:*
+        version: link:../flow-ts
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -104,18 +70,12 @@ importers:
 
   packages/example-web:
     dependencies:
-      '@flow-ts/executing':
-        specifier: workspace:*
-        version: link:../executing
       '@flow-ts/parsing':
         specifier: workspace:*
         version: link:../parsing
       '@flow-ts/react':
         specifier: workspace:*
         version: link:../react
-      '@flow-ts/reading':
-        specifier: workspace:*
-        version: link:../reading
       '@tanstack/react-router':
         specifier: ^1.95.0
         version: 1.170.5(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -125,6 +85,9 @@ importers:
       '@tanstack/react-table':
         specifier: ^8.21.3
         version: 8.21.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      flow-ts:
+        specifier: workspace:*
+        version: link:../flow-ts
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -154,63 +117,14 @@ importers:
         specifier: ^7.0.0
         version: 7.3.3(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.32.0)
 
-  packages/executing:
+  packages/flow-ts:
     dependencies:
-      '@flow-ts/catalog':
-        specifier: workspace:*
-        version: link:../catalog
       '@flow-ts/db-ivm':
         specifier: workspace:*
         version: link:../db-ivm
       '@flow-ts/parsing':
         specifier: workspace:*
         version: link:../parsing
-      '@flow-ts/planning':
-        specifier: workspace:*
-        version: link:../planning
-      '@flow-ts/reading':
-        specifier: workspace:*
-        version: link:../reading
-      '@flow-ts/strata':
-        specifier: workspace:*
-        version: link:../strata
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.0
-        version: 22.19.19
-      fast-check:
-        specifier: ^4.8.0
-        version: 4.8.0
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.0
-        version: 2.1.9(@types/node@22.19.19)(lightningcss@1.32.0)
-
-  packages/flow-ts:
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.0
-        version: 22.19.19
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.0
-        version: 2.1.9(@types/node@22.19.19)(lightningcss@1.32.0)
-
-  packages/optimizing:
-    dependencies:
-      '@flow-ts/catalog':
-        specifier: workspace:*
-        version: link:../catalog
-      '@flow-ts/parsing':
-        specifier: workspace:*
-        version: link:../parsing
-      '@flow-ts/strata':
-        specifier: workspace:*
-        version: link:../strata
     devDependencies:
       '@types/node':
         specifier: ^22.10.0
@@ -240,45 +154,14 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.19.19)(lightningcss@1.32.0)
 
-  packages/planning:
-    dependencies:
-      '@flow-ts/catalog':
-        specifier: workspace:*
-        version: link:../catalog
-      '@flow-ts/optimizing':
-        specifier: workspace:*
-        version: link:../optimizing
-      '@flow-ts/parsing':
-        specifier: workspace:*
-        version: link:../parsing
-      '@flow-ts/strata':
-        specifier: workspace:*
-        version: link:../strata
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.0
-        version: 22.19.19
-      fast-check:
-        specifier: ^4.8.0
-        version: 4.8.0
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.0
-        version: 2.1.9(@types/node@22.19.19)(lightningcss@1.32.0)
-
   packages/react:
     dependencies:
-      '@flow-ts/executing':
-        specifier: workspace:*
-        version: link:../executing
       '@flow-ts/parsing':
         specifier: workspace:*
         version: link:../parsing
-      '@flow-ts/reading':
+      flow-ts:
         specifier: workspace:*
-        version: link:../reading
+        version: link:../flow-ts
     devDependencies:
       '@types/react':
         specifier: ^18.3.12
@@ -289,50 +172,6 @@ importers:
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
-
-  packages/reading:
-    dependencies:
-      '@flow-ts/db-ivm':
-        specifier: workspace:*
-        version: link:../db-ivm
-      '@flow-ts/parsing':
-        specifier: workspace:*
-        version: link:../parsing
-      '@flow-ts/planning':
-        specifier: workspace:*
-        version: link:../planning
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.0
-        version: 22.19.19
-      fast-check:
-        specifier: ^4.8.0
-        version: 4.8.0
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.0
-        version: 2.1.9(@types/node@22.19.19)(lightningcss@1.32.0)
-
-  packages/strata:
-    dependencies:
-      '@flow-ts/parsing':
-        specifier: workspace:*
-        version: link:../parsing
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.0
-        version: 22.19.19
-      fast-check:
-        specifier: ^4.8.0
-        version: 4.8.0
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.0
-        version: 2.1.9(@types/node@22.19.19)(lightningcss@1.32.0)
 
 packages:
 

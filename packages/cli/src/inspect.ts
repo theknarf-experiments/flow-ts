@@ -7,7 +7,7 @@
 // purely on the program.
 
 import * as fs from 'node:fs'
-import { aggregationCatalogFromProgram } from '@flow-ts/catalog'
+import { aggregationCatalogFromProgram } from 'flow-ts'
 import { parseProgram } from '@flow-ts/parsing'
 import type { Program } from '@flow-ts/parsing'
 import {
@@ -17,9 +17,9 @@ import {
   isUnary,
   transformationOutput,
   unaryInput,
-} from '@flow-ts/planning'
+} from 'flow-ts'
 import type { FLRule } from '@flow-ts/parsing'
-import { Strata } from '@flow-ts/strata'
+import { Strata } from 'flow-ts'
 
 export interface InspectOptions {
   /** Emit JSON instead of human-readable text. */

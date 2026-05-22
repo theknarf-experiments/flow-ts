@@ -9,9 +9,9 @@ import {
   openSession,
   type IdbSink,
   type ProgramSession,
-} from '@flow-ts/executing'
+} from 'flow-ts'
 import { parseProgram } from '@flow-ts/parsing'
-import type { Row } from '@flow-ts/reading'
+import type { Row } from 'flow-ts'
 import type { Args } from './args.js'
 import {
   appendCsvRow,

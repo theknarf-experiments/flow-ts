@@ -16,14 +16,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # `mise.toml` pins the node version; corepack handles pnpm via the
-      # `packageManager` field in package.json.
+      # `mise.toml` pins the node version; the pnpm action reads its
+      # version from the `packageManager` field in package.json.
       - uses: jdx/mise-action@v2
         with:
           experimental: true
 
-      - name: Enable pnpm via corepack
-        run: corepack enable
+      - uses: pnpm/action-setup@v4
 
       - name: pnpm install
         run: pnpm install --frozen-lockfile

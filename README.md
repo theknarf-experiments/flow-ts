@@ -2,7 +2,7 @@
 
 A Datalog engine in TypeScript, built on top of incremental dataflow.
 
-flow-ts is a port of the Rust [FlowLog](https://github.com/dbflow-project/flowlog) engine (VLDB 2026) onto a vendored fork of [Tanstack's db-ivm](https://github.com/TanStack/db) (which is itself a fork of [`@electric-sql/d2ts`](https://github.com/electric-sql/d2ts) with the time/version machinery stripped out). It parses Datalog programs, stratifies and plans them, and executes them as a dataflow graph whose operators are inherently incremental: feed it new facts later and only the affected derivations re-run.
+flow-ts is a port of the Rust [FlowLog](https://www.flowlog-rs.com/) engine (VLDB 2026) onto a vendored fork of [Tanstack's db-ivm](https://github.com/TanStack/db) (which is itself a fork of [`@electric-sql/d2ts`](https://github.com/electric-sql/d2ts) with the time/version machinery stripped out). It parses Datalog programs, stratifies and plans them, and executes them as a dataflow graph whose operators are inherently incremental: feed it new facts later and only the affected derivations re-run.
 
 ## What you can do with it
 
@@ -224,5 +224,5 @@ The vs-rust oracle runs each upstream `.dl` example through both the Rust `execu
 
 ## Acknowledgements
 
-- The Rust [FlowLog](https://github.com/dbflow-project/flowlog) engine and the [VLDB 2026 paper](https://arxiv.org/pdf/2511.00865) by Hangdong Zhao, Zhenghong Yu, Srinag Rao, Simon Frisk, Zhiwei Fan and Paraschos Koutris.
+- The Rust [FlowLog](https://www.flowlog-rs.com/) engine and the [VLDB 2026 paper](https://arxiv.org/pdf/2511.00865) by Hangdong Zhao, Zhenghong Yu, Srinag Rao, Simon Frisk, Zhiwei Fan and Paraschos Koutris.
 - [`@electric-sql/d2ts`](https://github.com/electric-sql/d2ts) and [Tanstack DB](https://tanstack.com/db) for the dataflow primitives.

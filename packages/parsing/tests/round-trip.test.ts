@@ -3,10 +3,12 @@
 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import * as url from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { parseProgram, programToDl } from '../src/index.js'
 
-const EXAMPLES_DIR = '/home/knarf/projects/dbflow/flowlog/examples'
+const HERE = path.dirname(url.fileURLToPath(import.meta.url))
+const EXAMPLES_DIR = path.resolve(HERE, '..', '..', '..', 'vendor', 'flowlog-examples')
 
 const EXAMPLE_FILES = fs
   .readdirSync(EXAMPLES_DIR)

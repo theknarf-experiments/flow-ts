@@ -6,12 +6,15 @@
 // Tests don't fail; they record passes & failures and print a summary.
 
 import * as fs from 'node:fs'
+import * as path from 'node:path'
+import * as url from 'node:url'
 import { parseProgram } from '@flow-ts/parsing'
 import type { Row } from '@flow-ts/reading'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { executeProgram } from '../src/index.js'
 
-const EXAMPLES_DIR = '/home/knarf/projects/dbflow/flowlog/examples'
+const HERE = path.dirname(url.fileURLToPath(import.meta.url))
+const EXAMPLES_DIR = path.resolve(HERE, '..', '..', '..', 'vendor', 'flowlog-examples')
 
 // crdt* uses undeclared eq built-in; sssp wants the nemo_arithmetic branch.
 const SKIP = new Set(['crdt.dl', 'crdt_slow.dl', 'sssp.dl'])

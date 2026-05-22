@@ -3,12 +3,14 @@
 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import * as url from 'node:url'
 import { Catalog } from '@flow-ts/catalog'
 import { parseProgram } from '@flow-ts/parsing'
 import { describe, expect, it } from 'vitest'
 import { PlanTree } from '../src/index.js'
 
-const EXAMPLES_DIR = '/home/knarf/projects/dbflow/flowlog/examples'
+const HERE = path.dirname(url.fileURLToPath(import.meta.url))
+const EXAMPLES_DIR = path.resolve(HERE, '..', '..', '..', 'vendor', 'flowlog-examples')
 const SKIP = new Set(['crdt.dl', 'crdt_slow.dl']) // see catalog examples test
 
 const EXAMPLE_FILES = fs

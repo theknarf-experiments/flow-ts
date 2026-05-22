@@ -3,12 +3,14 @@
 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import * as url from 'node:url'
 import { parseProgram } from '@flow-ts/parsing'
 import { Strata } from '@flow-ts/strata'
 import { describe, expect, it } from 'vitest'
 import { ProgramQueryPlan } from '../src/index.js'
 
-const EXAMPLES_DIR = '/home/knarf/projects/dbflow/flowlog/examples'
+const HERE = path.dirname(url.fileURLToPath(import.meta.url))
+const EXAMPLES_DIR = path.resolve(HERE, '..', '..', '..', 'vendor', 'flowlog-examples')
 const SKIP = new Set([
   'crdt.dl',       // uses undeclared `eq` built-in
   'crdt_slow.dl',  // ditto

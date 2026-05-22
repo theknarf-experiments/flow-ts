@@ -2,7 +2,7 @@
   "name": "flow-ts",
   "version": "0.1.0",
   "private": true,
-  "description": "TypeScript port of FlowLog (a Datalog engine) on top of @electric-sql/d2ts",
+  "description": "TypeScript port of FlowLog (a Datalog engine) on top of a vendored Tanstack db-ivm",
   "type": "module",
   "packageManager": "pnpm@9.15.0",
   "scripts": {
@@ -12,9 +12,6 @@
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
     "clean": "turbo run clean && rm -rf node_modules/.cache .turbo"
-  },
-  "dependencies": {
-    "@electric-sql/d2ts": "^0.1.8"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

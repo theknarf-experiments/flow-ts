@@ -32,9 +32,6 @@ jobs:
         # runners ship the system libs already; just pull the browser.
         run: pnpm -F @flow-ts/example-web exec playwright install chromium
 
-      - name: Build grammar (peggy)
-        run: pnpm build:grammar
-
       - name: Build packages
         run: pnpm build
 

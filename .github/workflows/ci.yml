@@ -14,15 +14,15 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # `mise.toml` pins the node version; the pnpm action reads its
       # version from the `packageManager` field in package.json.
-      - uses: jdx/mise-action@v2
+      - uses: jdx/mise-action@v4
         with:
           experimental: true
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
       - name: pnpm install
         run: pnpm install --frozen-lockfile

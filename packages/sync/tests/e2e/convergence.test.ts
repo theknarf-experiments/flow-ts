@@ -241,6 +241,106 @@ describe('SyncEngine e2e', () => {
     pb2.detach()
   })
 
+  it('listener exception does not break the engine or block subsequent listeners', async () => {
+    const a = newEngine(1)
+    const b = newEngine(2)
+    let goodCalls = 0
+    a.engine.onRemoteAdd(() => {
+      throw new Error('user listener buggy')
+    })
+    a.engine.onRemoteAdd(() => {
+      goodCalls++
+    })
+    b.engine.add('R', [1])
+    const [ta, tb] = inMemoryPair()
+    const pa = a.engine.attachPeer(ta)
+    const pb = b.engine.attachPeer(tb)
+    await Promise.all([pa.synced, pb.synced])
+    expect(a.engine.size).toBe(1)
+    expect(goodCalls).toBeGreaterThanOrEqual(1) // second listener still fired
+    pa.detach()
+    pb.detach()
+  })
+
+  it('detach while PUSH is in-flight: no crash, peer cleanly disconnects', async () => {
+    const a = newEngine(1)
+    const b = newEngine(2)
+    const [ta, tb] = inMemoryPair()
+    const pa = a.engine.attachPeer(ta)
+    const pb = b.engine.attachPeer(tb)
+    await Promise.all([pa.synced, pb.synced])
+    // Burst of writes — multiple PUSHes will be in flight.
+    for (let i = 0; i < 20; i++) a.engine.add('R', [i])
+    // Detach A immediately (mid-burst).
+    pa.detach()
+    // Drain microtasks. B may or may not have received some of the
+    // PUSHes — both outcomes are acceptable; the must-not is "crash".
+    await new Promise((r) => setTimeout(r, 10))
+    expect(b.engine.size).toBeGreaterThanOrEqual(0)
+    expect(b.engine.size).toBeLessThanOrEqual(20)
+    pb.detach()
+  })
+
+  it('add() before attachPeer is included in the initial round', async () => {
+    const a = newEngine(1)
+    const b = newEngine(2)
+    a.engine.add('R', [1])
+    a.engine.add('R', [2])
+    // Note: attachPeer happens AFTER both adds. The session must
+    // serialise A's full state in its initial PAGE_RANGES.
+    const [ta, tb] = inMemoryPair()
+    const pa = a.engine.attachPeer(ta)
+    const pb = b.engine.attachPeer(tb)
+    await Promise.all([pa.synced, pb.synced])
+    expect(b.engine.size).toBe(2)
+    pa.detach()
+    pb.detach()
+  })
+
+  it('mid-round write on peer side: new fact reaches local in same session via PAGE_RANGES retry', async () => {
+    // Race condition the v2 Quint spec flagged: B adds a fact AFTER
+    // its initial PAGE_RANGES was sent but BEFORE the round completes.
+    // B's pump should retry PAGE_RANGES with the updated set; A
+    // should pick it up and re-FETCH.
+    const a = newEngine(1)
+    const b = newEngine(2)
+    b.engine.add('R', [1])
+    b.engine.add('R', [2])
+    // Slow transport so the round is in flight long enough for the
+    // mid-round write to land.
+    const [t1, t2] = inMemoryPair()
+    const ta = withInterference(t1, { latencyMs: [10, 25] }, makeRng(11))
+    const tb = withInterference(t2, { latencyMs: [10, 25] }, makeRng(12))
+    const pa = a.engine.attachPeer(ta)
+    const pb = b.engine.attachPeer(tb)
+    // Add a fact on B while A's round is still mid-flight.
+    setTimeout(() => b.engine.add('R', [99]), 5)
+    await Promise.all([pa.synced, pb.synced])
+    // Even after both promises resolve, A's session may still be
+    // in the middle of catching up via PAGE_RANGES retries. Give it
+    // a window.
+    await new Promise((r) => setTimeout(r, 200))
+    expect(a.engine.size).toBe(3)
+    expect(b.engine.size).toBe(3)
+    expect(toHex(a.engine.rootDigest())).toBe(toHex(b.engine.rootDigest()))
+    pa.detach()
+    pb.detach()
+  })
+
+  it('large burst of writes pre-sync: all included in PAGE_RANGES', async () => {
+    const a = newEngine(1)
+    const b = newEngine(2)
+    for (let i = 0; i < 200; i++) a.engine.add('R', [i])
+    const [ta, tb] = inMemoryPair()
+    const pa = a.engine.attachPeer(ta)
+    const pb = b.engine.attachPeer(tb)
+    await Promise.all([pa.synced, pb.synced])
+    expect(b.engine.size).toBe(200)
+    expect(toHex(a.engine.rootDigest())).toBe(toHex(b.engine.rootDigest()))
+    pa.detach()
+    pb.detach()
+  })
+
   it('converges under reorder + latency (property)', async () => {
     await fc.assert(
       fc.asyncProperty(

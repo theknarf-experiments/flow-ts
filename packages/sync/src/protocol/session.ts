@@ -284,6 +284,7 @@ export class SyncSession {
   }
 
   #onPageRanges(m: Message & { type: typeof MSG_PAGE_RANGES }): void {
+    const wasReceived = this.#peerPageRangesReceived
     this.#peerPageRangesReceived = true
     const peerRanges: PageRange[] = m.ranges.map((r) => ({
       start: r.start,
@@ -291,6 +292,24 @@ export class SyncSession {
       hash: r.hash,
     }))
     const need = diff(this.#deps.localPageRanges(), peerRanges)
+    if (!wasReceived) {
+      // First time: standard FETCH/DATA flow.
+      this.#sendFetch(need)
+      return
+    }
+    // Subsequent PAGE_RANGES (peer retried with newer content, e.g.
+    // after a mid-round local write on their side). If peer now
+    // claims keys we haven't fetched, re-engage: reset
+    // fetchSatisfied + roundComplete, send a fresh FETCH. Without
+    // this, the second-DATA-dropped race leaves us missing keys
+    // peer ships in their newer PAGE_RANGES.
+    if (need.length === 0) return // nothing new
+    this.#fetchSatisfied = false
+    this.#roundComplete = false
+    // Note: completion promise has already resolved; we can't
+    // un-resolve it. The round-level state still re-engages so
+    // the FETCH cycle runs again; the engine sees subsequent
+    // onRemoteFact calls and emits to listeners as usual.
     this.#sendFetch(need)
   }
 

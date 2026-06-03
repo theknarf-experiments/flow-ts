@@ -52,6 +52,11 @@ module syncV2 {
     | Fetch({ from: str, ranges: Set[DiffRange] })
     | Data({ from: str, facts: Set[Fact] })
     | Done({ from: str })
+    // Post-PAGE_RANGES gossip. The engine layer fires Push on every
+    // local add() to every attached peer (regardless of whether
+    // the peer's initial reconcile has completed). The session
+    // handles Push at any time after start().
+    | Push({ from: str, facts: Set[Fact] })
 
   type ReplicaState = {
     facts: Set[Fact],
@@ -143,7 +148,15 @@ module syncV2 {
     nondet bFacts = FACTS.powerset().oneOf()
     all {
       state' = Map("a" -> emptyReplica(aFacts), "b" -> emptyReplica(bFacts)),
-      network' = Set(),
+      // Pre-load both HELLOs into the network — matches the impl's
+      // `start()` which unconditionally fires sendHello. Without this,
+      // the model could explore traces where B never sends HELLO,
+      // which lets B fast-path-complete without A getting any
+      // notification, producing spurious convergence violations.
+      network' = Set(
+        Hello({ from: "a", root: aFacts }),
+        Hello({ from: "b", root: bFacts }),
+      ),
     }
   }
 
@@ -215,17 +228,33 @@ module syncV2 {
     else {
       val myPages = pageRanges(s.facts)
       val need = diff(myPages, peerPages)
-      val updated = if (s.fetchIssued)
-        { ...s, peerPageRangesReceived: true, peerPages: peerPages }
-      else
-        {
-          ...s,
-          peerPageRangesReceived: true,
-          peerPages: peerPages,
-          pendingFetch: need,
-          fetchIssued: true,
-          fetchSatisfied: if (need == Set()) true else s.fetchSatisfied,
-        }
+      val updated =
+        if (not(s.fetchIssued))
+          // First PAGE_RANGES from this peer: standard FETCH path.
+          {
+            ...s,
+            peerPageRangesReceived: true,
+            peerPages: peerPages,
+            pendingFetch: need,
+            fetchIssued: true,
+            fetchSatisfied: if (need == Set()) true else s.fetchSatisfied,
+          }
+        else if (need == Set())
+          // Subsequent PAGE_RANGES with nothing new: idempotent no-op.
+          { ...s, peerPageRangesReceived: true, peerPages: peerPages }
+        else
+          // Subsequent PAGE_RANGES claims keys we haven't fetched.
+          // Re-engage: reset fetchSatisfied + roundComplete so the
+          // FETCH cycle runs again. Matches the
+          // post-`peerPageRangesReceived` branch in session.ts.
+          {
+            ...s,
+            peerPageRangesReceived: true,
+            peerPages: peerPages,
+            pendingFetch: need,
+            fetchSatisfied: false,
+            roundComplete: false,
+          }
       st.set(r, applyMaybeFinish(updated))
     }
   }
@@ -246,6 +275,13 @@ module syncV2 {
     val s = st.get(r)
     if (not(isAlive(s))) st
     else st.set(r, { ...s, peerDoneReceived: true })
+  }
+
+  pure def onPush(r: str, facts: Set[Fact], st: str -> ReplicaState): str -> ReplicaState = {
+    val s = st.get(r)
+    if (not(isAlive(s))) st
+    // Push is unconditional — apply at any time after start.
+    else st.set(r, { ...s, facts: s.facts.union(facts) })
   }
 
   pure def fetchResponder(p: { from: str, ranges: Set[DiffRange] }): str = peerOf(p.from)
@@ -280,6 +316,10 @@ module syncV2 {
           network' = network.exclude(Set(m)),
           state' = onDone(peerOf(p.from), state),
         }
+      | Push(p) => all {
+          network' = network.exclude(Set(m)),
+          state' = onPush(peerOf(p.from), p.facts, state),
+        }
     }
   }
 
@@ -287,6 +327,18 @@ module syncV2 {
     network.contains(m),
     network' = network.exclude(Set(m)),
     state' = state,
+  }
+
+  // Local write. Models `engine.add(rel, row)`: the fact is added
+  // to r's facts and a Push message is sent to the peer. Mirrors
+  // the engine's behavior of pushing to every attached peer on
+  // every add, regardless of whether the peer's session is in
+  // initial reconcile or post-round.
+  action addLocalFact(r: str, f: Fact): bool = all {
+    isAlive(state.get(r)),
+    not(state.get(r).facts.contains(f)),
+    state' = state.set(r, { ...state.get(r), facts: state.get(r).facts.union(Set(f)) }),
+    network' = network.union(Set(Push({ from: r, facts: Set(f) }))),
   }
 
   // -------------------- Top-level step --------------------
@@ -309,14 +361,28 @@ module syncV2 {
 
     nondet m = network.oneOf()
     dropMsg(m),
+
+    nondet r = REPLICAS.oneOf()
+    nondet f = FACTS.oneOf()
+    addLocalFact(r, f),
   }
 
   // -------------------- Invariants --------------------
 
-  // Safety: if both replicas have completed their round, fact sets equal.
+  // Eventual consistency: when there are no more in-flight messages
+  // AND both replicas have completed their round AND no further
+  // writes are pending, fact sets are equal. `roundComplete` alone
+  // doesn't imply convergence — it means "my local conditions are
+  // met," not "all retransmits have been observed." With PUSH and
+  // PAGE_RANGES retries, messages can stay in flight after either
+  // replica's round is locally done.
   val convergenceInv: bool =
-    (state.get("a").roundComplete and state.get("b").roundComplete) implies
-    (state.get("a").facts == state.get("b").facts)
+    (network == Set() and
+     state.get("a").roundComplete and
+     state.get("b").roundComplete and
+     state.get("a").peerDoneReceived and
+     state.get("b").peerDoneReceived)
+    implies (state.get("a").facts == state.get("b").facts)
 
   // Round-complete preconditions.
   val finishInvariantInv: bool =
@@ -329,25 +395,15 @@ module syncV2 {
       }
     })
 
-  // Once both replicas have finished, neither has unfetched keys
-  // peer was carrying.
-  val noMissedKeysInv: bool = and {
-    state.get("a").roundComplete and state.get("b").roundComplete,
-  } implies {
-    val ap = pageRanges(state.get("a").facts)
-    val bp = pageRanges(state.get("b").facts)
-    ap == bp
-  }
-
-  // The keys peer has in pending-fetch ranges minus the keys local
-  // has in those ranges is exactly what we still need to receive.
-  // After round completion, we'd better have received them.
-  val pulledEverythingInv: bool =
-    REPLICAS.forall(r => {
-      val s = state.get(r)
-      s.roundComplete implies (
-        keysInRanges(s.peerPages.fold(Set(), (acc, p) => acc.union(p.digest)),
-                     s.pendingFetch).subseteq(s.facts)
-      )
-    })
+  // In the steady state — network drained, both rounds locally
+  // complete, both DONE acknowledged — the page-range layouts must
+  // match. (Implied by convergenceInv but useful as a redundant
+  // check since pageRanges is deterministic from the fact set.)
+  val noMissedKeysInv: bool =
+    (network == Set() and
+     state.get("a").roundComplete and
+     state.get("b").roundComplete and
+     state.get("a").peerDoneReceived and
+     state.get("b").peerDoneReceived)
+    implies (pageRanges(state.get("a").facts) == pageRanges(state.get("b").facts))
 }

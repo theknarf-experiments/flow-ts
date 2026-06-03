@@ -73,9 +73,15 @@ export class SyncEngine {
     if (this.#facts.has(hex)) return
     this.#mst.insert(key)
     this.#facts.set(hex, { relation, encodedRow })
-    // Gossip to every peer whose initial reconcile has completed.
+    // Gossip to every attached peer. We previously gated this on
+    // `entry.synced=true`, but that created a race: if add() fired
+    // during the .then() microtask before `entry.synced` flipped,
+    // the new fact missed both the in-flight PAGE_RANGES (already
+    // sent without it) AND the PUSH path. The session's onPush
+    // handler is robust to PUSH arriving at any time after start(),
+    // so it's safe to push unconditionally — mid-round PUSH just
+    // arrives alongside the round's other messages.
     for (const p of this.#peers) {
-      if (!p.synced) continue
       p.session.push([{ relation, encodedRow }])
     }
   }
@@ -147,7 +153,20 @@ export class SyncEngine {
     } catch {
       return // malformed encoded row — drop silently
     }
-    for (const fn of this.#listeners) fn(relation, row)
+    for (const fn of this.#listeners) {
+      // Isolate listener exceptions: one buggy listener must not
+      // break sibling listeners or fail the session.
+      try {
+        fn(relation, row)
+      } catch (e) {
+        // Surface on console so the user notices a bug, but swallow
+        // the throw so the engine and session keep working.
+        // eslint-disable-next-line no-console
+        if (typeof console !== 'undefined' && console.error) {
+          console.error('[@flow-ts/sync] onRemoteAdd listener threw:', e)
+        }
+      }
+    }
   }
 }
 

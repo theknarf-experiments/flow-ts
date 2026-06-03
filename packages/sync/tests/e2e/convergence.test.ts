@@ -115,6 +115,40 @@ describe('SyncEngine e2e', () => {
     pb2.detach()
   })
 
+  it('local-superset: over-fetches peer keys but converges idempotently', async () => {
+    // From the Quint spec's v2 (mst-diff.qnt) finding: when local is a
+    // superset of peer, the page-range diff still flags differing
+    // pages as inconsistent (their start/end/hash differ because
+    // local's pages cover more keys). Local FETCHes back keys it
+    // already has; the apply step is idempotent so the round
+    // converges cleanly. Verifies that this case doesn't deadlock,
+    // duplicate-emit, or otherwise misbehave.
+    const a = newEngine(1)
+    const b = newEngine(2)
+    // A has a superset of B's facts.
+    a.engine.add('R', [1])
+    a.engine.add('R', [2])
+    a.engine.add('R', [3])
+    a.engine.add('R', [4])
+    a.engine.add('R', [5])
+    b.engine.add('R', [3]) // B has only one of A's keys.
+    const [ta, tb] = inMemoryPair()
+    const pa = a.engine.attachPeer(ta)
+    const pb = b.engine.attachPeer(tb)
+    await Promise.all([pa.synced, pb.synced])
+    expect(a.engine.size).toBe(5)
+    expect(b.engine.size).toBe(5)
+    expect(toHex(a.engine.rootDigest())).toBe(toHex(b.engine.rootDigest()))
+    // A had no facts to learn from B — onRemoteAdd may have fired
+    // for B's "3" (the over-fetch) but the row was already present,
+    // so the engine's internal dedup means our applied callback
+    // should not have re-fired for it.
+    const dedupedA = new Set(a.applied.map(([rel, row]) => `${rel}|${row.join(',')}`))
+    expect(dedupedA.size).toBe(a.applied.length) // no duplicates emitted
+    pa.detach()
+    pb.detach()
+  })
+
   it('idempotent writes do not re-emit onRemoteAdd', async () => {
     const a = newEngine(1)
     const b = newEngine(2)
@@ -131,6 +165,80 @@ describe('SyncEngine e2e', () => {
     expect(b.applied.length).toBe(1)
     pa.detach()
     pb.detach()
+  })
+
+  it('multi-peer fan-out: A pushes one fact to both B and C', async () => {
+    const a = newEngine(1)
+    const b = newEngine(2)
+    const c = newEngine(3)
+    const [tab, tba] = inMemoryPair()
+    const [tac, tca] = inMemoryPair()
+    const pab = a.engine.attachPeer(tab)
+    const pba = b.engine.attachPeer(tba)
+    const pac = a.engine.attachPeer(tac)
+    const pca = c.engine.attachPeer(tca)
+    await Promise.all([pab.synced, pba.synced, pac.synced, pca.synced])
+    // A writes one fact post-sync; expect PUSH to fan out to both B and C.
+    a.engine.add('R', [42])
+    await new Promise((r) => setTimeout(r, 20))
+    expect(b.engine.size).toBe(1)
+    expect(c.engine.size).toBe(1)
+    expect(toHex(a.engine.rootDigest())).toBe(toHex(b.engine.rootDigest()))
+    expect(toHex(a.engine.rootDigest())).toBe(toHex(c.engine.rootDigest()))
+    pab.detach()
+    pba.detach()
+    pac.detach()
+    pca.detach()
+  })
+
+  it('add() called during initial round: new fact reaches peer in same session', async () => {
+    const a = newEngine(1)
+    const b = newEngine(2)
+    a.engine.add('R', [1])
+    // Slow down the transport so the initial round is mid-way when
+    // we call add(). The new fact should still make it across — either
+    // included in A's PAGE_RANGES (if computed late enough) or via
+    // the live-PUSH path once A's round completes.
+    const [t1, t2] = inMemoryPair()
+    const ta = withInterference(t1, { latencyMs: [5, 10] }, makeRng(1))
+    const tb = withInterference(t2, { latencyMs: [5, 10] }, makeRng(2))
+    const pa = a.engine.attachPeer(ta)
+    const pb = b.engine.attachPeer(tb)
+    // Race add() against the round.
+    a.engine.add('R', [2])
+    a.engine.add('R', [3])
+    await Promise.all([pa.synced, pb.synced])
+    // After sync + any post-round PUSH propagation:
+    await new Promise((r) => setTimeout(r, 50))
+    expect(b.engine.size).toBe(3)
+    expect(toHex(a.engine.rootDigest())).toBe(toHex(b.engine.rootDigest()))
+    pa.detach()
+    pb.detach()
+  })
+
+  it("peer's mid-round write is caught on a subsequent reconnect", async () => {
+    const a = newEngine(1)
+    const b = newEngine(2)
+    a.engine.add('R', [1])
+    const [t1, t2] = inMemoryPair()
+    const pa1 = a.engine.attachPeer(t1)
+    const pb1 = b.engine.attachPeer(t2)
+    await Promise.all([pa1.synced, pb1.synced])
+    expect(b.engine.size).toBe(1)
+    // While disconnected, B writes new fact.
+    pa1.detach()
+    pb1.detach()
+    b.engine.add('R', [99])
+    // Reconnect — A should pick up B's new fact via the root-digest mismatch.
+    const [t3, t4] = inMemoryPair()
+    const pa2 = a.engine.attachPeer(t3)
+    const pb2 = b.engine.attachPeer(t4)
+    await Promise.all([pa2.synced, pb2.synced])
+    expect(a.engine.size).toBe(2)
+    expect(b.engine.size).toBe(2)
+    expect(toHex(a.engine.rootDigest())).toBe(toHex(b.engine.rootDigest()))
+    pa2.detach()
+    pb2.detach()
   })
 
   it('converges under reorder + latency (property)', async () => {

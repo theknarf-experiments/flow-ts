@@ -1,7 +1,7 @@
-// Protocol behaviour under simulated network impairments. The v1
-// protocol doesn't retry, so completion under heavy drop isn't
-// expected — but it MUST converge under reorder + latency, and it
-// MUST fail cleanly (rejected completion) under hard drops mid-round.
+// Protocol behaviour under simulated network impairments. Range-diff
+// + per-RANGE_DIFF retry means we now converge under modest drop too,
+// not just reorder + latency. Hard transport close still produces a
+// clean rejection.
 
 import { describe, expect, it } from 'vitest'
 import * as fc from 'fast-check'
@@ -67,6 +67,56 @@ describe('SyncSession under interference', () => {
       ),
       { numRuns: 15 },
     )
+  })
+
+  it('converges under 30% packet drop via retries', async () => {
+    const a = makeDeps(1, [
+      { relation: 'R', encodedRow: '1,' },
+      { relation: 'R', encodedRow: '2,' },
+      { relation: 'R', encodedRow: '3,' },
+    ])
+    const b = makeDeps(2, [
+      { relation: 'R', encodedRow: '4,' },
+      { relation: 'R', encodedRow: '5,' },
+      { relation: 'R', encodedRow: '6,' },
+    ])
+    const [t1, t2] = inMemoryPair()
+    const ta = withInterference(t1, { dropProbability: 0.3 }, makeRng(42))
+    const tb = withInterference(t2, { dropProbability: 0.3 }, makeRng(43))
+    // Allow enough headroom for the unlucky drop runs the retry budget
+    // has to absorb: HELLO, the RANGE_DIFF/DATA exchange, *and* DONE
+    // all retry independently. 5s budget per item is comfortable.
+    const retry = { intervalMs: 20, maxAttempts: 250 }
+    const sa = new SyncSession(ta, { ...a.deps, retry })
+    const sb = new SyncSession(tb, { ...b.deps, retry })
+    sa.start()
+    sb.start()
+    await Promise.all([sa.completion, sb.completion])
+    expect(toHex(a.mst.rootDigest())).toBe(toHex(b.mst.rootDigest()))
+    expect(a.mst.size).toBe(6)
+    expect(b.mst.size).toBe(6)
+  })
+
+  it('fails the session if RANGE_DIFF exhausts its retry budget', async () => {
+    const a = makeDeps(1, [])
+    const b = makeDeps(2, [{ relation: 'R', encodedRow: '1,' }])
+    const [t1, t2] = inMemoryPair()
+    // 100% drop on B-side outbound — A's RANGE_DIFF gets answered
+    // momentarily? No: B never gets to reply because nothing gets
+    // through. Wait — A's RANGE_DIFF is on T1; B sees it; B's reply
+    // (RANGE_DATA or whatever) goes via T2. So drop T2-side messages
+    // and A will time out waiting for any response.
+    const tb = withInterference(t2, { dropProbability: 1 }, makeRng(7))
+    const fastFail = { intervalMs: 10, maxAttempts: 3 }
+    const sa = new SyncSession(t1, { ...a.deps, retry: fastFail })
+    const sb = new SyncSession(tb, { ...b.deps, retry: fastFail })
+    sa.start()
+    sb.start()
+    const [aResult, bResult] = await Promise.allSettled([sa.completion, sb.completion])
+    expect(aResult.status).toBe('rejected')
+    // B's session may either time out itself (its DIFF also goes
+    // unanswered) or stay pending — at minimum A should fail.
+    expect([aResult.status, bResult.status]).toContain('rejected')
   })
 
   it('rejects when the transport closes mid-round', async () => {

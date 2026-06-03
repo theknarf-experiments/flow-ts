@@ -56,6 +56,18 @@ import { decodePayload, encodePayload, factKey, type Fact } from './payload.js'
 /** Above this size the responder issues SPLIT instead of DATA. */
 const MAX_RANGE_KEYS = 64
 
+/** Default retry timing for RANGE_DIFF. Tunable via SessionDeps. */
+const DEFAULT_RETRY_INTERVAL_MS = 100
+const DEFAULT_MAX_ATTEMPTS = 8
+
+export interface RetryOptions {
+  /** How long to wait for a RANGE_DIFF reply before resending. */
+  intervalMs?: number
+  /** How many times to send the same RANGE_DIFF before failing the
+   *  session. Initial send counts as attempt 1. */
+  maxAttempts?: number
+}
+
 export interface SessionDeps {
   /** Bytes identifying this replica. Only echoed in HELLO; not used
    *  for anything semantic in v1. */
@@ -70,6 +82,8 @@ export interface SessionDeps {
   /** Called for every fact the peer ships us. Caller should add it
    *  to local MST + side-table + emit to onRemoteAdd subscribers. */
   readonly onRemoteFact: (relation: string, encodedRow: string) => void
+  /** Optional retry tuning. Defaults: 100ms interval, 8 attempts. */
+  readonly retry?: RetryOptions
 }
 
 export class SessionError extends Error {
@@ -97,13 +111,20 @@ export class SyncSession {
     return this.#deps.localKeys().sort(compareHash)
   }
 
-  /** Ranges we've sent RANGE_DIFF for and are awaiting a final reply. */
-  #pending = new Set<string>()
+  /** Ranges we've sent RANGE_DIFF for and are awaiting a final reply.
+   *  Each entry tracks attempt count so the shared retry pump can
+   *  resend after a timeout and fail-fast after exhaustion. */
+  #pending = new Map<string, { lo: Hash; hi: Bound; attempts: number }>()
+  #helloReceived = false
+  #helloAttempts = 0
+  #doneAttempts = 0
+  /** Shared interval timer driving retry of HELLO and RANGE_DIFF.
+   *  Started in `start()`; cleared on round completion or failure. */
+  #retryPump: ReturnType<typeof setInterval> | null = null
   /** True once we've sent the initial RANGE_DIFF (or decided to skip
    *  the walk because roots matched). */
   #walkInitiated = false
   #localDoneSent = false
-  #peerDoneReceived = false
   /** Initial reconcile round done; session stays live for PUSH. */
   #roundComplete = false
   /** Transport unhooked; no further send/receive. */
@@ -125,12 +146,48 @@ export class SyncSession {
   start(): void {
     this.#unsubMessage = this.#transport.onMessage((m) => this.#onMessage(m))
     this.#unsubClose = this.#transport.onClose(() => this.#onClose())
+    this.#sendHello()
+    const intervalMs = this.#deps.retry?.intervalMs ?? DEFAULT_RETRY_INTERVAL_MS
+    this.#retryPump = setInterval(() => this.#tick(), intervalMs)
+  }
+
+  #sendHello(): void {
+    this.#helloAttempts++
     this.#send({
       type: MSG_HELLO,
       version: PROTOCOL_VERSION,
       replica: this.#deps.replicaId,
       root: this.#deps.localRoot(),
     })
+  }
+
+  /** Shared retry tick. Resends anything still pending and bumps
+   *  per-item attempt counts; fails the session when any counter
+   *  exceeds maxAttempts. */
+  #tick(): void {
+    if (this.#closed || this.#roundComplete) return
+    const max = this.#deps.retry?.maxAttempts ?? DEFAULT_MAX_ATTEMPTS
+
+    if (!this.#helloReceived) {
+      if (this.#helloAttempts >= max) {
+        this.#fail(new SessionError(`hello: exceeded ${max} attempts`))
+        return
+      }
+      this.#sendHello()
+    }
+
+    for (const [key, entry] of this.#pending) {
+      if (entry.attempts >= max) {
+        this.#fail(new SessionError(`range ${key}: exceeded ${max} attempts`))
+        return
+      }
+      // Recompute digest in case local state moved since first send.
+      const sorted = this.#sortedKeys()
+      const s = rangeSummary(sorted, entry.lo, entry.hi)
+      entry.attempts++
+      this.#send({ type: MSG_RANGE_DIFF, lo: entry.lo, hi: entry.hi, digest: s.digest, count: s.count })
+    }
+
   }
 
   #send(m: Message): void {
@@ -152,7 +209,8 @@ export class SyncSession {
           this.#onHello(m)
           break
         case MSG_DONE:
-          this.#peerDoneReceived = true
+          // Informational only — peer hints they're done with their walk.
+          // We don't gate completion on it; see `#maybeFinish`.
           break
         case MSG_ERROR:
           this.#fail(new SessionError(`peer ${m.code}: ${m.msg}`))
@@ -181,6 +239,7 @@ export class SyncSession {
   }
 
   #onHello(m: Message & { type: typeof MSG_HELLO }): void {
+    this.#helloReceived = true
     if (bytesEqual(this.#deps.localRoot(), m.root)) {
       this.#walkInitiated = true
       // Pending is empty; #maybeFinish will send DONE.
@@ -198,8 +257,26 @@ export class SyncSession {
   }
 
   #sendRangeDiff(lo: Hash, hi: Bound, digest: Hash, count: number): void {
-    this.#pending.add(rangeKey(lo, hi))
+    const key = rangeKey(lo, hi)
+    let entry = this.#pending.get(key)
+    if (!entry) {
+      entry = { lo, hi, attempts: 0 }
+      this.#pending.set(key, entry)
+    }
+    entry.attempts++
     this.#send({ type: MSG_RANGE_DIFF, lo, hi, digest, count })
+  }
+
+  #resolveRange(key: string): void {
+    this.#pending.delete(key)
+  }
+
+  #clearAllPending(): void {
+    this.#pending.clear()
+    if (this.#retryPump) {
+      clearInterval(this.#retryPump)
+      this.#retryPump = null
+    }
   }
 
   #onRangeDiff(m: Message & { type: typeof MSG_RANGE_DIFF }): void {
@@ -230,11 +307,11 @@ export class SyncSession {
   }
 
   #onRangeMatch(m: Message & { type: typeof MSG_RANGE_MATCH }): void {
-    this.#pending.delete(rangeKey(m.lo, m.hi))
+    this.#resolveRange(rangeKey(m.lo, m.hi))
   }
 
   #onRangeSplit(m: Message & { type: typeof MSG_RANGE_SPLIT }): void {
-    this.#pending.delete(rangeKey(m.lo, m.hi))
+    this.#resolveRange(rangeKey(m.lo, m.hi))
     const sorted = this.#sortedKeys()
     const left = rangeSummary(sorted, m.lo, m.mid)
     const right = rangeSummary(sorted, m.mid, m.hi)
@@ -245,7 +322,7 @@ export class SyncSession {
   #onRangeData(m: Message & { type: typeof MSG_RANGE_DATA }): void {
     const facts = decodePayload(m.digest, m.encoded)
     for (const f of facts) this.#deps.onRemoteFact(f.relation, f.encodedRow)
-    this.#pending.delete(rangeKey(m.lo, m.hi))
+    this.#resolveRange(rangeKey(m.lo, m.hi))
   }
 
   #onPush(m: Message & { type: typeof MSG_PUSH }): void {
@@ -254,22 +331,25 @@ export class SyncSession {
   }
 
   #maybeFinish(): void {
-    if (
-      this.#walkInitiated &&
-      this.#pending.size === 0 &&
-      !this.#localDoneSent
-    ) {
+    // Each side resolves its completion when *its own* walk is done.
+    // We don't wait for a mutual DONE handshake — there's a "last DONE
+    // ack" gap that the protocol can't close without an unbounded
+    // retry tail, and demos don't need mutual confirmation. DONE is
+    // still sent as an informational hint so the peer can stop
+    // expecting more RANGE_DIFFs from us, but it's best-effort.
+    if (!this.#walkInitiated || this.#pending.size !== 0 || this.#roundComplete) return
+    if (!this.#localDoneSent) {
       this.#localDoneSent = true
+      this.#doneAttempts = 1
       this.#send({ type: MSG_DONE })
     }
-    if (!this.#roundComplete && this.#localDoneSent && this.#peerDoneReceived) {
-      this.#finish()
-    }
+    this.#finish()
   }
 
   #finish(): void {
     if (this.#roundComplete) return
     this.#roundComplete = true
+    this.#clearAllPending()
     this.#resolve()
   }
 
@@ -278,6 +358,7 @@ export class SyncSession {
     if (this.#closed) return
     if (this.#roundComplete) {
       this.#closed = true
+      this.#clearAllPending()
       this.#unsubMessage?.()
       this.#unsubClose?.()
       this.#transport.close()
@@ -289,6 +370,7 @@ export class SyncSession {
   #fail(e: Error): void {
     if (this.#closed) return
     this.#closed = true
+    this.#clearAllPending()
     this.#unsubMessage?.()
     this.#unsubClose?.()
     if (!this.#roundComplete) this.#reject(e)

@@ -1,42 +1,62 @@
-// One sync session over one transport, between two peers. The session
-// is the state-machine layer — it drives a single round of
-// reconciliation from HELLO to mutual DONE, and resolves a Promise
-// when the round is complete (or rejects on transport failure).
+// One sync session over one transport, between two peers. Uses
+// range-based set reconciliation: each peer recursively bisects the
+// 256-bit key space and only descends into ranges whose digests
+// differ — bandwidth scales as O(diff + log n), not O(n).
 //
-// Flow (each side runs in parallel):
-//   1. Send HELLO with our MST root digest.
-//   2. On peer HELLO: if roots match, mark in/out as complete and
-//      send DONE. Else send KEYS.
-//   3. On peer KEYS: compute (peer\local), send FETCH for those keys.
-//      If empty, mark "inbound complete" (no DATA expected).
-//   4. On peer FETCH: build a bab-encoded DATA payload and send.
-//      Mark "outbound complete".
-//   5. On peer DATA: bab-verify, decode, apply each fact.
-//      Mark "inbound complete".
-//   6. When in+out complete: send DONE. When DONE both sent and
-//      received: round complete.
+// Flow (each peer runs its own walk in parallel):
+//   1. HELLO with our MST root digest.
+//   2. If roots match → walk skipped; send DONE.
+//   3. Else, initiate the walk: send RANGE_DIFF for the full
+//      key space `[ZERO_HASH, +∞)`.
+//   4. On peer RANGE_DIFF: compute our digest for the same range.
+//      - Equal → RANGE_MATCH.
+//      - Differ + max(local.count, peer.count) ≤ MAX_RANGE_KEYS
+//        (or range can't bisect further) → RANGE_DATA with our keys'
+//        values in this range.
+//      - Otherwise → RANGE_SPLIT at the bit-midpoint.
+//   5. On peer RANGE_MATCH/DATA: range resolved, remove from pending.
+//      On peer RANGE_SPLIT: replace this range with the two halves
+//      in our pending set and send RANGE_DIFFs for both.
+//   6. When pending is empty and our walk had been initiated → DONE.
+//   7. When DONE both sent and received → round complete.
 //
-// Idempotent: receiving DONE twice or DATA twice is benign.
+// Symmetric coverage. Each side's walk discovers what it's missing.
+// A's walk surfaces facts that A doesn't have; B's walk surfaces
+// facts that B doesn't have. No complement-push needed.
+//
+// After the initial round, the session stays live for `push(facts)`
+// gossip until `close()` or the transport closes externally.
 
-import { bytesEqual, type Hash } from '../mst/index.js'
+import { type Hash } from '../bab/index.js'
+import { bytesEqual, compareHash } from '../mst/index.js'
+import {
+  bisect,
+  isAtomicRange,
+  rangeSummary,
+  sliceRange,
+  ZERO_HASH,
+} from '../mst/range.js'
 import type { Transport, Unsubscribe } from '../transport/index.js'
 import {
-  MSG_DATA,
   MSG_DONE,
   MSG_ERROR,
-  MSG_FETCH,
   MSG_HELLO,
-  MSG_KEYS,
   MSG_PUSH,
+  MSG_RANGE_DATA,
+  MSG_RANGE_DIFF,
+  MSG_RANGE_MATCH,
+  MSG_RANGE_SPLIT,
+  type Bound,
   type Message,
   PROTOCOL_VERSION,
 } from './messages.js'
 import { decodeMessage, encodeMessage } from './codec.js'
-import { decodePayload, encodePayload, factKey as factKeyFromCanon, type Fact } from './payload.js'
+import { decodePayload, encodePayload, factKey, type Fact } from './payload.js'
+
+/** Above this size the responder issues SPLIT instead of DATA. */
+const MAX_RANGE_KEYS = 64
 
 export interface SessionDeps {
-  /** Caller-side hooks. The session never touches the MST directly —
-   *  it goes through these to keep the layer decoupled. */
   /** Bytes identifying this replica. Only echoed in HELLO; not used
    *  for anything semantic in v1. */
   readonly replicaId: Uint8Array
@@ -45,8 +65,7 @@ export interface SessionDeps {
   /** Root digest of the local MST. */
   readonly localRoot: () => Hash
   /** Look up a fact's (relation, encodedRow) by its key. Returns
-   *  null if we don't have it (shouldn't happen if the peer's FETCH
-   *  is well-formed). */
+   *  null if we don't have it. */
   readonly lookupFact: (key: Hash) => { relation: string; encodedRow: string } | null
   /** Called for every fact the peer ships us. Caller should add it
    *  to local MST + side-table + emit to onRemoteAdd subscribers. */
@@ -60,6 +79,10 @@ export class SessionError extends Error {
   }
 }
 
+function rangeKey(lo: Hash, hi: Bound): string {
+  return toHex(lo) + ':' + (hi === null ? '+' : toHex(hi))
+}
+
 export class SyncSession {
   readonly #transport: Transport
   readonly #deps: SessionDeps
@@ -67,12 +90,18 @@ export class SyncSession {
   #unsubMessage: Unsubscribe | null = null
   #unsubClose: Unsubscribe | null = null
 
-  // Inbound = we've gotten what we need from peer (DATA reply to our
-  //           FETCH, or roots matched).
-  // Outbound = we've answered the peer's needs (replied DATA to
-  //            their FETCH, or roots matched).
-  #inboundComplete = false
-  #outboundComplete = false
+  /** Snapshot of local keys, sorted. Resorted on every call — the
+   *  engine's edits are append-only and small enough that the cost
+   *  is fine for v1. */
+  #sortedKeys(): Hash[] {
+    return this.#deps.localKeys().sort(compareHash)
+  }
+
+  /** Ranges we've sent RANGE_DIFF for and are awaiting a final reply. */
+  #pending = new Set<string>()
+  /** True once we've sent the initial RANGE_DIFF (or decided to skip
+   *  the walk because roots matched). */
+  #walkInitiated = false
   #localDoneSent = false
   #peerDoneReceived = false
   /** Initial reconcile round done; session stays live for PUSH. */
@@ -122,15 +151,6 @@ export class SyncSession {
         case MSG_HELLO:
           this.#onHello(m)
           break
-        case MSG_KEYS:
-          this.#onKeys(m)
-          break
-        case MSG_FETCH:
-          this.#onFetch(m)
-          break
-        case MSG_DATA:
-          this.#onData(m)
-          break
         case MSG_DONE:
           this.#peerDoneReceived = true
           break
@@ -139,6 +159,18 @@ export class SyncSession {
           return
         case MSG_PUSH:
           this.#onPush(m)
+          break
+        case MSG_RANGE_DIFF:
+          this.#onRangeDiff(m)
+          break
+        case MSG_RANGE_MATCH:
+          this.#onRangeMatch(m)
+          break
+        case MSG_RANGE_SPLIT:
+          this.#onRangeSplit(m)
+          break
+        case MSG_RANGE_DATA:
+          this.#onRangeData(m)
           break
       }
     } catch (e) {
@@ -150,41 +182,70 @@ export class SyncSession {
 
   #onHello(m: Message & { type: typeof MSG_HELLO }): void {
     if (bytesEqual(this.#deps.localRoot(), m.root)) {
-      // Roots match — no key exchange needed.
-      this.#inboundComplete = true
-      this.#outboundComplete = true
+      this.#walkInitiated = true
+      // Pending is empty; #maybeFinish will send DONE.
     } else {
-      this.#send({ type: MSG_KEYS, keys: this.#deps.localKeys() })
+      this.#initiateWalk()
     }
   }
 
-  #onKeys(m: Message & { type: typeof MSG_KEYS }): void {
-    const localHex = new Set(this.#deps.localKeys().map(toHex))
-    const want: Hash[] = []
-    for (const k of m.keys) {
-      if (!localHex.has(toHex(k))) want.push(k)
-    }
-    this.#send({ type: MSG_FETCH, keys: want })
-    if (want.length === 0) this.#inboundComplete = true
+  #initiateWalk(): void {
+    if (this.#walkInitiated) return
+    this.#walkInitiated = true
+    const sorted = this.#sortedKeys()
+    const s = rangeSummary(sorted, ZERO_HASH, null)
+    this.#sendRangeDiff(ZERO_HASH, null, s.digest, s.count)
   }
 
-  #onFetch(m: Message & { type: typeof MSG_FETCH }): void {
-    const facts: Fact[] = []
-    for (const k of m.keys) {
-      const v = this.#deps.lookupFact(k)
-      if (!v) continue // peer asked for a key we don't have — skip silently
-      facts.push({ key: k, relation: v.relation, encodedRow: v.encodedRow })
-    }
-    const { digest, encoded } = encodePayload(facts)
-    this.#send({ type: MSG_DATA, digest, encoded })
-    this.#outboundComplete = true
+  #sendRangeDiff(lo: Hash, hi: Bound, digest: Hash, count: number): void {
+    this.#pending.add(rangeKey(lo, hi))
+    this.#send({ type: MSG_RANGE_DIFF, lo, hi, digest, count })
   }
 
-  #onData(m: Message & { type: typeof MSG_DATA }): void {
-    if (this.#inboundComplete) return // duplicate; ignore
+  #onRangeDiff(m: Message & { type: typeof MSG_RANGE_DIFF }): void {
+    const sorted = this.#sortedKeys()
+    const local = rangeSummary(sorted, m.lo, m.hi)
+    if (bytesEqual(local.digest, m.digest)) {
+      this.#send({ type: MSG_RANGE_MATCH, lo: m.lo, hi: m.hi })
+      return
+    }
+    const splitMid = bisect(m.lo, m.hi)
+    const shouldShip =
+      splitMid === null ||
+      isAtomicRange(m.lo, m.hi) ||
+      Math.max(local.count, m.count) <= MAX_RANGE_KEYS
+    if (shouldShip) {
+      const { keys: rangeKeys } = sliceRange(sorted, m.lo, m.hi)
+      const facts: Fact[] = []
+      for (const k of rangeKeys) {
+        const v = this.#deps.lookupFact(k)
+        if (!v) continue
+        facts.push({ key: k, relation: v.relation, encodedRow: v.encodedRow })
+      }
+      const { digest, encoded } = encodePayload(facts)
+      this.#send({ type: MSG_RANGE_DATA, lo: m.lo, hi: m.hi, digest, encoded })
+    } else {
+      this.#send({ type: MSG_RANGE_SPLIT, lo: m.lo, mid: splitMid, hi: m.hi })
+    }
+  }
+
+  #onRangeMatch(m: Message & { type: typeof MSG_RANGE_MATCH }): void {
+    this.#pending.delete(rangeKey(m.lo, m.hi))
+  }
+
+  #onRangeSplit(m: Message & { type: typeof MSG_RANGE_SPLIT }): void {
+    this.#pending.delete(rangeKey(m.lo, m.hi))
+    const sorted = this.#sortedKeys()
+    const left = rangeSummary(sorted, m.lo, m.mid)
+    const right = rangeSummary(sorted, m.mid, m.hi)
+    this.#sendRangeDiff(m.lo, m.mid, left.digest, left.count)
+    this.#sendRangeDiff(m.mid, m.hi, right.digest, right.count)
+  }
+
+  #onRangeData(m: Message & { type: typeof MSG_RANGE_DATA }): void {
     const facts = decodePayload(m.digest, m.encoded)
     for (const f of facts) this.#deps.onRemoteFact(f.relation, f.encodedRow)
-    this.#inboundComplete = true
+    this.#pending.delete(rangeKey(m.lo, m.hi))
   }
 
   #onPush(m: Message & { type: typeof MSG_PUSH }): void {
@@ -192,23 +253,12 @@ export class SyncSession {
     for (const f of facts) this.#deps.onRemoteFact(f.relation, f.encodedRow)
   }
 
-  /** Push one or more facts to the peer. May be called any time after
-   *  `start()` — even before the initial round completes; receivers
-   *  dedup against their own MST. No ack; this is gossip, not RPC. */
-  push(facts: { relation: string; encodedRow: string }[]): void {
-    if (this.#closed) return
-    if (facts.length === 0) return
-    const fullFacts = facts.map((f) => ({
-      key: factKeyFromCanon(f.relation, f.encodedRow),
-      relation: f.relation,
-      encodedRow: f.encodedRow,
-    }))
-    const { digest, encoded } = encodePayload(fullFacts)
-    this.#send({ type: MSG_PUSH, digest, encoded })
-  }
-
   #maybeFinish(): void {
-    if (!this.#localDoneSent && this.#inboundComplete && this.#outboundComplete) {
+    if (
+      this.#walkInitiated &&
+      this.#pending.size === 0 &&
+      !this.#localDoneSent
+    ) {
       this.#localDoneSent = true
       this.#send({ type: MSG_DONE })
     }
@@ -220,9 +270,6 @@ export class SyncSession {
   #finish(): void {
     if (this.#roundComplete) return
     this.#roundComplete = true
-    // Note: we do NOT unsubscribe from the transport. The session
-    // stays live for post-round PUSH traffic until `close()` or the
-    // transport closes externally.
     this.#resolve()
   }
 
@@ -250,6 +297,20 @@ export class SyncSession {
   #onClose(): void {
     if (this.#closed) return
     this.#fail(new SessionError('transport closed before round complete'))
+  }
+
+  /** Push one or more facts to the peer. May be called any time after
+   *  `start()`. Receivers dedup against their own MST. No ack. */
+  push(facts: { relation: string; encodedRow: string }[]): void {
+    if (this.#closed) return
+    if (facts.length === 0) return
+    const fullFacts = facts.map((f) => ({
+      key: factKey(f.relation, f.encodedRow),
+      relation: f.relation,
+      encodedRow: f.encodedRow,
+    }))
+    const { digest, encoded } = encodePayload(fullFacts)
+    this.#send({ type: MSG_PUSH, digest, encoded })
   }
 }
 

@@ -110,14 +110,14 @@ describe('SyncSession — handshake', () => {
       { relation: 'R', encodedRow: '3,4,' },
     ])
     const [ta, tb] = inMemoryPair()
-    // A DATA message is a 3-element CBOR array starting with major-tag
-    // 0x83 then the type byte 0x04. Sniff that header and flip a byte
-    // near the tail of the encoded payload (so the digest mismatches
-    // after bab decode rather than just being noise the CBOR layer
-    // rejects).
+    // A RANGE_DATA message is a 5-element CBOR array starting with
+    // major-tag 0x85 then the type byte 0x0b (MSG_RANGE_DATA). Sniff
+    // that header and flip a byte near the tail of the encoded
+    // payload — so the bab-verify fails after decode rather than
+    // being caught at the CBOR layer.
     const tbWrapped = {
       send(msg: Uint8Array) {
-        if (msg.length >= 6 && msg[0] === 0x83 && msg[1] === 0x04) {
+        if (msg.length >= 6 && msg[0] === 0x85 && msg[1] === 0x0b) {
           const c = new Uint8Array(msg)
           c[msg.length - 5] ^= 0xff
           tb.send(c)

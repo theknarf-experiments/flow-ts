@@ -4,17 +4,19 @@
 //
 // All messages are CBOR arrays starting with the type tag. Keeps
 // dispatch cheap and the encoding self-describing without per-message
-// schema tables.
+// schema tables. `null` is used wherever a range's `hi` bound is +∞.
 
 import { decode, encode } from 'cborg'
 import {
-  MSG_DATA,
   MSG_DONE,
   MSG_ERROR,
-  MSG_FETCH,
   MSG_HELLO,
-  MSG_KEYS,
   MSG_PUSH,
+  MSG_RANGE_DATA,
+  MSG_RANGE_DIFF,
+  MSG_RANGE_MATCH,
+  MSG_RANGE_SPLIT,
+  type Bound,
   type Message,
 } from './messages.js'
 
@@ -22,18 +24,20 @@ export function encodeMessage(m: Message): Uint8Array {
   switch (m.type) {
     case MSG_HELLO:
       return encode([m.type, m.version, m.replica, m.root])
-    case MSG_KEYS:
-      return encode([m.type, m.keys])
-    case MSG_FETCH:
-      return encode([m.type, m.keys])
-    case MSG_DATA:
-      return encode([m.type, m.digest, m.encoded])
     case MSG_DONE:
       return encode([m.type])
     case MSG_ERROR:
       return encode([m.type, m.code, m.msg])
     case MSG_PUSH:
       return encode([m.type, m.digest, m.encoded])
+    case MSG_RANGE_DIFF:
+      return encode([m.type, m.lo, m.hi, m.digest, m.count])
+    case MSG_RANGE_MATCH:
+      return encode([m.type, m.lo, m.hi])
+    case MSG_RANGE_SPLIT:
+      return encode([m.type, m.lo, m.mid, m.hi])
+    case MSG_RANGE_DATA:
+      return encode([m.type, m.lo, m.hi, m.digest, m.encoded])
   }
 }
 
@@ -65,22 +69,6 @@ export function decodeMessage(buf: Uint8Array): Message {
         root: assertBytes(arr[3], 'HELLO.root'),
       }
     }
-    case MSG_KEYS: {
-      if (arr.length !== 2) throw new MessageDecodeError('KEYS: wrong arity')
-      return { type, keys: assertKeyArray(arr[1], 'KEYS.keys') }
-    }
-    case MSG_FETCH: {
-      if (arr.length !== 2) throw new MessageDecodeError('FETCH: wrong arity')
-      return { type, keys: assertKeyArray(arr[1], 'FETCH.keys') }
-    }
-    case MSG_DATA: {
-      if (arr.length !== 3) throw new MessageDecodeError('DATA: wrong arity')
-      return {
-        type,
-        digest: assertBytes(arr[1], 'DATA.digest'),
-        encoded: assertBytes(arr[2], 'DATA.encoded'),
-      }
-    }
     case MSG_DONE: {
       if (arr.length !== 1) throw new MessageDecodeError('DONE: wrong arity')
       return { type }
@@ -99,6 +87,43 @@ export function decodeMessage(buf: Uint8Array): Message {
         type,
         digest: assertBytes(arr[1], 'PUSH.digest'),
         encoded: assertBytes(arr[2], 'PUSH.encoded'),
+      }
+    }
+    case MSG_RANGE_DIFF: {
+      if (arr.length !== 5) throw new MessageDecodeError('RANGE_DIFF: wrong arity')
+      return {
+        type,
+        lo: assertBytes(arr[1], 'RANGE_DIFF.lo'),
+        hi: assertBound(arr[2], 'RANGE_DIFF.hi'),
+        digest: assertBytes(arr[3], 'RANGE_DIFF.digest'),
+        count: assertNumber(arr[4], 'RANGE_DIFF.count'),
+      }
+    }
+    case MSG_RANGE_MATCH: {
+      if (arr.length !== 3) throw new MessageDecodeError('RANGE_MATCH: wrong arity')
+      return {
+        type,
+        lo: assertBytes(arr[1], 'RANGE_MATCH.lo'),
+        hi: assertBound(arr[2], 'RANGE_MATCH.hi'),
+      }
+    }
+    case MSG_RANGE_SPLIT: {
+      if (arr.length !== 4) throw new MessageDecodeError('RANGE_SPLIT: wrong arity')
+      return {
+        type,
+        lo: assertBytes(arr[1], 'RANGE_SPLIT.lo'),
+        mid: assertBytes(arr[2], 'RANGE_SPLIT.mid'),
+        hi: assertBound(arr[3], 'RANGE_SPLIT.hi'),
+      }
+    }
+    case MSG_RANGE_DATA: {
+      if (arr.length !== 5) throw new MessageDecodeError('RANGE_DATA: wrong arity')
+      return {
+        type,
+        lo: assertBytes(arr[1], 'RANGE_DATA.lo'),
+        hi: assertBound(arr[2], 'RANGE_DATA.hi'),
+        digest: assertBytes(arr[3], 'RANGE_DATA.digest'),
+        encoded: assertBytes(arr[4], 'RANGE_DATA.encoded'),
       }
     }
     default:
@@ -123,7 +148,7 @@ function assertBytes(v: unknown, field: string): Uint8Array {
   return v
 }
 
-function assertKeyArray(v: unknown, field: string): Uint8Array[] {
-  if (!Array.isArray(v)) throw new MessageDecodeError(`${field}: expected array`)
-  return v.map((k, i) => assertBytes(k, `${field}[${i}]`))
+function assertBound(v: unknown, field: string): Bound {
+  if (v === null) return null
+  return assertBytes(v, field)
 }

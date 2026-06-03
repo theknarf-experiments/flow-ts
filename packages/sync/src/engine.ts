@@ -22,7 +22,7 @@
 //     unions" — peers just contribute keys.
 
 import { decodeRow, encodeRow, type Row } from 'flow-ts'
-import { Mst, toHex, type Hash } from './mst/index.js'
+import { compareHash, Mst, serialisePageRanges, toHex, type Hash } from './mst/index.js'
 import { factKey } from './protocol/payload.js'
 import { SyncSession } from './protocol/session.js'
 import type { Transport, Unsubscribe } from './transport/index.js'
@@ -104,7 +104,12 @@ export class SyncEngine {
   attachPeer(transport: Transport): PeerHandle {
     const session = new SyncSession(transport, {
       replicaId: this.#replicaId,
-      localKeys: () => [...this.#mst.keys()],
+      localKeysSorted: () => {
+        const keys = [...this.#mst.keys()]
+        keys.sort(compareHash)
+        return keys
+      },
+      localPageRanges: () => serialisePageRanges(this.#mst.root()),
       localRoot: () => this.#mst.rootDigest(),
       lookupFact: (k) => this.#facts.get(toHex(k)) ?? null,
       onRemoteFact: (relation, encodedRow) => this.#applyRemote(relation, encodedRow),

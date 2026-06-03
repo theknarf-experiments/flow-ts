@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest'
 import * as fc from 'fast-check'
-import { Mst, toHex } from '../../src/mst/index.js'
+import { compareHash, Mst, serialisePageRanges, toHex } from '../../src/mst/index.js'
 import { factKey, type Fact } from '../../src/protocol/payload.js'
 import { SyncSession, type SessionDeps } from '../../src/protocol/session.js'
 import { inMemoryPair, makeRng, withInterference } from '../../src/transport/index.js'
@@ -21,7 +21,12 @@ function makeDeps(replica: number, initial: { relation: string; encodedRow: stri
   }
   const deps: SessionDeps = {
     replicaId: new Uint8Array([replica]),
-    localKeys: () => [...mst.keys()],
+    localKeysSorted: () => {
+      const ks = [...mst.keys()]
+      ks.sort(compareHash)
+      return ks
+    },
+    localPageRanges: () => serialisePageRanges(mst.root()),
     localRoot: () => mst.rootDigest(),
     lookupFact: (k) => facts.get(toHex(k)) ?? null,
     onRemoteFact: (relation, encodedRow) => {

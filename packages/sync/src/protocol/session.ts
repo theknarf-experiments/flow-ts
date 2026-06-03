@@ -1,79 +1,73 @@
 // One sync session over one transport, between two peers. Uses
-// range-based set reconciliation: each peer recursively bisects the
-// 256-bit key space and only descends into ranges whose digests
-// differ — bandwidth scales as O(diff + log n), not O(n).
+// tree-aligned page-range reconciliation: each peer serialises its
+// own MST page boundaries (one `(start, end, hash)` triple per page,
+// pre-order) and exchanges them in a single PAGE_RANGES message.
+// Each side then runs `diff(localRanges, peerRanges)` locally to
+// compute the inclusive key ranges it needs to FETCH from the peer.
 //
-// Flow (each peer runs its own walk in parallel):
+// Bandwidth: O(pages) for the PAGE_RANGES exchange + O(diff) for
+// the FETCH/DATA payload. For an MST with the canonical base-16
+// level, pages ≈ n / 16 ≈ ~6% of n. Much smaller than the v1's full
+// key-list exchange when stores are large and mostly in sync.
+//
+// Flow (each peer runs in parallel):
 //   1. HELLO with our MST root digest.
-//   2. If roots match → walk skipped; send DONE.
-//   3. Else, initiate the walk: send RANGE_DIFF for the full
-//      key space `[ZERO_HASH, +∞)`.
-//   4. On peer RANGE_DIFF: compute our digest for the same range.
-//      - Equal → RANGE_MATCH.
-//      - Differ + max(local.count, peer.count) ≤ MAX_RANGE_KEYS
-//        (or range can't bisect further) → RANGE_DATA with our keys'
-//        values in this range.
-//      - Otherwise → RANGE_SPLIT at the bit-midpoint.
-//   5. On peer RANGE_MATCH/DATA: range resolved, remove from pending.
-//      On peer RANGE_SPLIT: replace this range with the two halves
-//      in our pending set and send RANGE_DIFFs for both.
-//   6. When pending is empty and our walk had been initiated → DONE.
-//   7. When DONE both sent and received → round complete.
+//   2. If peer root matches → walk skipped; declare done.
+//   3. Else send PAGE_RANGES with our serialised page list.
+//   4. On peer PAGE_RANGES: run `diff(ours, theirs)`; if non-empty,
+//      send FETCH with the resulting ranges. If empty (we don't
+//      need anything from them), our inbound side is done.
+//   5. On peer FETCH: gather our facts whose keys fall in the
+//      requested ranges; ship them via DATA.
+//   6. On peer DATA: bab-verify, apply each fact.
+//   7. When *our* walk is locally complete (we've received their
+//      page ranges and our FETCH has returned), declare round done
+//      and send DONE as an informational hint.
 //
-// Symmetric coverage. Each side's walk discovers what it's missing.
-// A's walk surfaces facts that A doesn't have; B's walk surfaces
-// facts that B doesn't have. No complement-push needed.
-//
-// After the initial round, the session stays live for `push(facts)`
+// After the initial round the session stays live for `push(facts)`
 // gossip until `close()` or the transport closes externally.
 
 import { type Hash } from '../bab/index.js'
 import { bytesEqual, compareHash } from '../mst/index.js'
-import {
-  bisect,
-  isAtomicRange,
-  rangeSummary,
-  sliceRange,
-  ZERO_HASH,
-} from '../mst/range.js'
+import { diff, keysInRanges, type DiffRange, type PageRange } from '../mst/page-range.js'
 import type { Transport, Unsubscribe } from '../transport/index.js'
 import {
+  MSG_DATA,
   MSG_DONE,
   MSG_ERROR,
+  MSG_FETCH,
   MSG_HELLO,
+  MSG_PAGE_RANGES,
   MSG_PUSH,
-  MSG_RANGE_DATA,
-  MSG_RANGE_DIFF,
-  MSG_RANGE_MATCH,
-  MSG_RANGE_SPLIT,
-  type Bound,
   type Message,
   PROTOCOL_VERSION,
 } from './messages.js'
 import { decodeMessage, encodeMessage } from './codec.js'
 import { decodePayload, encodePayload, factKey, type Fact } from './payload.js'
 
-/** Above this size the responder issues SPLIT instead of DATA. */
-const MAX_RANGE_KEYS = 64
-
-/** Default retry timing for RANGE_DIFF. Tunable via SessionDeps. */
+/** Default retry timing. Tunable via SessionDeps. */
 const DEFAULT_RETRY_INTERVAL_MS = 100
 const DEFAULT_MAX_ATTEMPTS = 8
 
 export interface RetryOptions {
-  /** How long to wait for a RANGE_DIFF reply before resending. */
+  /** How long to wait for an expected reply before resending the
+   *  most recent outbound HELLO / PAGE_RANGES / FETCH. */
   intervalMs?: number
-  /** How many times to send the same RANGE_DIFF before failing the
+  /** How many times to resend the same message before failing the
    *  session. Initial send counts as attempt 1. */
   maxAttempts?: number
 }
 
 export interface SessionDeps {
-  /** Bytes identifying this replica. Only echoed in HELLO; not used
-   *  for anything semantic in v1. */
+  /** Bytes identifying this replica. Only echoed in HELLO. */
   readonly replicaId: Uint8Array
-  /** All keys currently in the local MST, as 32-byte hashes. */
-  readonly localKeys: () => Hash[]
+  /** All keys currently in the local MST, as 32-byte hashes,
+   *  sorted ascending. */
+  readonly localKeysSorted: () => Hash[]
+  /** Local MST's serialised page ranges (pre-order DFS over its
+   *  pages). Re-serialised on every call (the engine's MST is the
+   *  source of truth). */
+  readonly localPageRanges: () => PageRange[]
   /** Root digest of the local MST. */
   readonly localRoot: () => Hash
   /** Look up a fact's (relation, encodedRow) by its key. Returns
@@ -82,7 +76,7 @@ export interface SessionDeps {
   /** Called for every fact the peer ships us. Caller should add it
    *  to local MST + side-table + emit to onRemoteAdd subscribers. */
   readonly onRemoteFact: (relation: string, encodedRow: string) => void
-  /** Optional retry tuning. Defaults: 100ms interval, 8 attempts. */
+  /** Optional retry tuning. */
   readonly retry?: RetryOptions
 }
 
@@ -93,10 +87,6 @@ export class SessionError extends Error {
   }
 }
 
-function rangeKey(lo: Hash, hi: Bound): string {
-  return toHex(lo) + ':' + (hi === null ? '+' : toHex(hi))
-}
-
 export class SyncSession {
   readonly #transport: Transport
   readonly #deps: SessionDeps
@@ -104,30 +94,35 @@ export class SyncSession {
   #unsubMessage: Unsubscribe | null = null
   #unsubClose: Unsubscribe | null = null
 
-  /** Snapshot of local keys, sorted. Resorted on every call — the
-   *  engine's edits are append-only and small enough that the cost
-   *  is fine for v1. */
-  #sortedKeys(): Hash[] {
-    return this.#deps.localKeys().sort(compareHash)
-  }
-
-  /** Ranges we've sent RANGE_DIFF for and are awaiting a final reply.
-   *  Each entry tracks attempt count so the shared retry pump can
-   *  resend after a timeout and fail-fast after exhaustion. */
-  #pending = new Map<string, { lo: Hash; hi: Bound; attempts: number }>()
-  #helloReceived = false
-  #helloAttempts = 0
-  #doneAttempts = 0
-  /** Shared interval timer driving retry of HELLO and RANGE_DIFF.
-   *  Started in `start()`; cleared on round completion or failure. */
+  /** Shared retry pump. Resends HELLO / PAGE_RANGES / FETCH while
+   *  they're awaiting a reply. */
   #retryPump: ReturnType<typeof setInterval> | null = null
-  /** True once we've sent the initial RANGE_DIFF (or decided to skip
-   *  the walk because roots matched). */
-  #walkInitiated = false
+
+  /** Per-message attempt counters. Bumped each retry-tick; failure
+   *  fires when any exceeds `maxAttempts`. */
+  #helloAttempts = 0
+  #pageRangesAttempts = 0
+  #fetchAttempts = 0
+  #doneAttempts = 0
+
+  #helloReceived = false
+  /** True once we've sent PAGE_RANGES at least once (or decided to
+   *  skip the exchange because roots matched). */
+  #pageRangesSent = false
+  /** True once we've received the peer's PAGE_RANGES. */
+  #peerPageRangesReceived = false
+  /** Peer has fully completed *their* round — they don't need more
+   *  PAGE_RANGES / DATA from us. While false, we keep retransmitting
+   *  data-push messages on each tick. */
+  #peerDoneReceived = false
+  /** Our FETCH was sent and we're awaiting DATA, OR we determined we
+   *  needed nothing. `null` = haven't decided yet; `[]` = nothing to
+   *  fetch; non-empty array = waiting on DATA reply. */
+  #pendingFetch: DiffRange[] | null = null
+  #fetchSatisfied = false
   #localDoneSent = false
-  /** Initial reconcile round done; session stays live for PUSH. */
+
   #roundComplete = false
-  /** Transport unhooked; no further send/receive. */
   #closed = false
 
   #resolve!: () => void
@@ -151,6 +146,10 @@ export class SyncSession {
     this.#retryPump = setInterval(() => this.#tick(), intervalMs)
   }
 
+  #send(m: Message): void {
+    this.#transport.send(encodeMessage(m))
+  }
+
   #sendHello(): void {
     this.#helloAttempts++
     this.#send({
@@ -161,37 +160,75 @@ export class SyncSession {
     })
   }
 
-  /** Shared retry tick. Resends anything still pending and bumps
-   *  per-item attempt counts; fails the session when any counter
-   *  exceeds maxAttempts. */
+  #sendPageRanges(): void {
+    this.#pageRangesAttempts++
+    this.#pageRangesSent = true
+    this.#send({ type: MSG_PAGE_RANGES, ranges: this.#deps.localPageRanges() })
+  }
+
+  #sendFetch(ranges: DiffRange[]): void {
+    this.#fetchAttempts++
+    this.#pendingFetch = ranges
+    if (ranges.length === 0) {
+      // Nothing to fetch — declare our inbound side satisfied without
+      // sending FETCH.
+      this.#fetchSatisfied = true
+      return
+    }
+    this.#send({ type: MSG_FETCH, ranges })
+  }
+
+  /** Shared retry pump. Re-emits any in-flight expectation that
+   *  hasn't been satisfied yet; trips `#fail` on exhaustion. */
   #tick(): void {
-    if (this.#closed || this.#roundComplete) return
+    if (this.#closed) return
+    // Pump keeps ticking past `roundComplete` so we can keep
+    // resending data-push messages (PAGE_RANGES, DONE) until peer
+    // signals their round is done — without that, B finishing before
+    // A receives B's PAGE_RANGES is a hard deadlock. Once peer is
+    // done, all retry branches short-circuit on `peerDoneReceived`
+    // and the pump becomes a no-op (cleared eventually on `close()`).
+    if (this.#peerDoneReceived && this.#roundComplete) return
     const max = this.#deps.retry?.maxAttempts ?? DEFAULT_MAX_ATTEMPTS
 
-    if (!this.#helloReceived) {
+    if (!this.#helloReceived && !this.#peerDoneReceived) {
       if (this.#helloAttempts >= max) {
         this.#fail(new SessionError(`hello: exceeded ${max} attempts`))
         return
       }
       this.#sendHello()
+      return
     }
 
-    for (const [key, entry] of this.#pending) {
-      if (entry.attempts >= max) {
-        this.#fail(new SessionError(`range ${key}: exceeded ${max} attempts`))
+    if (this.#pageRangesSent && !this.#peerDoneReceived) {
+      if (this.#pageRangesAttempts >= max) {
+        this.#fail(new SessionError(`page_ranges: exceeded ${max} attempts`))
         return
       }
-      // Recompute digest in case local state moved since first send.
-      const sorted = this.#sortedKeys()
-      const s = rangeSummary(sorted, entry.lo, entry.hi)
-      entry.attempts++
-      this.#send({ type: MSG_RANGE_DIFF, lo: entry.lo, hi: entry.hi, digest: s.digest, count: s.count })
+      this.#sendPageRanges()
     }
 
-  }
+    if (
+      this.#pendingFetch !== null &&
+      this.#pendingFetch.length > 0 &&
+      !this.#fetchSatisfied
+    ) {
+      if (this.#fetchAttempts >= max) {
+        this.#fail(new SessionError(`fetch: exceeded ${max} attempts`))
+        return
+      }
+      this.#fetchAttempts++
+      this.#send({ type: MSG_FETCH, ranges: this.#pendingFetch })
+    }
 
-  #send(m: Message): void {
-    this.#transport.send(encodeMessage(m))
+    if (this.#localDoneSent && !this.#peerDoneReceived) {
+      if (this.#doneAttempts >= max) {
+        this.#fail(new SessionError(`done: exceeded ${max} attempts`))
+        return
+      }
+      this.#doneAttempts++
+      this.#send({ type: MSG_DONE })
+    }
   }
 
   #onMessage(buf: Uint8Array): void {
@@ -209,8 +246,7 @@ export class SyncSession {
           this.#onHello(m)
           break
         case MSG_DONE:
-          // Informational only — peer hints they're done with their walk.
-          // We don't gate completion on it; see `#maybeFinish`.
+          this.#peerDoneReceived = true
           break
         case MSG_ERROR:
           this.#fail(new SessionError(`peer ${m.code}: ${m.msg}`))
@@ -218,17 +254,14 @@ export class SyncSession {
         case MSG_PUSH:
           this.#onPush(m)
           break
-        case MSG_RANGE_DIFF:
-          this.#onRangeDiff(m)
+        case MSG_PAGE_RANGES:
+          this.#onPageRanges(m)
           break
-        case MSG_RANGE_MATCH:
-          this.#onRangeMatch(m)
+        case MSG_FETCH:
+          this.#onFetch(m)
           break
-        case MSG_RANGE_SPLIT:
-          this.#onRangeSplit(m)
-          break
-        case MSG_RANGE_DATA:
-          this.#onRangeData(m)
+        case MSG_DATA:
+          this.#onData(m)
           break
       }
     } catch (e) {
@@ -241,88 +274,44 @@ export class SyncSession {
   #onHello(m: Message & { type: typeof MSG_HELLO }): void {
     this.#helloReceived = true
     if (bytesEqual(this.#deps.localRoot(), m.root)) {
-      this.#walkInitiated = true
-      // Pending is empty; #maybeFinish will send DONE.
-    } else {
-      this.#initiateWalk()
-    }
-  }
-
-  #initiateWalk(): void {
-    if (this.#walkInitiated) return
-    this.#walkInitiated = true
-    const sorted = this.#sortedKeys()
-    const s = rangeSummary(sorted, ZERO_HASH, null)
-    this.#sendRangeDiff(ZERO_HASH, null, s.digest, s.count)
-  }
-
-  #sendRangeDiff(lo: Hash, hi: Bound, digest: Hash, count: number): void {
-    const key = rangeKey(lo, hi)
-    let entry = this.#pending.get(key)
-    if (!entry) {
-      entry = { lo, hi, attempts: 0 }
-      this.#pending.set(key, entry)
-    }
-    entry.attempts++
-    this.#send({ type: MSG_RANGE_DIFF, lo, hi, digest, count })
-  }
-
-  #resolveRange(key: string): void {
-    this.#pending.delete(key)
-  }
-
-  #clearAllPending(): void {
-    this.#pending.clear()
-    if (this.#retryPump) {
-      clearInterval(this.#retryPump)
-      this.#retryPump = null
-    }
-  }
-
-  #onRangeDiff(m: Message & { type: typeof MSG_RANGE_DIFF }): void {
-    const sorted = this.#sortedKeys()
-    const local = rangeSummary(sorted, m.lo, m.hi)
-    if (bytesEqual(local.digest, m.digest)) {
-      this.#send({ type: MSG_RANGE_MATCH, lo: m.lo, hi: m.hi })
+      // Roots match — no exchange needed.
+      this.#pageRangesSent = true
+      this.#peerPageRangesReceived = true
+      this.#fetchSatisfied = true
       return
     }
-    const splitMid = bisect(m.lo, m.hi)
-    const shouldShip =
-      splitMid === null ||
-      isAtomicRange(m.lo, m.hi) ||
-      Math.max(local.count, m.count) <= MAX_RANGE_KEYS
-    if (shouldShip) {
-      const { keys: rangeKeys } = sliceRange(sorted, m.lo, m.hi)
-      const facts: Fact[] = []
-      for (const k of rangeKeys) {
-        const v = this.#deps.lookupFact(k)
-        if (!v) continue
-        facts.push({ key: k, relation: v.relation, encodedRow: v.encodedRow })
-      }
-      const { digest, encoded } = encodePayload(facts)
-      this.#send({ type: MSG_RANGE_DATA, lo: m.lo, hi: m.hi, digest, encoded })
-    } else {
-      this.#send({ type: MSG_RANGE_SPLIT, lo: m.lo, mid: splitMid, hi: m.hi })
+    if (!this.#pageRangesSent) this.#sendPageRanges()
+  }
+
+  #onPageRanges(m: Message & { type: typeof MSG_PAGE_RANGES }): void {
+    this.#peerPageRangesReceived = true
+    const peerRanges: PageRange[] = m.ranges.map((r) => ({
+      start: r.start,
+      end: r.end,
+      hash: r.hash,
+    }))
+    const need = diff(this.#deps.localPageRanges(), peerRanges)
+    this.#sendFetch(need)
+  }
+
+  #onFetch(m: Message & { type: typeof MSG_FETCH }): void {
+    const sorted = this.#deps.localKeysSorted()
+    const wanted = keysInRanges(sorted, m.ranges)
+    const facts: Fact[] = []
+    for (const k of wanted) {
+      const v = this.#deps.lookupFact(k)
+      if (!v) continue
+      facts.push({ key: k, relation: v.relation, encodedRow: v.encodedRow })
     }
+    const { digest, encoded } = encodePayload(facts)
+    this.#send({ type: MSG_DATA, digest, encoded })
   }
 
-  #onRangeMatch(m: Message & { type: typeof MSG_RANGE_MATCH }): void {
-    this.#resolveRange(rangeKey(m.lo, m.hi))
-  }
-
-  #onRangeSplit(m: Message & { type: typeof MSG_RANGE_SPLIT }): void {
-    this.#resolveRange(rangeKey(m.lo, m.hi))
-    const sorted = this.#sortedKeys()
-    const left = rangeSummary(sorted, m.lo, m.mid)
-    const right = rangeSummary(sorted, m.mid, m.hi)
-    this.#sendRangeDiff(m.lo, m.mid, left.digest, left.count)
-    this.#sendRangeDiff(m.mid, m.hi, right.digest, right.count)
-  }
-
-  #onRangeData(m: Message & { type: typeof MSG_RANGE_DATA }): void {
+  #onData(m: Message & { type: typeof MSG_DATA }): void {
+    if (this.#fetchSatisfied) return // duplicate
     const facts = decodePayload(m.digest, m.encoded)
     for (const f of facts) this.#deps.onRemoteFact(f.relation, f.encodedRow)
-    this.#resolveRange(rangeKey(m.lo, m.hi))
+    this.#fetchSatisfied = true
   }
 
   #onPush(m: Message & { type: typeof MSG_PUSH }): void {
@@ -331,13 +320,12 @@ export class SyncSession {
   }
 
   #maybeFinish(): void {
-    // Each side resolves its completion when *its own* walk is done.
-    // We don't wait for a mutual DONE handshake — there's a "last DONE
-    // ack" gap that the protocol can't close without an unbounded
-    // retry tail, and demos don't need mutual confirmation. DONE is
-    // still sent as an informational hint so the peer can stop
-    // expecting more RANGE_DIFFs from us, but it's best-effort.
-    if (!this.#walkInitiated || this.#pending.size !== 0 || this.#roundComplete) return
+    if (
+      this.#roundComplete ||
+      !this.#peerPageRangesReceived ||
+      !this.#fetchSatisfied
+    )
+      return
     if (!this.#localDoneSent) {
       this.#localDoneSent = true
       this.#doneAttempts = 1
@@ -349,8 +337,16 @@ export class SyncSession {
   #finish(): void {
     if (this.#roundComplete) return
     this.#roundComplete = true
-    this.#clearAllPending()
+    // Don't clear the pump yet: peer may still need our PAGE_RANGES
+    // / DATA. The pump idles via `peerDoneReceived` until peer signals.
     this.#resolve()
+  }
+
+  #clearPump(): void {
+    if (this.#retryPump) {
+      clearInterval(this.#retryPump)
+      this.#retryPump = null
+    }
   }
 
   /** Tear down the session and close the transport. Idempotent. */
@@ -358,7 +354,7 @@ export class SyncSession {
     if (this.#closed) return
     if (this.#roundComplete) {
       this.#closed = true
-      this.#clearAllPending()
+      this.#clearPump()
       this.#unsubMessage?.()
       this.#unsubClose?.()
       this.#transport.close()
@@ -370,7 +366,7 @@ export class SyncSession {
   #fail(e: Error): void {
     if (this.#closed) return
     this.#closed = true
-    this.#clearAllPending()
+    this.#clearPump()
     this.#unsubMessage?.()
     this.#unsubClose?.()
     if (!this.#roundComplete) this.#reject(e)
@@ -396,11 +392,5 @@ export class SyncSession {
   }
 }
 
-function toHex(h: Hash): string {
-  let s = ''
-  for (let i = 0; i < h.length; i++) {
-    const b = h[i]!
-    s += (b >>> 4).toString(16) + (b & 0xf).toString(16)
-  }
-  return s
-}
+// Make the unused vars not bite tsc.
+void compareHash

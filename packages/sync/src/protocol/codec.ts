@@ -2,22 +2,22 @@
 // for the underlying encoder; it round-trips `Uint8Array` natively
 // (major type 2 — byte string).
 //
-// All messages are CBOR arrays starting with the type tag. Keeps
-// dispatch cheap and the encoding self-describing without per-message
-// schema tables. `null` is used wherever a range's `hi` bound is +∞.
+// All messages are CBOR arrays starting with the type tag.
+// PageRange and DiffRange are encoded as flat tuples of byte
+// strings: `[start, end, hash]` and `[start, end]` respectively.
 
 import { decode, encode } from 'cborg'
 import {
+  MSG_DATA,
   MSG_DONE,
   MSG_ERROR,
+  MSG_FETCH,
   MSG_HELLO,
+  MSG_PAGE_RANGES,
   MSG_PUSH,
-  MSG_RANGE_DATA,
-  MSG_RANGE_DIFF,
-  MSG_RANGE_MATCH,
-  MSG_RANGE_SPLIT,
-  type Bound,
   type Message,
+  type WireDiffRange,
+  type WirePageRange,
 } from './messages.js'
 
 export function encodeMessage(m: Message): Uint8Array {
@@ -30,14 +30,12 @@ export function encodeMessage(m: Message): Uint8Array {
       return encode([m.type, m.code, m.msg])
     case MSG_PUSH:
       return encode([m.type, m.digest, m.encoded])
-    case MSG_RANGE_DIFF:
-      return encode([m.type, m.lo, m.hi, m.digest, m.count])
-    case MSG_RANGE_MATCH:
-      return encode([m.type, m.lo, m.hi])
-    case MSG_RANGE_SPLIT:
-      return encode([m.type, m.lo, m.mid, m.hi])
-    case MSG_RANGE_DATA:
-      return encode([m.type, m.lo, m.hi, m.digest, m.encoded])
+    case MSG_PAGE_RANGES:
+      return encode([m.type, m.ranges.map((r) => [r.start, r.end, r.hash])])
+    case MSG_FETCH:
+      return encode([m.type, m.ranges.map((r) => [r.start, r.end])])
+    case MSG_DATA:
+      return encode([m.type, m.digest, m.encoded])
   }
 }
 
@@ -89,41 +87,20 @@ export function decodeMessage(buf: Uint8Array): Message {
         encoded: assertBytes(arr[2], 'PUSH.encoded'),
       }
     }
-    case MSG_RANGE_DIFF: {
-      if (arr.length !== 5) throw new MessageDecodeError('RANGE_DIFF: wrong arity')
-      return {
-        type,
-        lo: assertBytes(arr[1], 'RANGE_DIFF.lo'),
-        hi: assertBound(arr[2], 'RANGE_DIFF.hi'),
-        digest: assertBytes(arr[3], 'RANGE_DIFF.digest'),
-        count: assertNumber(arr[4], 'RANGE_DIFF.count'),
-      }
+    case MSG_PAGE_RANGES: {
+      if (arr.length !== 2) throw new MessageDecodeError('PAGE_RANGES: wrong arity')
+      return { type, ranges: assertPageRangeArray(arr[1], 'PAGE_RANGES.ranges') }
     }
-    case MSG_RANGE_MATCH: {
-      if (arr.length !== 3) throw new MessageDecodeError('RANGE_MATCH: wrong arity')
-      return {
-        type,
-        lo: assertBytes(arr[1], 'RANGE_MATCH.lo'),
-        hi: assertBound(arr[2], 'RANGE_MATCH.hi'),
-      }
+    case MSG_FETCH: {
+      if (arr.length !== 2) throw new MessageDecodeError('FETCH: wrong arity')
+      return { type, ranges: assertDiffRangeArray(arr[1], 'FETCH.ranges') }
     }
-    case MSG_RANGE_SPLIT: {
-      if (arr.length !== 4) throw new MessageDecodeError('RANGE_SPLIT: wrong arity')
+    case MSG_DATA: {
+      if (arr.length !== 3) throw new MessageDecodeError('DATA: wrong arity')
       return {
         type,
-        lo: assertBytes(arr[1], 'RANGE_SPLIT.lo'),
-        mid: assertBytes(arr[2], 'RANGE_SPLIT.mid'),
-        hi: assertBound(arr[3], 'RANGE_SPLIT.hi'),
-      }
-    }
-    case MSG_RANGE_DATA: {
-      if (arr.length !== 5) throw new MessageDecodeError('RANGE_DATA: wrong arity')
-      return {
-        type,
-        lo: assertBytes(arr[1], 'RANGE_DATA.lo'),
-        hi: assertBound(arr[2], 'RANGE_DATA.hi'),
-        digest: assertBytes(arr[3], 'RANGE_DATA.digest'),
-        encoded: assertBytes(arr[4], 'RANGE_DATA.encoded'),
+        digest: assertBytes(arr[1], 'DATA.digest'),
+        encoded: assertBytes(arr[2], 'DATA.encoded'),
       }
     }
     default:
@@ -148,7 +125,29 @@ function assertBytes(v: unknown, field: string): Uint8Array {
   return v
 }
 
-function assertBound(v: unknown, field: string): Bound {
-  if (v === null) return null
-  return assertBytes(v, field)
+function assertPageRangeArray(v: unknown, field: string): WirePageRange[] {
+  if (!Array.isArray(v)) throw new MessageDecodeError(`${field}: expected array`)
+  return v.map((row, i) => {
+    if (!Array.isArray(row) || row.length !== 3) {
+      throw new MessageDecodeError(`${field}[${i}]: expected [start, end, hash]`)
+    }
+    return {
+      start: assertBytes(row[0], `${field}[${i}].start`),
+      end: assertBytes(row[1], `${field}[${i}].end`),
+      hash: assertBytes(row[2], `${field}[${i}].hash`),
+    }
+  })
+}
+
+function assertDiffRangeArray(v: unknown, field: string): WireDiffRange[] {
+  if (!Array.isArray(v)) throw new MessageDecodeError(`${field}: expected array`)
+  return v.map((row, i) => {
+    if (!Array.isArray(row) || row.length !== 2) {
+      throw new MessageDecodeError(`${field}[${i}]: expected [start, end]`)
+    }
+    return {
+      start: assertBytes(row[0], `${field}[${i}].start`),
+      end: assertBytes(row[1], `${field}[${i}].end`),
+    }
+  })
 }

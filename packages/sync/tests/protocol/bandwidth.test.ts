@@ -1,16 +1,14 @@
-// Sanity check on the bandwidth-scaling claim: when two replicas
-// share 100 keys and differ on 2, the range-diff walk only descends
-// into the subtrees that contain the differing keys — not the full
-// tree. We measure by counting RANGE_DIFF messages observed on the
-// wire.
+// Bandwidth scaling for the page-range exchange. Two replicas
+// sharing most keys exchange one PAGE_RANGES message each, then one
+// FETCH/DATA round per side for the actual diff. Identical key sets
+// short-circuit at HELLO via the root-digest gate.
 
 import { describe, expect, it } from 'vitest'
-import { Mst, toHex } from '../../src/mst/index.js'
+import { compareHash, Mst, serialisePageRanges, toHex } from '../../src/mst/index.js'
 import {
-  MSG_RANGE_DIFF,
-  MSG_RANGE_DATA,
-  MSG_RANGE_MATCH,
-  MSG_RANGE_SPLIT,
+  MSG_DATA,
+  MSG_FETCH,
+  MSG_PAGE_RANGES,
 } from '../../src/protocol/messages.js'
 import { decodeMessage } from '../../src/protocol/codec.js'
 import { factKey, type Fact } from '../../src/protocol/payload.js'
@@ -28,7 +26,12 @@ function makeDeps(replica: number, initial: { relation: string; encodedRow: stri
   }
   const deps: SessionDeps = {
     replicaId: new Uint8Array([replica]),
-    localKeys: () => [...mst.keys()],
+    localKeysSorted: () => {
+      const ks = [...mst.keys()]
+      ks.sort(compareHash)
+      return ks
+    },
+    localPageRanges: () => serialisePageRanges(mst.root()),
     localRoot: () => mst.rootDigest(),
     lookupFact: (k) => facts.get(toHex(k)) ?? null,
     onRemoteFact: (relation, encodedRow) => {
@@ -41,9 +44,6 @@ function makeDeps(replica: number, initial: { relation: string; encodedRow: stri
   return { deps, mst, facts, remoteFacts }
 }
 
-/** Sniffing wrapper that counts per-type messages going *outbound* on
- *  one side. Decodes each message so the count is by semantic type,
- *  not by raw bytes. */
 function countingTransport(inner: ReturnType<typeof inMemoryPair>[number]) {
   const counts = new Map<number, number>()
   const wrapped = {
@@ -59,9 +59,8 @@ function countingTransport(inner: ReturnType<typeof inMemoryPair>[number]) {
   return { wrapped, counts }
 }
 
-describe('range-diff bandwidth scaling', () => {
-  it('large shared key set with a small diff yields few RANGE messages', async () => {
-    // Both sides have keys 1..100 in 'R'; A also has 'special1', B has 'special2'.
+describe('page-range exchange bandwidth', () => {
+  it('disjoint-stores converge with bounded message counts', async () => {
     const shared = Array.from({ length: 100 }, (_, i) => ({
       relation: 'R',
       encodedRow: `${i},`,
@@ -77,26 +76,22 @@ describe('range-diff bandwidth scaling', () => {
     sb.start()
     await Promise.all([sa.completion, sb.completion])
 
-    // Both sides converged.
+    // Both sides converge to the same root.
     expect(toHex(a.mst.rootDigest())).toBe(toHex(b.mst.rootDigest()))
     expect(a.mst.size).toBe(102)
     expect(b.mst.size).toBe(102)
 
-    // A's outbound RANGE_DIFF count: walk pays log2(256/bit-depth) bisections
-    // per side until ranges fit MAX_RANGE_KEYS (64). With 101 keys per side
-    // and bit-depth-1 split, expect at most a small handful of DIFFs.
-    const aDiffs = tA.counts.get(MSG_RANGE_DIFF) ?? 0
-    const bDiffs = tB.counts.get(MSG_RANGE_DIFF) ?? 0
-    expect(aDiffs).toBeLessThanOrEqual(8)
-    expect(bDiffs).toBeLessThanOrEqual(8)
-
-    // And we should see at least one SPLIT (root range exceeds MAX_RANGE_KEYS).
-    const aSplits =
-      (tA.counts.get(MSG_RANGE_SPLIT) ?? 0) + (tB.counts.get(MSG_RANGE_SPLIT) ?? 0)
-    expect(aSplits).toBeGreaterThanOrEqual(1)
+    // Each side sends exactly one PAGE_RANGES (no retries needed on
+    // a perfect transport), one FETCH, and responds to peer's FETCH
+    // with one DATA.
+    for (const counts of [tA.counts, tB.counts]) {
+      expect(counts.get(MSG_PAGE_RANGES) ?? 0).toBe(1)
+      expect(counts.get(MSG_FETCH) ?? 0).toBeLessThanOrEqual(1)
+      expect(counts.get(MSG_DATA) ?? 0).toBe(1)
+    }
   })
 
-  it('identical key sets need no RANGE messages at all (root-digest gate)', async () => {
+  it('identical key sets need no PAGE_RANGES / FETCH / DATA at all (root-digest gate)', async () => {
     const init = Array.from({ length: 50 }, (_, i) => ({
       relation: 'R',
       encodedRow: `${i},`,
@@ -112,9 +107,8 @@ describe('range-diff bandwidth scaling', () => {
     sb.start()
     await Promise.all([sa.completion, sb.completion])
 
-    expect(tA.counts.get(MSG_RANGE_DIFF) ?? 0).toBe(0)
-    expect(tA.counts.get(MSG_RANGE_DATA) ?? 0).toBe(0)
-    expect(tA.counts.get(MSG_RANGE_MATCH) ?? 0).toBe(0)
-    expect(tA.counts.get(MSG_RANGE_SPLIT) ?? 0).toBe(0)
+    expect(tA.counts.get(MSG_PAGE_RANGES) ?? 0).toBe(0)
+    expect(tA.counts.get(MSG_FETCH) ?? 0).toBe(0)
+    expect(tA.counts.get(MSG_DATA) ?? 0).toBe(0)
   })
 })

@@ -1,25 +1,31 @@
-// Per the design doc:
-//   level(key) = floor(leading_zero_bits(key) / 2)
-// Base-4 ⇒ expected fanout 4, depth ≈ log_4(n).
+// Level function for MST keys. Matches the canonical
+// `merkle-search-tree` Rust crate's default base (16):
+//
+//   level(hash) = number of leading zero nibbles
+//
+// Each zero hex digit adds 1; a non-zero digit ends the count.
+// Expected fanout per page ≈ 16; expected depth ≈ log₁₆(n).
+//
+// The level is computed on the *already-hashed* key, so the level
+// distribution doesn't depend on user-supplied key contents — only on
+// the hash function. For us, keys come from `factKey()` which already
+// hashes via WILLIAM3, so we treat the key bytes themselves as the
+// digest the level function consumes.
 
 import type { Hash } from '../bab/index.js'
 
 export function levelOf(key: Hash): number {
-  let zeros = 0
+  let level = 0
   for (let i = 0; i < key.length; i++) {
     const b = key[i]!
-    if (b === 0) {
-      zeros += 8
-      continue
-    }
-    let mask = 0x80
-    while ((b & mask) === 0) {
-      zeros++
-      mask >>>= 1
-    }
-    break
+    const hi = (b >>> 4) & 0xf
+    if (hi !== 0) return level
+    level++
+    const lo = b & 0xf
+    if (lo !== 0) return level
+    level++
   }
-  return zeros >> 1
+  return level
 }
 
 /** Lexicographic byte comparison of two 32-byte hashes.

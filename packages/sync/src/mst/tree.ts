@@ -1,99 +1,63 @@
-// Merkle Search Tree over 32-byte keys (typically bab-hash digests
-// of facts). Structure is fully determined by the key set + level
-// function, so two replicas with identical key sets produce
-// byte-identical trees and matching root digests.
+// Merkle Search Tree. Public `Mst` class wraps a `Page` root and
+// supports incremental upsert (O(log n) expected per insert, amortised
+// over hash invalidation). Page subtree digests are cached and
+// invalidated only along the modified path.
 //
-// v1 strategy: maintain the keys in a Set; rebuild the canonical tree
-// lazily when the digest or structure is observed. Rebuild is
-// O(n) per call, which is fine for the EDB sizes the sync engine
-// targets in v1 (single-digit thousands of facts). Incremental
-// O(log n) insert lands in v2 if we need it.
+// Tree structure and digest layout match the canonical Rust
+// `merkle-search-tree` crate; see `page.ts` for the building blocks.
 
-import { HASH_LEN, babHash, type Hash } from '../bab/index.js'
-import { bytesEqual, compareHash, levelOf, toHex } from './level.js'
-
-export interface MstNode {
-  level: number
-  /** Sorted ascending by `compareHash`; all entries have `levelOf(k) === level`. */
-  entries: Hash[]
-  /** `entries.length + 1` children. `children[i]` covers the key range
-   *  strictly between entries[i-1] and entries[i] (with -∞ and +∞ at
-   *  the boundaries). Each child node has `level < this.level`. */
-  children: (MstNode | null)[]
-  /** Cached node digest. */
-  digest: Hash
-}
+import { babHash, HASH_LEN, type Hash } from '../bab/index.js'
+import { compareHash, levelOf, toHex } from './level.js'
+import {
+  Page,
+  collectKeys as pageCollectKeys,
+  upsert as pageUpsert,
+  type MstNode,
+} from './page.js'
 
 /** Sentinel for the empty tree: the digest of no keys at all.
- *  33 zero bytes hashed; can't collide with any non-empty node digest
- *  (those are prefixed with 0x10). The exact value is internal —
- *  only equality matters. */
-export const EMPTY_DIGEST: Hash = babHash(new Uint8Array(33))
-
-/** A node digest distinguishes empty/leaf/inner via a domain byte:
- *    0x10 = MST node (any level)
- *  followed by:  u8 level || u32_be entry_count
- *                || (for each i: entry_i || child_i.digest)
- *                || child_last.digest
- *  Empty children contribute `EMPTY_DIGEST`.
- */
-function nodeDigest(level: number, entries: Hash[], children: (MstNode | null)[]): Hash {
-  const n = entries.length
-  const buf = new Uint8Array(1 + 1 + 4 + n * (HASH_LEN + HASH_LEN) + HASH_LEN)
-  let off = 0
-  buf[off++] = 0x10
-  buf[off++] = level & 0xff
-  const view = new DataView(buf.buffer, buf.byteOffset)
-  view.setUint32(off, n, false)
-  off += 4
-  for (let i = 0; i < n; i++) {
-    buf.set(entries[i]!, off)
-    off += HASH_LEN
-    buf.set(children[i] ? children[i]!.digest : EMPTY_DIGEST, off)
-    off += HASH_LEN
-  }
-  buf.set(children[n] ? children[n]!.digest : EMPTY_DIGEST, off)
-  return babHash(buf)
-}
-
-/** Build the canonical MST node for a sorted, deduplicated key range. */
-function buildFromSorted(keys: Hash[]): MstNode | null {
-  if (keys.length === 0) return null
-  // Find the maximum level in this range.
-  let maxLevel = -1
-  for (const k of keys) {
-    const lvl = levelOf(k)
-    if (lvl > maxLevel) maxLevel = lvl
-  }
-  // Partition: top-level keys → entries, in-between buckets → children.
-  const entries: Hash[] = []
-  const childBuckets: Hash[][] = [[]]
-  for (const k of keys) {
-    if (levelOf(k) === maxLevel) {
-      entries.push(k)
-      childBuckets.push([])
-    } else {
-      childBuckets[childBuckets.length - 1]!.push(k)
-    }
-  }
-  const children = childBuckets.map(buildFromSorted)
-  return { level: maxLevel, entries, children, digest: nodeDigest(maxLevel, entries, children) }
-}
+ *  64 zero bytes hashed (twice the key length). Distinct from any
+ *  non-empty page digest because non-empty pages always commit to
+ *  at least one key. */
+export const EMPTY_DIGEST: Hash = babHash(new Uint8Array(HASH_LEN * 2))
 
 export class Mst {
-  /** Hex-encoded keys for Set deduplication. */
+  /** Hex-encoded keys for quick `has()` / `size`. The Page tree is
+   *  the authoritative store; this Set is a lookup accelerant. */
   #hexKeys = new Set<string>()
-  /** Cached canonical tree. Invalidated on any insert. */
-  #cached: MstNode | null | undefined = undefined // `undefined` = not yet computed
+  /** Root page. Starts as an empty placeholder at level 0; on first
+   *  insertion that needs a higher level, we replace via
+   *  `insertIntermediate` semantics in `insert()`. */
+  #root: Page = new Page(0, [])
 
-  /** Insert a key. Idempotent — duplicates are dropped. Returns true
-   *  if the key was new (the tree changed). */
+  /** Insert a key. Idempotent — duplicates are no-ops. Returns true
+   *  iff the key was new (the tree changed). */
   insert(key: Hash): boolean {
     if (key.length !== HASH_LEN) throw new Error(`MST key must be ${HASH_LEN} bytes`)
     const hex = toHex(key)
     if (this.#hexKeys.has(hex)) return false
     this.#hexKeys.add(hex)
-    this.#cached = undefined
+
+    const level = levelOf(key)
+    if (this.#root.isEmpty()) {
+      // Bootstrap: empty root → make a single-node page at the key's level.
+      this.#root = new Page(level, [{ key, ltPointer: null }])
+      return true
+    }
+    const r = pageUpsert(this.#root, key, level)
+    if (r.kind === 'insertIntermediate') {
+      // The key is at a higher level than the current root; promote
+      // a new root page containing just this key, with the old root
+      // hanging off the appropriate side.
+      const old = this.#root
+      const isLeft = compareHash(key, leftmostKey(old)) < 0
+      const newNode: MstNode = {
+        key,
+        ltPointer: isLeft ? null : old,
+      }
+      const newHigh: Page | null = isLeft ? old : null
+      this.#root = new Page(level, [newNode], newHigh)
+    }
     return true
   }
 
@@ -102,38 +66,19 @@ export class Mst {
     return this.#hexKeys.size
   }
 
-  /** Iterate keys (no defined order). */
+  /** Iterate all keys in ascending order. */
   *keys(): IterableIterator<Hash> {
-    for (const hex of this.#hexKeys) {
-      const out = new Uint8Array(HASH_LEN)
-      for (let i = 0; i < HASH_LEN; i++) {
-        out[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16)
-      }
-      yield out
-    }
+    yield* pageCollectKeys(this.#root)
   }
 
-  /** Compute the canonical tree (cached). `null` for an empty tree. */
-  root(): MstNode | null {
-    if (this.#cached === undefined) {
-      const sorted: Hash[] = []
-      for (const hex of this.#hexKeys) {
-        const out = new Uint8Array(HASH_LEN)
-        for (let i = 0; i < HASH_LEN; i++) {
-          out[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16)
-        }
-        sorted.push(out)
-      }
-      sorted.sort(compareHash)
-      this.#cached = buildFromSorted(sorted)
-    }
-    return this.#cached
+  /** Root page. `null` if the tree is empty. */
+  root(): Page | null {
+    return this.#root.isEmpty() ? null : this.#root
   }
 
   /** Root digest. `EMPTY_DIGEST` for an empty tree. */
   rootDigest(): Hash {
-    const r = this.root()
-    return r ? r.digest : EMPTY_DIGEST
+    return this.#root.isEmpty() ? EMPTY_DIGEST : this.#root.hash()
   }
 
   /** True iff the given key is in the tree. */
@@ -142,14 +87,19 @@ export class Mst {
   }
 }
 
-/** Walk a node, yielding every key it covers in sorted order. */
-export function* collectKeys(node: MstNode | null): IterableIterator<Hash> {
-  if (!node) return
-  for (let i = 0; i < node.entries.length; i++) {
-    yield* collectKeys(node.children[i] ?? null)
-    yield node.entries[i]!
+function leftmostKey(page: Page): Hash {
+  let cur: Page = page
+  while (cur.nodes.length > 0 && cur.nodes[0]!.ltPointer) {
+    cur = cur.nodes[0]!.ltPointer!
   }
-  yield* collectKeys(node.children[node.entries.length] ?? null)
+  if (cur.nodes.length === 0) {
+    // Shouldn't happen — caller only calls this on non-empty trees.
+    return new Uint8Array(HASH_LEN)
+  }
+  return cur.nodes[0]!.key
 }
 
+/** Walk a page subtree, yielding every key in ascending order. */
+export { pageCollectKeys as collectKeys }
+export type { MstNode, Page }
 export { bytesEqual, compareHash, levelOf } from './level.js'

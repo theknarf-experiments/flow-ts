@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { babHash } from '../../src/bab/index.js'
-import { Mst, toHex } from '../../src/mst/index.js'
+import { compareHash, Mst, serialisePageRanges, toHex } from '../../src/mst/index.js'
 import { factKey, type Fact } from '../../src/protocol/payload.js'
 import { SyncSession, type SessionDeps } from '../../src/protocol/session.js'
 import { inMemoryPair } from '../../src/transport/index.js'
@@ -21,7 +21,12 @@ function makeDeps(replica: number, initial: { relation: string; encodedRow: stri
   }
   const deps: SessionDeps = {
     replicaId: new Uint8Array([replica]),
-    localKeys: () => [...mst.keys()],
+    localKeysSorted: () => {
+      const ks = [...mst.keys()]
+      ks.sort(compareHash)
+      return ks
+    },
+    localPageRanges: () => serialisePageRanges(mst.root()),
     localRoot: () => mst.rootDigest(),
     lookupFact: (k) => facts.get(toHex(k)) ?? null,
     onRemoteFact: (relation, encodedRow) => {
@@ -110,14 +115,14 @@ describe('SyncSession — handshake', () => {
       { relation: 'R', encodedRow: '3,4,' },
     ])
     const [ta, tb] = inMemoryPair()
-    // A RANGE_DATA message is a 5-element CBOR array starting with
-    // major-tag 0x85 then the type byte 0x0b (MSG_RANGE_DATA). Sniff
-    // that header and flip a byte near the tail of the encoded
-    // payload — so the bab-verify fails after decode rather than
-    // being caught at the CBOR layer.
+    // A DATA message is a 3-element CBOR array starting with
+    // major-tag 0x83 then the type byte 0x0e (MSG_DATA). Sniff that
+    // header and flip a byte near the tail of the encoded payload —
+    // so the bab-verify fails after decode rather than being caught
+    // at the CBOR layer.
     const tbWrapped = {
       send(msg: Uint8Array) {
-        if (msg.length >= 6 && msg[0] === 0x85 && msg[1] === 0x0b) {
+        if (msg.length >= 6 && msg[0] === 0x83 && msg[1] === 0x0e) {
           const c = new Uint8Array(msg)
           c[msg.length - 5] ^= 0xff
           tb.send(c)
@@ -137,18 +142,18 @@ describe('SyncSession — handshake', () => {
   })
 
   it('peer asking for a key we no longer have is silently ignored', async () => {
-    // Construct an A that responds with empty payloads for unknown keys.
+    // Construct a B that advertises a fake page range / key but
+    // can't supply it on FETCH. A should converge anyway with 0
+    // applied facts.
     const a = makeDeps(1, [])
     const b = makeDeps(2, [])
-    // Add a fake key to b's lookup table (it knows the key but the
-    // backing relation entry will be missing) — simulating a stale
-    // peer. We hack this by injecting a key into b's localKeys but
-    // not into b's facts map.
     const fakeKey = factKey('Ghost', '99,')
     const bDeps: SessionDeps = {
       ...b.deps,
-      localKeys: () => [fakeKey],
+      localKeysSorted: () => [fakeKey],
+      localPageRanges: () => [{ start: fakeKey, end: fakeKey, hash: babHash(fakeKey) }],
       localRoot: () => babHash(fakeKey), // fake non-matching root
+      lookupFact: () => null,
     }
     const [ta, tb] = inMemoryPair()
     const sa = new SyncSession(ta, a.deps)
@@ -156,7 +161,6 @@ describe('SyncSession — handshake', () => {
     sa.start()
     sb.start()
     await Promise.all([sa.completion, sb.completion])
-    // A fetched the fake key from B; B couldn't supply it; A applied 0 facts.
     expect(a.remoteFacts.length).toBe(0)
   })
 })

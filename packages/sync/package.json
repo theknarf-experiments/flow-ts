@@ -19,8 +19,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "spec:check": "quint typecheck spec/sync.qnt",
+    "spec:check": "quint typecheck spec/sync.qnt && quint typecheck spec/mst-diff.qnt",
     "spec:run": "quint run --backend=typescript --invariants convergenceInv finishInvariantInv pulledEverythingInv --witnesses 'state.get(\"a\").roundComplete and state.get(\"b\").roundComplete' --max-steps=30 --max-samples=2000 spec/sync.qnt",
+    "spec:mst": "quint run --backend=typescript --invariants diffCompleteInv diffSoundInv historyIndepInv equalSkipsDiffInv applyingDiffIsIdempotentInv --max-steps=20 --max-samples=2000 spec/mst-diff.qnt",
     "clean": "rm -rf dist"
   },
   "dependencies": {

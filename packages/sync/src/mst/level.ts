@@ -1,16 +1,24 @@
-// Level function for MST keys. Matches the canonical
-// `merkle-search-tree` Rust crate's default base (16):
+// Level function for MST keys. Faithful port of the canonical
+// `merkle-search-tree` Rust crate (default base 16). The semantics
+// are subtle and the obvious "count leading zero nibbles" reading
+// is WRONG — it concentrates level-≥1 keys at the low end of byte
+// order, which then never split level-0 pages, producing O(n²)
+// inserts. The correct semantics, byte-by-byte:
 //
-//   level(hash) = number of leading zero nibbles
+//   * byte == 0          → level += 2 (both nibbles zero), continue.
+//   * byte ≡ 0 mod 16    → return level + 1 (low nibble zero, high
+//                          nibble non-zero — i.e. 0x10, 0x20, …, 0xF0).
+//   * otherwise          → return level.
 //
-// Each zero hex digit adds 1; a non-zero digit ends the count.
-// Expected fanout per page ≈ 16; expected depth ≈ log₁₆(n).
+// This spreads level-≥1 keys across the byte range
+// (0x10, 0x20, ..., 0xF0, 0x100, 0x110, ...) interleaved with level-0
+// keys, so they naturally split level-0 pages on insertion.
 //
 // The level is computed on the *already-hashed* key, so the level
-// distribution doesn't depend on user-supplied key contents — only on
-// the hash function. For us, keys come from `factKey()` which already
-// hashes via WILLIAM3, so we treat the key bytes themselves as the
-// digest the level function consumes.
+// distribution doesn't depend on user-supplied key contents — only
+// on the hash function. For us, keys come from `factKey()` which
+// already hashes via WILLIAM3, so we treat the key bytes themselves
+// as the digest the level function consumes.
 
 import type { Hash } from '../bab/index.js'
 
@@ -18,12 +26,12 @@ export function levelOf(key: Hash): number {
   let level = 0
   for (let i = 0; i < key.length; i++) {
     const b = key[i]!
-    const hi = (b >>> 4) & 0xf
-    if (hi !== 0) return level
-    level++
-    const lo = b & 0xf
-    if (lo !== 0) return level
-    level++
+    if (b === 0) {
+      level += 2
+      continue
+    }
+    if ((b & 0x0f) === 0) return level + 1
+    return level
   }
   return level
 }

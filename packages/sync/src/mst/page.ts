@@ -178,11 +178,20 @@ function upsertNode(page: Page, key: Hash): void {
     }
     newLtPage.invalidateHash()
   }
+  // After the split, the slot's page may have been mutated to empty
+  // (no nodes left, no highPage). Distinct from `null`, an empty
+  // Page contributes to its parent's digest computation (via
+  // page.hash() over an empty children list). That breaks
+  // history-independence: re-inserting the same keys in a different
+  // order can leave a `null` slot where forward insertion would
+  // leave an empty Page. Nullify here so both orderings reach the
+  // canonical "no child here" state.
+  const existing = slot.get()
+  if (existing && existing.isEmpty() && existing.highPage === null) {
+    slot.set(null)
+  }
   const newNode: MstNode = { key, ltPointer: newLtPage }
   page.nodes.splice(idx, 0, newNode)
-  // Leave the gte half (whatever was in slot) where it is — it's
-  // still the rightful occupant of that position post-insert.
-  void slot
 }
 
 /** Split a child subtree at `key`. Mutates `page` in place to keep
@@ -191,7 +200,7 @@ function upsertNode(page: Page, key: Hash): void {
  *
  *  Recurses into the first node's `ltPointer` (which may also need
  *  splitting) and the `highPage`. */
-function splitOffLt(page: Page | null, key: Hash): Page | null {
+export function splitOffLt(page: Page | null, key: Hash): Page | null {
   if (!page) return null
   // Find first node with key >= split-key.
   const idx = findIdx(page.nodes, key)

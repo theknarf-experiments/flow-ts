@@ -341,6 +341,36 @@ describe('SyncEngine e2e', () => {
     pb.detach()
   })
 
+  it('converges at scale: 10k keys A + 5k different keys B', async () => {
+    const a = newEngine(1)
+    const b = newEngine(2)
+    // Shared facts so they actually overlap. 8000 shared keys; 2000
+    // A-only; 5000 B-only. End state should be 15_000 unique facts.
+    for (let i = 0; i < 8000; i++) {
+      a.engine.add('R', [i])
+      b.engine.add('R', [i])
+    }
+    for (let i = 8000; i < 10_000; i++) a.engine.add('R', [i])
+    for (let i = 20_000; i < 25_000; i++) b.engine.add('R', [i])
+
+    const [ta, tb] = inMemoryPair()
+    const t0 = Date.now()
+    const pa = a.engine.attachPeer(ta)
+    const pb = b.engine.attachPeer(tb)
+    await Promise.all([pa.synced, pb.synced])
+    await new Promise((r) => setTimeout(r, 100))
+    const elapsed = Date.now() - t0
+
+    expect(a.engine.size).toBe(15_000)
+    expect(b.engine.size).toBe(15_000)
+    expect(toHex(a.engine.rootDigest())).toBe(toHex(b.engine.rootDigest()))
+    // Sanity: this isn't an inner-loop benchmark, but converging 15k
+    // facts should be well under 30s on any modern machine.
+    expect(elapsed).toBeLessThan(30_000)
+    pa.detach()
+    pb.detach()
+  }, 60_000)
+
   it('converges under reorder + latency (property)', async () => {
     await fc.assert(
       fc.asyncProperty(

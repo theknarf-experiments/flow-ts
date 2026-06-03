@@ -11,6 +11,7 @@ import { compareHash, levelOf, toHex } from './level.js'
 import {
   Page,
   collectKeys as pageCollectKeys,
+  splitOffLt,
   upsert as pageUpsert,
   type MstNode,
 } from './page.js'
@@ -47,15 +48,16 @@ export class Mst {
     const r = pageUpsert(this.#root, key, level)
     if (r.kind === 'insertIntermediate') {
       // The key is at a higher level than the current root; promote
-      // a new root page containing just this key, with the old root
-      // hanging off the appropriate side.
+      // a new root page containing just this key. CRITICAL: the
+      // old root must be SPLIT at the new key — its entries < key
+      // become the new node's ltPointer; entries > key stay as the
+      // new root's highPage. Failing to split here is the bug that
+      // creates one-giant-page trees, turning O(log n) inserts into
+      // O(n) and overall construction into O(n²).
       const old = this.#root
-      const isLeft = compareHash(key, leftmostKey(old)) < 0
-      const newNode: MstNode = {
-        key,
-        ltPointer: isLeft ? null : old,
-      }
-      const newHigh: Page | null = isLeft ? old : null
+      const newLt = splitOffLt(old, key) // mutates `old` to keep gte entries
+      const newHigh: Page | null = old.isEmpty() ? null : old
+      const newNode: MstNode = { key, ltPointer: newLt }
       this.#root = new Page(level, [newNode], newHigh)
     }
     return true

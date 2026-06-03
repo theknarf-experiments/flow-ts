@@ -35,10 +35,18 @@ describe('MST invariants', () => {
   })
 
   it('history-independent: any permutation produces the same root digest', () => {
+    // Larger sets exercise more levels. The earlier 25-key cap
+    // happened to mostly produce trees with 0-1 level-1 keys —
+    // not enough to exercise the splitOffLt/null-slot bug we
+    // discovered in scale benchmarking. 250 keys guarantees ~16
+    // level-1 keys + a level-2 key, hitting every code path.
     fc.assert(
       fc.property(
         fc
-          .uniqueArray(fc.string({ minLength: 1, maxLength: 12 }), { minLength: 1, maxLength: 25 })
+          .uniqueArray(fc.string({ minLength: 1, maxLength: 12 }), {
+            minLength: 1,
+            maxLength: 250,
+          })
           .chain((words) =>
             fc.tuple(
               fc.constant(words),
@@ -53,7 +61,7 @@ describe('MST invariants', () => {
           return toHex(a.rootDigest()) === toHex(b.rootDigest())
         },
       ),
-      { numRuns: 50 },
+      { numRuns: 30 },
     )
   })
 

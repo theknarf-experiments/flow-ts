@@ -279,8 +279,12 @@ function insertIntermediatePage(
 ): void {
   const existing = idx < parent.nodes.length ? parent.nodes[idx]!.ltPointer : parent.highPage
   const newLt = splitOffLt(existing, key)
+  // Same empty-page hygiene as upsertNode: if splitOffLt drained
+  // all entries from `existing`, treat it as null in the
+  // intermediate's highPage slot.
+  const gtePage = existing && (existing.isEmpty() && existing.highPage === null) ? null : existing
   const newNode: MstNode = { key, ltPointer: newLt }
-  const intermediate = new Page(level, [newNode], existing)
+  const intermediate = new Page(level, [newNode], gtePage)
   if (idx < parent.nodes.length) parent.nodes[idx]!.ltPointer = intermediate
   else parent.highPage = intermediate
 }

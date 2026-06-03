@@ -375,4 +375,57 @@ describe('SyncEngine e2e', () => {
       { numRuns: 10 },
     )
   })
+
+  it('converges with concurrent mid-round writes under interference (property)', async () => {
+    // The big one: pre-existing facts on both sides + writes that
+    // race the initial round + reorder/latency network + post-round
+    // PUSH. Encodes the v2 Quint spec's findings end-to-end.
+    await fc.assert(
+      fc.asyncProperty(
+        fc.uniqueArray(fc.integer({ min: 0, max: 99 }), { minLength: 0, maxLength: 8 }),
+        fc.uniqueArray(fc.integer({ min: 0, max: 99 }), { minLength: 0, maxLength: 8 }),
+        fc.uniqueArray(fc.integer({ min: 100, max: 199 }), { minLength: 0, maxLength: 4 }),
+        fc.uniqueArray(fc.integer({ min: 200, max: 299 }), { minLength: 0, maxLength: 4 }),
+        fc.integer({ min: 1, max: 1_000_000 }),
+        async (aIds, bIds, aMidIds, bMidIds, seed) => {
+          const a = newEngine(1)
+          const b = newEngine(2)
+          for (const i of aIds) a.engine.add('R', [i])
+          for (const i of bIds) b.engine.add('R', [i])
+          const [t1, t2] = inMemoryPair()
+          const ta = withInterference(
+            t1,
+            { latencyMs: [1, 5], reorderProbability: 0.2 },
+            makeRng(seed),
+          )
+          const tb = withInterference(
+            t2,
+            { latencyMs: [1, 5], reorderProbability: 0.2 },
+            makeRng(seed ^ 0xabcd),
+          )
+          const pa = a.engine.attachPeer(ta)
+          const pb = b.engine.attachPeer(tb)
+          // Fire mid-round writes after a small delay so they race
+          // the initial round.
+          setTimeout(() => {
+            for (const i of aMidIds) a.engine.add('R', [i])
+          }, 2)
+          setTimeout(() => {
+            for (const i of bMidIds) b.engine.add('R', [i])
+          }, 4)
+          await Promise.all([pa.synced, pb.synced])
+          // Give PUSH / PAGE_RANGES retries time to fully settle.
+          await new Promise((r) => setTimeout(r, 150))
+          const rootsMatch = toHex(a.engine.rootDigest()) === toHex(b.engine.rootDigest())
+          const sizesMatch = a.engine.size === b.engine.size
+          const expectedSize = new Set([...aIds, ...bIds, ...aMidIds, ...bMidIds]).size
+          const allConverged = rootsMatch && sizesMatch && a.engine.size === expectedSize
+          pa.detach()
+          pb.detach()
+          return allConverged
+        },
+      ),
+      { numRuns: 25 },
+    )
+  })
 })

@@ -9,8 +9,7 @@
 // targets in v1 (single-digit thousands of facts). Incremental
 // O(log n) insert lands in v2 if we need it.
 
-import { blake3 } from '@noble/hashes/blake3'
-import { HASH_LEN, type Hash } from '../bab/index.js'
+import { HASH_LEN, babHash, type Hash } from '../bab/index.js'
 import { bytesEqual, compareHash, levelOf, toHex } from './level.js'
 
 export interface MstNode {
@@ -25,13 +24,11 @@ export interface MstNode {
   digest: Hash
 }
 
-/** Sentinel for the empty tree: the digest of no keys at all. */
-export const EMPTY_DIGEST: Hash = (() => {
-  // 33 zero bytes hashed; chosen so it can't collide with any non-empty
-  // node digest. The exact value is internal — only equality matters.
-  const buf = new Uint8Array(33)
-  return blake3(buf)
-})()
+/** Sentinel for the empty tree: the digest of no keys at all.
+ *  33 zero bytes hashed; can't collide with any non-empty node digest
+ *  (those are prefixed with 0x10). The exact value is internal —
+ *  only equality matters. */
+export const EMPTY_DIGEST: Hash = babHash(new Uint8Array(33))
 
 /** A node digest distinguishes empty/leaf/inner via a domain byte:
  *    0x10 = MST node (any level)
@@ -56,7 +53,7 @@ function nodeDigest(level: number, entries: Hash[], children: (MstNode | null)[]
     off += HASH_LEN
   }
   buf.set(children[n] ? children[n]!.digest : EMPTY_DIGEST, off)
-  return blake3(buf)
+  return babHash(buf)
 }
 
 /** Build the canonical MST node for a sorted, deduplicated key range. */

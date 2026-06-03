@@ -1,25 +1,9 @@
-// Bab-hash (https://bab-hash.org/spec): a Merkle-tree-over-chunks
-// hash with a streaming-verifiable encoding. Used by `@flow-ts/sync`
-// as the content-addressing primitive for `DATA` payloads.
-//
-// IMPORTANT — what this is, and what it isn't:
-//
-// We follow the spec's *tree structure* and *streaming format* faithfully
-// (chunking rule, leaf/inner domain separation, length-in-inner-node,
-// sibling-labels-as-you-go on the wire). We use plain BLAKE3 from
-// `@noble/hashes` as the underlying compression function. The spec's
-// WILLIAM3 instantiation modifies BLAKE3's IV constants and zeroes the
-// per-chunk `t` counter; the published JS BLAKE3 ports don't expose
-// those internals, and the spec is too new for a reference impl, so we
-// deviate there.
-//
-// Net effect: our digests are deterministic, length-bound, and
-// streaming-verifiable within our own ecosystem, but they will NOT be
-// byte-for-byte compatible with a future canonical WILLIAM3 impl.
-// All of our consumers — MST node hashing and `DATA` payload
-// verification — only ever compare digests against digests we
-// computed ourselves, so this is fine for v1. Swapping in the real
-// WILLIAM3 later means re-keying the MST, nothing more.
+// Bab-hash (https://bab-hash.org/spec) — a Merkle-tree-over-chunks
+// hash with a streaming-verifiable encoding. Byte-exact port of the
+// WILLIAM3 instantiation from the `bab_rs` reference implementation
+// (https://codeberg.org/worm-blossom/bab_rs); see `william3.ts` for
+// the compression function. This file owns the tree-shape walk and
+// the streaming encode/decode wire format.
 //
 // Tree shape (spec §3, RFC 9162 style):
 //   * Input is split into ≤ CHUNK_SIZE-byte chunks.
@@ -28,43 +12,18 @@
 //     subtree recursively contains the remaining N − 2^k chunks.
 //   * Leaves are the chunks themselves.
 //
-// Domain separation (spec §4):
-//   0x00 — leaf, not root
-//   0x01 — leaf, root        (single-chunk input)
-//   0x02 — inner, not root
-//   0x03 — inner, root
+// The streaming wire format below is internal to @flow-ts/sync — it
+// composes WILLIAM3 leaf and inner digests, but its framing of how
+// sibling labels are interleaved with chunk bytes is not part of any
+// canonical bab spec. (The spec describes streaming verification
+// abstractly; the upstream Rust impl puts its concrete wire format
+// in `src/william3/storage/`.)
 
-import { blake3 } from '@noble/hashes/blake3'
+import { CHUNK_SIZE, HASH_LEN, hashChunk, hashInner } from './william3.js'
 
-export const CHUNK_SIZE = 1024
-export const HASH_LEN = 32
+export { CHUNK_SIZE, HASH_LEN }
 
 export type Hash = Uint8Array // 32 bytes
-
-const DS_LEAF = 0x00
-const DS_LEAF_ROOT = 0x01
-const DS_INNER = 0x02
-const DS_INNER_ROOT = 0x03
-
-/** Hash a single chunk (≤ CHUNK_SIZE bytes). */
-function hashChunk(chunk: Uint8Array, isRoot: boolean): Hash {
-  const buf = new Uint8Array(1 + chunk.length)
-  buf[0] = isRoot ? DS_LEAF_ROOT : DS_LEAF
-  buf.set(chunk, 1)
-  return blake3(buf)
-}
-
-/** Hash an inner node from two child labels and the byte-length of
- *  the subtree rooted here. Length is encoded as u64 little-endian. */
-function hashInner(left: Hash, right: Hash, length: number, isRoot: boolean): Hash {
-  const buf = new Uint8Array(1 + 32 + 32 + 8)
-  buf[0] = isRoot ? DS_INNER_ROOT : DS_INNER
-  buf.set(left, 1)
-  buf.set(right, 33)
-  const view = new DataView(buf.buffer, buf.byteOffset + 65, 8)
-  view.setBigUint64(0, BigInt(length), true)
-  return blake3(buf)
-}
 
 /** Number of chunks for a byte-length L. By convention `chunkCount(0) === 1`
  *  (the empty input is one zero-length chunk). */

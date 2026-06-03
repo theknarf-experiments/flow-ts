@@ -341,6 +341,38 @@ describe('SyncEngine e2e', () => {
     pb.detach()
   })
 
+  it('PUSH retries recover post-round writes under drops', async () => {
+    // Drop ~half the PUSHes from B → A. Without retries the dropped
+    // PUSH loses its fact until reconnect; with retries + PUSH_ACK
+    // the unacked PUSHes are resent and convergence holds.
+    // Higher maxAttempts to handle the property's tail: 0.5^20 ≈
+    // 10^-6 chance of all 20 retries dropping for any single PUSH,
+    // across 30 PUSHes ≈ 3 in a million.
+    const retry = { intervalMs: 50, maxAttempts: 20 }
+    const a = new SyncEngine({ replicaId: new Uint8Array([1]), relations: ['R'] })
+    const b = new SyncEngine({ replicaId: new Uint8Array([2]), relations: ['R'] })
+    const applied: Array<[string, Row]> = []
+    a.onRemoteAdd((rel, row) => applied.push([rel, row]))
+    const [t1, t2] = inMemoryPair()
+    const ta = t1
+    const tb = withInterference(
+      t2,
+      { dropProbability: 0.5 },
+      makeRng(0xb00),
+    )
+    const pa = a.attachPeer(ta, { retry })
+    const pb = b.attachPeer(tb, { retry })
+    await Promise.all([pa.synced, pb.synced])
+    for (let i = 0; i < 30; i++) b.add('R', [i])
+    // Give the pump enough ticks to retry the dropped pushes.
+    await new Promise((r) => setTimeout(r, 3000))
+    expect(a.size).toBe(30)
+    expect(b.size).toBe(30)
+    expect(toHex(a.rootDigest())).toBe(toHex(b.rootDigest()))
+    pa.detach()
+    pb.detach()
+  }, 30_000)
+
   it('converges at scale: 10k keys A + 5k different keys B', async () => {
     const a = newEngine(1)
     const b = newEngine(2)

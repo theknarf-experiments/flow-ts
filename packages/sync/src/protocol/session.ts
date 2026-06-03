@@ -39,6 +39,7 @@ import {
   MSG_HELLO,
   MSG_PAGE_RANGES,
   MSG_PUSH,
+  MSG_PUSH_ACK,
   type Message,
   PROTOCOL_VERSION,
 } from './messages.js'
@@ -115,6 +116,11 @@ export class SyncSession {
    *  PAGE_RANGES / DATA from us. While false, we keep retransmitting
    *  data-push messages on each tick. */
   #peerDoneReceived = false
+  /** Outbound PUSHes awaiting peer acknowledgement (digest seen in
+   *  PUSH_ACK). PUSH is sent on every local add; without retries a
+   *  single dropped PUSH loses the fact until the next reconnect.
+   *  Retries provide at-least-once delivery for post-round writes. */
+  #pendingPushes: { digest: Hash; encoded: Uint8Array; attempts: number }[] = []
   /** Our FETCH was sent and we're awaiting DATA, OR we determined we
    *  needed nothing. `null` = haven't decided yet; `[]` = nothing to
    *  fetch; non-empty array = waiting on DATA reply. */
@@ -188,7 +194,15 @@ export class SyncSession {
     // A receives B's PAGE_RANGES is a hard deadlock. Once peer is
     // done, all retry branches short-circuit on `peerDoneReceived`
     // and the pump becomes a no-op (cleared eventually on `close()`).
-    if (this.#peerDoneReceived && this.#roundComplete) return
+    // Steady state: round done AND peer done AND no pending pushes.
+    // Below this we still need to keep retrying — esp. PUSH which
+    // is the only post-round propagation path.
+    if (
+      this.#peerDoneReceived &&
+      this.#roundComplete &&
+      this.#pendingPushes.length === 0
+    )
+      return
     const max = this.#deps.retry?.maxAttempts ?? DEFAULT_MAX_ATTEMPTS
 
     if (!this.#helloReceived && !this.#peerDoneReceived) {
@@ -229,6 +243,22 @@ export class SyncSession {
       this.#doneAttempts++
       this.#send({ type: MSG_DONE })
     }
+
+    // Retry unacked PUSHes. Each push is sent until peer's PUSH_ACK
+    // arrives with a matching digest, OR maxAttempts is exceeded
+    // (in which case the push is dropped from pending — at-least-once
+    // best-effort, not exactly-once). Without retries a single dropped
+    // PUSH loses the post-round write until the next reconnect.
+    if (this.#pendingPushes.length > 0) {
+      const remaining: { digest: Hash; encoded: Uint8Array; attempts: number }[] = []
+      for (const p of this.#pendingPushes) {
+        if (p.attempts >= max) continue // give up on this push silently
+        p.attempts++
+        this.#send({ type: MSG_PUSH, digest: p.digest, encoded: p.encoded })
+        remaining.push(p)
+      }
+      this.#pendingPushes = remaining
+    }
   }
 
   #onMessage(buf: Uint8Array): void {
@@ -253,6 +283,9 @@ export class SyncSession {
           return
         case MSG_PUSH:
           this.#onPush(m)
+          break
+        case MSG_PUSH_ACK:
+          this.#onPushAck(m)
           break
         case MSG_PAGE_RANGES:
           this.#onPageRanges(m)
@@ -336,6 +369,16 @@ export class SyncSession {
   #onPush(m: Message & { type: typeof MSG_PUSH }): void {
     const facts = decodePayload(m.digest, m.encoded)
     for (const f of facts) this.#deps.onRemoteFact(f.relation, f.encodedRow)
+    // ACK the digest so peer can stop retrying. Application is
+    // idempotent, so duplicate PUSHes are safe even if our ACK
+    // drops and peer retries — they'd just re-apply no-op.
+    this.#send({ type: MSG_PUSH_ACK, digest: m.digest })
+  }
+
+  #onPushAck(m: Message & { type: typeof MSG_PUSH_ACK }): void {
+    this.#pendingPushes = this.#pendingPushes.filter(
+      (p) => !bytesEqualHash(p.digest, m.digest),
+    )
   }
 
   #maybeFinish(): void {
@@ -397,7 +440,9 @@ export class SyncSession {
   }
 
   /** Push one or more facts to the peer. May be called any time after
-   *  `start()`. Receivers dedup against their own MST. No ack. */
+   *  `start()`. Receivers dedup against their own MST. Retried by the
+   *  pump up to `maxAttempts` times until a PUSH_ACK matching the
+   *  payload digest arrives. */
   push(facts: { relation: string; encodedRow: string }[]): void {
     if (this.#closed) return
     if (facts.length === 0) return
@@ -407,9 +452,16 @@ export class SyncSession {
       encodedRow: f.encodedRow,
     }))
     const { digest, encoded } = encodePayload(fullFacts)
+    this.#pendingPushes.push({ digest, encoded, attempts: 1 })
     this.#send({ type: MSG_PUSH, digest, encoded })
   }
 }
 
 // Make the unused vars not bite tsc.
 void compareHash
+
+function bytesEqualHash(a: Hash, b: Hash): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
+}

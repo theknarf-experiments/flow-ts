@@ -24,7 +24,7 @@
 import { decodeRow, encodeRow, type Row } from 'flow-ts'
 import { compareHash, Mst, serialisePageRanges, toHex, type Hash } from './mst/index.js'
 import { factKey } from './protocol/payload.js'
-import { SyncSession } from './protocol/session.js'
+import { SyncSession, type RetryOptions } from './protocol/session.js'
 import type { Transport, Unsubscribe } from './transport/index.js'
 
 export interface SyncEngineOptions {
@@ -107,7 +107,7 @@ export class SyncEngine {
     return this.#mst.rootDigest()
   }
 
-  attachPeer(transport: Transport): PeerHandle {
+  attachPeer(transport: Transport, opts?: { retry?: RetryOptions }): PeerHandle {
     const session = new SyncSession(transport, {
       replicaId: this.#replicaId,
       localKeysSorted: () => {
@@ -119,6 +119,7 @@ export class SyncEngine {
       localRoot: () => this.#mst.rootDigest(),
       lookupFact: (k) => this.#facts.get(toHex(k)) ?? null,
       onRemoteFact: (relation, encodedRow) => this.#applyRemote(relation, encodedRow),
+      ...(opts?.retry !== undefined ? { retry: opts.retry } : {}),
     })
     const entry: PeerEntry = { session, synced: false }
     this.#peers.add(entry)

@@ -9,8 +9,12 @@ export const MSG_DONE = 0x05
 export const MSG_ERROR = 0x06
 /** Post-round live update: one or more facts the sender has that the
  *  receiver might want. Bab-encoded CBOR array of (key, rel, row)
- *  tuples. No ack; receiver dedups against its own MST. */
+ *  tuples. Acked via PUSH_ACK with the same digest; retried by the
+ *  sender's pump up to `maxAttempts` until acked. */
 export const MSG_PUSH = 0x07
+/** Acknowledgement of a PUSH. Carries the same digest the receiver
+ *  saw on the PUSH it applied. Allows the sender to stop retrying. */
+export const MSG_PUSH_ACK = 0x0f
 /** Sender's serialised page ranges from its MST: one
  *  `[start, end, hash]` triple per page, pre-order DFS. Receiver
  *  runs a local `diff(localRanges, theseRanges)` to compute the key
@@ -39,6 +43,7 @@ export type Message =
   | { type: typeof MSG_DONE }
   | { type: typeof MSG_ERROR; code: number; msg: string }
   | { type: typeof MSG_PUSH; digest: Hash; encoded: Uint8Array }
+  | { type: typeof MSG_PUSH_ACK; digest: Hash }
   | { type: typeof MSG_PAGE_RANGES; ranges: WirePageRange[] }
   | { type: typeof MSG_FETCH; ranges: WireDiffRange[] }
   | { type: typeof MSG_DATA; digest: Hash; encoded: Uint8Array }

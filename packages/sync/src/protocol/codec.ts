@@ -15,6 +15,7 @@ import {
   MSG_HELLO,
   MSG_PAGE_RANGES,
   MSG_PUSH,
+  MSG_PUSH_ACK,
   type Message,
   type WireDiffRange,
   type WirePageRange,
@@ -30,6 +31,8 @@ export function encodeMessage(m: Message): Uint8Array {
       return encode([m.type, m.code, m.msg])
     case MSG_PUSH:
       return encode([m.type, m.digest, m.encoded])
+    case MSG_PUSH_ACK:
+      return encode([m.type, m.digest])
     case MSG_PAGE_RANGES:
       return encode([m.type, m.ranges.map((r) => [r.start, r.end, r.hash])])
     case MSG_FETCH:
@@ -86,6 +89,10 @@ export function decodeMessage(buf: Uint8Array): Message {
         digest: assertBytes(arr[1], 'PUSH.digest'),
         encoded: assertBytes(arr[2], 'PUSH.encoded'),
       }
+    }
+    case MSG_PUSH_ACK: {
+      if (arr.length !== 2) throw new MessageDecodeError('PUSH_ACK: wrong arity')
+      return { type, digest: assertBytes(arr[1], 'PUSH_ACK.digest') }
     }
     case MSG_PAGE_RANGES: {
       if (arr.length !== 2) throw new MessageDecodeError('PAGE_RANGES: wrong arity')

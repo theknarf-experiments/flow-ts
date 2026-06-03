@@ -323,8 +323,24 @@ module syncV2 {
     }
   }
 
+  // Msg-type predicate used to gate dropMsg. Push is modelled as
+  // reliable (the impl provides at-least-once via PUSH_ACK + pump
+  // retries; the spec abstracts that into "delivery eventually
+  // happens"). Without this gate, a single dropped Push lost the
+  // fact for the round, which is the original v1 design that the
+  // PUSH_ACK retry layer was added to fix.
+  pure def isPush(m: Msg): bool = match m {
+    | Push(_) => true
+    | Hello(_) => false
+    | PageRanges(_) => false
+    | Fetch(_) => false
+    | Data(_) => false
+    | Done(_) => false
+  }
+
   action dropMsg(m: Msg): bool = all {
     network.contains(m),
+    not(isPush(m)),
     network' = network.exclude(Set(m)),
     state' = state,
   }

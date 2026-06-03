@@ -341,6 +341,49 @@ describe('SyncEngine e2e', () => {
     pb.detach()
   })
 
+  it('multi-peer + writes + drops: stress (3 replicas)', async () => {
+    // Three replicas A, B, C, each connected to the other two via
+    // independent transports. Mid-round writes on every replica;
+    // 25% packet drop on every link. End state: all three converged.
+    const retry = { intervalMs: 30, maxAttempts: 40 }
+    const a = new SyncEngine({ replicaId: new Uint8Array([1]), relations: ['R'] })
+    const b = new SyncEngine({ replicaId: new Uint8Array([2]), relations: ['R'] })
+    const c = new SyncEngine({ replicaId: new Uint8Array([3]), relations: ['R'] })
+    a.add('R', [1])
+    a.add('R', [2])
+    b.add('R', [3])
+    c.add('R', [4])
+    c.add('R', [5])
+    function wrap(t: ReturnType<typeof inMemoryPair>[0], seed: number) {
+      return withInterference(t, { dropProbability: 0.25 }, makeRng(seed))
+    }
+    const [tab, tba] = inMemoryPair()
+    const [tac, tca] = inMemoryPair()
+    const [tbc, tcb] = inMemoryPair()
+    const handles = [
+      a.attachPeer(wrap(tab, 1), { retry }),
+      b.attachPeer(wrap(tba, 2), { retry }),
+      a.attachPeer(wrap(tac, 3), { retry }),
+      c.attachPeer(wrap(tca, 4), { retry }),
+      b.attachPeer(wrap(tbc, 5), { retry }),
+      c.attachPeer(wrap(tcb, 6), { retry }),
+    ]
+    await Promise.all(handles.map((h) => h.synced))
+    // Mid-round-ish writes (already past initial sync — exercise PUSH).
+    for (let i = 10; i < 20; i++) a.add('R', [i])
+    for (let i = 20; i < 30; i++) b.add('R', [i])
+    for (let i = 30; i < 40; i++) c.add('R', [i])
+    // Wait for PUSH propagation across all peers.
+    await new Promise((r) => setTimeout(r, 3000))
+    const expected = 5 + 30 // initial 5 unique + 30 mid-round
+    expect(a.size).toBe(expected)
+    expect(b.size).toBe(expected)
+    expect(c.size).toBe(expected)
+    expect(toHex(a.rootDigest())).toBe(toHex(b.rootDigest()))
+    expect(toHex(b.rootDigest())).toBe(toHex(c.rootDigest()))
+    handles.forEach((h) => h.detach())
+  }, 30_000)
+
   it('PUSH retries recover post-round writes under drops', async () => {
     // Drop ~half the PUSHes from B → A. Without retries the dropped
     // PUSH loses its fact until reconnect; with retries + PUSH_ACK

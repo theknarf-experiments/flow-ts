@@ -1,0 +1,34 @@
+{
+  "name": "@flow-ts/example-kanban",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "mprocs",
+    "dev:server": "tsx watch src/server/main.ts",
+    "dev:client": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .vite cert"
+  },
+  "dependencies": {
+    "@fails-components/webtransport": "^1.6.3",
+    "@fails-components/webtransport-transport-http3-quiche": "^1.6.3",
+    "selfsigned": "^2.4.1",
+    "@flow-ts/parsing": "workspace:*",
+    "@flow-ts/react": "workspace:*",
+    "@flow-ts/sync": "workspace:*",
+    "flow-ts": "workspace:*",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^5.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.7.0",
+    "vite": "^7.0.0"
+  }
+}

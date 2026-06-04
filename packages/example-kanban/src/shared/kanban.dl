@@ -1,0 +1,34 @@
+.in
+
+.decl Card(id: number, text: string)        .input Card.csv
+.decl Move(id: number, col: string, ts: number)   .input Move.csv
+.decl Delete(id: number)                     .input Delete.csv
+
+.decl LatestMoveTs(id: number, ts: number)
+.decl LatestMove(id: number, col: string)
+.decl ActiveCard(id: number, text: string)
+.decl Display(id: number, text: string, col: string)
+
+.printsize
+
+.rule
+
+# CRDT semantics:
+# * `Card(id, text)`         — an add. Append-only.
+# * `Move(id, col, ts)`      — a single move event with a logical timestamp.
+# * `Delete(id)`             — tombstone. Append-only.
+#
+# A card's current column is the column of its latest Move (last-writer-
+# wins per card). A card with a Delete is hidden from Display.
+
+# Per-card latest timestamp across all its moves.
+LatestMoveTs(id, max(ts)) :- Move(id, _, ts).
+
+# The single Move row at that latest timestamp gives the current column.
+LatestMove(id, col) :- Move(id, col, ts), LatestMoveTs(id, ts).
+
+# A card is active iff it was added and not deleted.
+ActiveCard(id, text) :- Card(id, text), !Delete(id).
+
+# Final view: each active card with its current column.
+Display(id, text, col) :- ActiveCard(id, text), LatestMove(id, col).

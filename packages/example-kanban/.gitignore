@@ -1,0 +1,4 @@
+cert/
+public/cert-hash.json
+dist/
+.vite/

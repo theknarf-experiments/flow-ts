@@ -1,0 +1,5 @@
+procs:
+  server:
+    shell: pnpm dev:server
+  client:
+    shell: pnpm dev:client

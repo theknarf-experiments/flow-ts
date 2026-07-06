@@ -125,6 +125,16 @@ export class SyncEngine {
     })
     entry.session = session
     this.#peers.add(entry)
+    // Drop the peer when its transport dies. The completion handler
+    // below only covers failures during the initial round — a peer
+    // that syncs fine and *then* disconnects (e.g. a browser tab
+    // going offline) would otherwise linger in #peers forever.
+    // push() on a closed session is a no-op, so a stale entry is
+    // harmless per-call, but a long-lived hub would leak one entry
+    // per reconnect.
+    transport.onClose(() => {
+      this.#peers.delete(entry)
+    })
     session.start()
     session.completion.then(
       () => {

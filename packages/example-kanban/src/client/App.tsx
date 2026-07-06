@@ -25,6 +25,7 @@ import {
 import { bidiStreamTransport } from '../shared/transport.js'
 import { makeBridge } from './sync.js'
 import { PROGRAM } from './program.js'
+import { DebugView } from './components/DebugView.js'
 
 type ProjectRow = readonly [string, string] // [pid, name]
 type ColRow = readonly [number, string, string, number] // [id, project, name, pos]
@@ -75,6 +76,7 @@ export function App() {
   const { store } = initRef.current
   const [status, setStatus] = useState<'connecting' | 'synced' | 'offline'>('connecting')
   const [projectId, setProjectId] = useState<string>(DEFAULT_PROJECT_ID)
+  const [view, setView] = useState<'board' | 'data'>('board')
 
   // Listen for sync status — the bridge exposes a promise on the
   // first attach; we recompute on (re)connect.
@@ -96,17 +98,54 @@ export function App() {
         <span data-testid="sync-status" style={{ color: statusColour(status), fontSize: 13 }}>
           {statusLabel(status)}
         </span>
+        <span style={{ flex: 1 }} />
+        <ViewTab label="board" active={view === 'board'} onClick={() => setView('board')} />
+        <ViewTab label="data" active={view === 'data'} onClick={() => setView('data')} />
       </header>
-      <p style={{ color: '#666', fontSize: 13 }}>
-        Open this URL in another tab. Projects, cards and columns added,
-        renamed, reordered or deleted in one tab appear in the other
-        through the server's MST — the latest edit wins via causal
-        timestamp. Double-click a project, column or card name to rename
-        it.
-      </p>
-      <ProjectBar store={store} projectId={projectId} onSelect={setProjectId} />
-      <Board store={store} projectId={projectId} />
+      {view === 'board' ? (
+        <>
+          <p style={{ color: '#666', fontSize: 13 }}>
+            Open this URL in another tab. Projects, cards and columns added,
+            renamed, reordered or deleted in one tab appear in the other
+            through the server's MST — the latest edit wins via causal
+            timestamp. Double-click a project, column or card name to rename
+            it.
+          </p>
+          <ProjectBar store={store} projectId={projectId} onSelect={setProjectId} />
+          <Board store={store} projectId={projectId} />
+        </>
+      ) : (
+        <DebugView store={store} />
+      )}
     </div>
+  )
+}
+
+function ViewTab({
+  label,
+  active,
+  onClick,
+}: {
+  label: string
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      data-testid={`view-${label}`}
+      onClick={onClick}
+      style={{
+        padding: '4px 12px',
+        borderRadius: 4,
+        border: '1px solid #ccc',
+        background: active ? '#555' : '#f5f5f5',
+        color: active ? '#fff' : '#555',
+        cursor: 'pointer',
+        fontSize: 13,
+      }}
+    >
+      {label}
+    </button>
   )
 }
 

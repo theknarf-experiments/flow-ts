@@ -1,0 +1,150 @@
+/* Light-theme port of example-web's RelationTable styles, matching
+ * the kanban app's inline-styled look (#f5f5f5 surfaces, #ddd
+ * borders). */
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border: 1px solid #ddd;
+  /* The caption box draws its own top corners; the table itself only
+   * needs its bottom corners. */
+  border-radius: 0 0 6px 6px;
+  font-size: 0.85rem;
+  border-spacing: 0;
+}
+
+/* <caption> keeps its default `display: table-caption` so the browser
+   positions it above the table — flex layout lives on the inner span. */
+.caption {
+  caption-side: top;
+  text-align: left;
+}
+
+.captionInner {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: #f5f5f5;
+  border: 1px solid #ddd;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+}
+
+.relName {
+  font-weight: 600;
+  color: #333;
+}
+
+.relSchema {
+  color: #999;
+  font-family: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+}
+
+.relCount {
+  margin-left: auto;
+  color: #888;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8rem;
+}
+
+.table th {
+  text-align: left;
+  padding: 0.4rem 0.75rem;
+  color: #888;
+  font-weight: 500;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid #ddd;
+  user-select: none;
+}
+
+.sortable {
+  cursor: pointer;
+}
+
+.sortable:hover {
+  color: #333;
+}
+
+.sort {
+  color: #2a8;
+  margin-left: 0.25em;
+}
+
+.table td {
+  padding: 0.35rem 0.75rem;
+  border-bottom: 1px solid #eee;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.table tr:last-child td {
+  border-bottom: none;
+}
+
+.empty {
+  text-align: center;
+  padding: 1.5rem !important;
+  font-style: italic;
+  color: #999;
+}
+
+/* Actions column: shrink to fit, no wrap. */
+.actionsCell {
+  width: 1%;
+  white-space: nowrap;
+  text-align: right;
+}
+
+/* Add-row sits in <tfoot>, separated by a subtle top border. */
+.addRow {
+  background: #fff;
+}
+
+.addRow td {
+  padding: 0.35rem 0.5rem;
+  border-top: 1px solid #ddd;
+  border-bottom: none;
+}
+
+.addInput {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.25rem 0.4rem;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+}
+
+.addInput::placeholder {
+  color: #bbb;
+  font-style: italic;
+}
+
+.addInput:focus {
+  outline: none;
+  border-color: #88c;
+}
+
+.addButton {
+  padding: 0.25rem 0.7rem;
+  background: #f5f5f5;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.addButton:hover {
+  background: #e8e8e8;
+}

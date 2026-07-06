@@ -276,6 +276,80 @@ test('renaming a project propagates to other tabs', async ({ browser }) => {
   await close()
 })
 
+test('debug view shows raw tables for every relation with sync badges', async ({
+  page,
+}) => {
+  await openBoard(page)
+  const text = uniqueText('debug')
+  await addCard(page, 'todo', text)
+
+  await page.getByTestId('view-data').click()
+
+  // Every synced EDB gets a table marked "synced".
+  const edbs = [
+    'Project',
+    'ProjectName',
+    'Card',
+    'CardText',
+    'Move',
+    'Delete',
+    'Col',
+    'ColName',
+    'ColPos',
+    'ColDelete',
+  ]
+  for (const rel of edbs) {
+    await expect(page.getByTestId(`relation-table-${rel}`)).toBeVisible()
+    await expect(page.getByTestId(`relation-sync-${rel}`)).toHaveText('synced')
+  }
+  // Derived views are local-only.
+  for (const rel of ['DisplayProject', 'DisplayCol', 'Display', 'ActiveCard']) {
+    await expect(page.getByTestId(`relation-table-${rel}`)).toBeVisible()
+    await expect(page.getByTestId(`relation-sync-${rel}`)).toHaveText('local')
+  }
+
+  // The card added on the board shows up both as a raw fact and in
+  // the derived view.
+  await expect(page.getByTestId('relation-table-CardText').getByText(text)).toBeVisible()
+  await expect(page.getByTestId('relation-table-Display').getByText(text)).toBeVisible()
+
+  // And back to the board.
+  await page.getByTestId('view-board').click()
+  await expect(col(page, 'todo').getByText(text)).toBeVisible()
+})
+
+test('a raw fact injected via the debug view syncs like a board action', async ({
+  browser,
+}) => {
+  const { a, b, close } = await twoBoards(browser)
+
+  const text = uniqueText('injected')
+  const id = String(Math.floor(Math.random() * 1e15))
+  const ts = String(Date.now() * 1000)
+
+  // Hand-write the three facts a board "add card" would produce, via
+  // the EDB add-rows (default project, seeded todo column has id 1).
+  await a.getByTestId('view-data').click()
+  await a.getByTestId('add-Card-id').fill(id)
+  await a.getByTestId('add-Card-project').fill('00000000-0000-0000-0000-000000000000')
+  await a.getByTestId('add-Card-submit').click()
+  await a.getByTestId('add-CardText-id').fill(id)
+  await a.getByTestId('add-CardText-text').fill(text)
+  await a.getByTestId('add-CardText-ts').fill(ts)
+  await a.getByTestId('add-CardText-submit').click()
+  await a.getByTestId('add-Move-id').fill(id)
+  await a.getByTestId('add-Move-col').fill('1')
+  await a.getByTestId('add-Move-ts').fill(ts)
+  await a.getByTestId('add-Move-submit').click()
+
+  // The card materialises on both boards.
+  await a.getByTestId('view-board').click()
+  await expect(col(a, 'todo').getByText(text)).toBeVisible()
+  await expect(col(b, 'todo').getByText(text)).toBeVisible({ timeout: 10_000 })
+
+  await close()
+})
+
 test('facts persist on the server across a page reload', async ({ page }) => {
   await openBoard(page)
   const text = uniqueText('persist')

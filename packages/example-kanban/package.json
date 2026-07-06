@@ -16,13 +16,14 @@
   "dependencies": {
     "@fails-components/webtransport": "^1.6.3",
     "@fails-components/webtransport-transport-http3-quiche": "^1.6.3",
-    "selfsigned": "^2.4.1",
     "@flow-ts/parsing": "workspace:*",
     "@flow-ts/react": "workspace:*",
     "@flow-ts/sync": "workspace:*",
+    "@tanstack/react-table": "^8.21.3",
     "flow-ts": "workspace:*",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "selfsigned": "^2.4.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",

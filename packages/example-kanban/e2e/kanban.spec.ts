@@ -4,9 +4,10 @@
 // server's MST.
 //
 // The hub keeps every fact for the lifetime of the process, so tests
-// use unique card/column names, never assert on totals, and never
-// mutate the seeded todo/doing/done columns (a rename or tombstone
-// on those would leak into every later test).
+// use unique card/column/project names, never assert on totals, and
+// never mutate the seeded default project or its todo/doing/done
+// columns (a rename or tombstone on those would leak into every
+// later test).
 
 import { type Locator, type Page, expect, test } from '@playwright/test'
 
@@ -31,6 +32,24 @@ async function addColumn(page: Page, name: string): Promise<void> {
   await page.getByTestId('new-column').fill(name)
   await page.getByTestId('add-column').click()
   await expect(col(page, name)).toBeVisible()
+}
+
+/** Create a project; the UI selects it automatically. */
+async function addProject(page: Page, name: string): Promise<void> {
+  await page.getByTestId('new-project').fill(name)
+  await page.getByTestId('add-project').click()
+  await expect(page.getByTestId('project-name')).toHaveText(name)
+}
+
+function projectOption(page: Page, name: string): Locator {
+  return page.locator('[data-testid="project-select"] option', { hasText: name })
+}
+
+/** Wait for a project to arrive via sync, then switch to it. */
+async function switchProject(page: Page, name: string): Promise<void> {
+  await expect(projectOption(page, name)).toHaveCount(1, { timeout: 10_000 })
+  await page.getByTestId('project-select').selectOption({ label: name })
+  await expect(page.getByTestId('project-name')).toHaveText(name)
 }
 
 /** Left-to-right column names as rendered. */
@@ -199,6 +218,60 @@ test('deleting a column hides it and its cards in every tab', async ({
   // The card lived in the deleted column — hidden with it.
   await expect(a.getByText(cardText)).toBeHidden()
   await expect(b.getByText(cardText)).toBeHidden()
+
+  await close()
+})
+
+test('a new project propagates, and its board is scoped to it', async ({
+  browser,
+}) => {
+  const { a, b, close } = await twoBoards(browser)
+
+  const project = uniqueText('proj')
+  const column = uniqueText('proj-col')
+  const card = uniqueText('proj-card')
+
+  // Creating a project switches A to it and seeds default columns.
+  await addProject(a, project)
+  await expect(col(a, 'todo')).toBeVisible()
+  await addColumn(a, column)
+  await addCard(a, 'todo', card)
+
+  // B is still on the default project: nothing from `project` shows.
+  await expect(projectOption(b, project)).toHaveCount(1, { timeout: 10_000 })
+  await expect(col(b, column)).toHaveCount(0)
+  await expect(b.getByText(card)).toHaveCount(0)
+
+  // Switching B to the project reveals its columns and cards.
+  await switchProject(b, project)
+  await expect(col(b, column)).toBeVisible({ timeout: 10_000 })
+  await expect(col(b, 'todo').getByText(card)).toBeVisible({ timeout: 10_000 })
+
+  // And back to default hides them again.
+  await switchProject(b, 'default')
+  await expect(col(b, column)).toHaveCount(0)
+  await expect(b.getByText(card)).toHaveCount(0)
+
+  await close()
+})
+
+test('renaming a project propagates to other tabs', async ({ browser }) => {
+  const { a, b, close } = await twoBoards(browser)
+
+  const before = uniqueText('proj')
+  const after = uniqueText('proj-renamed')
+  await addProject(a, before)
+  await expect(projectOption(b, before)).toHaveCount(1, { timeout: 10_000 })
+
+  await a.getByTestId('project-name').dblclick()
+  await a.getByTestId('project-rename').fill(after)
+  await a.getByTestId('project-rename').press('Enter')
+
+  await expect(a.getByTestId('project-name')).toHaveText(after)
+  // LWW: the option is renamed everywhere, not duplicated.
+  await expect(projectOption(b, after)).toHaveCount(1, { timeout: 10_000 })
+  await expect(projectOption(b, before)).toHaveCount(0)
+  await expect(projectOption(a, before)).toHaveCount(0)
 
   await close()
 })

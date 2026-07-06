@@ -2,21 +2,31 @@
 # mutation is modelled as a new fact with a fresh logical timestamp
 # (last-writer-wins) and deletion as a tombstone:
 #
-# cards
-# * `Card(id)`                — a card exists. Append-only.
-# * `CardText(id, text, ts)`  — LWW text (creation writes the first one).
-# * `Move(id, col, ts)`       — LWW column membership.
-# * `Delete(id)`              — tombstone. Hides the card everywhere.
+# projects
+# * `Project(pid)`              — a project exists. Append-only.
+# * `ProjectName(pid, name, ts)`— LWW name (creation writes the first one).
 #
 # columns
-# * `Col(id)`                 — a column exists. Append-only.
-# * `ColName(id, name, ts)`   — LWW name (creation writes the first one).
-# * `ColPos(id, pos, ts)`     — LWW ordering position; reordering swaps
-#                               two columns' positions with a fresh ts.
-# * `ColDelete(id)`           — tombstone. Hides the column AND its cards.
+# * `Col(id, project)`          — a column exists in a project. Append-only.
+# * `ColName(id, name, ts)`     — LWW name.
+# * `ColPos(id, pos, ts)`       — LWW ordering position; reordering swaps
+#                                 two columns' positions with a fresh ts.
+# * `ColDelete(id)`             — tombstone. Hides the column AND its cards.
+#
+# cards
+# * `Card(id, project)`         — a card exists in a project. Append-only.
+# * `CardText(id, text, ts)`    — LWW text.
+# * `Move(id, col, ts)`         — LWW column membership.
+# * `Delete(id)`                — tombstone. Hides the card everywhere.
 
 .in
-.decl Card(id: number)
+.decl Project(pid: string)
+.input Project.csv
+
+.decl ProjectName(pid: string, name: string, ts: number)
+.input ProjectName.csv
+
+.decl Card(id: number, project: string)
 .input Card.csv
 
 .decl CardText(id: number, text: string, ts: number)
@@ -28,7 +38,7 @@
 .decl Delete(id: number)
 .input Delete.csv
 
-.decl Col(id: number)
+.decl Col(id: number, project: string)
 .input Col.csv
 
 .decl ColName(id: number, name: string, ts: number)
@@ -41,33 +51,41 @@
 .input ColDelete.csv
 
 .out
+.decl LatestProjectNameTs(pid: string, ts: number)
 .decl LatestColNameTs(id: number, ts: number)
 .decl LatestColPosTs(id: number, ts: number)
 .decl LatestTextTs(id: number, ts: number)
 .decl LatestMoveTs(id: number, ts: number)
 .decl ActiveCol(id: number)
 .decl ActiveCard(id: number)
-.decl DisplayCol(id: number, name: string, pos: number)
-.decl Display(id: number, text: string, col: number)
+.decl DisplayProject(pid: string, name: string)
+.decl DisplayCol(id: number, project: string, name: string, pos: number)
+.decl Display(id: number, project: string, text: string, col: number)
 
 # Per-entity latest timestamp for each LWW register.
-LatestColNameTs(c, max(ts)) :- ColName(c, _, ts).
-LatestColPosTs(c, max(ts))  :- ColPos(c, _, ts).
-LatestTextTs(id, max(ts))   :- CardText(id, _, ts).
-LatestMoveTs(id, max(ts))   :- Move(id, _, ts).
+LatestProjectNameTs(p, max(ts)) :- ProjectName(p, _, ts).
+LatestColNameTs(c, max(ts))     :- ColName(c, _, ts).
+LatestColPosTs(c, max(ts))      :- ColPos(c, _, ts).
+LatestTextTs(id, max(ts))       :- CardText(id, _, ts).
+LatestMoveTs(id, max(ts))       :- Move(id, _, ts).
 
 # Alive iff added and not tombstoned.
-ActiveCol(c)   :- Col(c), !ColDelete(c).
-ActiveCard(id) :- Card(id), !Delete(id).
+ActiveCol(c)   :- Col(c, _), !ColDelete(c).
+ActiveCard(id) :- Card(id, _), !Delete(id).
 
-# Column view: each live column with its current name and position.
-DisplayCol(c, n, p) :- ActiveCol(c),
-                       ColName(c, n, nts), LatestColNameTs(c, nts),
-                       ColPos(c, p, pts), LatestColPosTs(c, pts).
+# Project view: each project with its current name.
+DisplayProject(p, n) :- Project(p),
+                        ProjectName(p, n, ts), LatestProjectNameTs(p, ts).
 
-# Card view: each live card with its current text, in its current
-# column — but only while that column is itself alive.
-Display(id, t, c) :- ActiveCard(id),
-                     CardText(id, t, tts), LatestTextTs(id, tts),
-                     Move(id, c, mts), LatestMoveTs(id, mts),
-                     ActiveCol(c).
+# Column view: each live column with its project, current name and
+# position.
+DisplayCol(c, proj, n, p) :- Col(c, proj), ActiveCol(c),
+                             ColName(c, n, nts), LatestColNameTs(c, nts),
+                             ColPos(c, p, pts), LatestColPosTs(c, pts).
+
+# Card view: each live card with its project and current text, in its
+# current column — but only while that column is itself alive.
+Display(id, proj, t, c) :- Card(id, proj), ActiveCard(id),
+                           CardText(id, t, tts), LatestTextTs(id, tts),
+                           Move(id, c, mts), LatestMoveTs(id, mts),
+                           ActiveCol(c).

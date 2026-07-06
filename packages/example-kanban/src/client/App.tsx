@@ -1,22 +1,34 @@
-// Kanban board. The board view lives in the Store's `Display` and
-// `DisplayCol` IDBs, derived by the Datalog program (kanban.dl) from
-// append-only CRDT facts. Local user actions only ever *add* facts:
-// renames, moves and reorders are new facts with fresh timestamps
-// (last writer wins), deletes are tombstones. A bridge keeps the
-// EDBs synced to the server via @flow-ts/sync over WebTransport —
-// every other connected browser gets the new facts via PUSH, and
-// their Datalog program re-derives their own views.
+// Kanban board. The board view lives in the Store's `DisplayProject`,
+// `DisplayCol` and `Display` IDBs, derived by the Datalog program
+// (kanban.dl) from append-only CRDT facts. Local user actions only
+// ever *add* facts: renames, moves and reorders are new facts with
+// fresh timestamps (last writer wins), deletes are tombstones. A
+// bridge keeps the EDBs synced to the server via @flow-ts/sync over
+// WebTransport — every other connected browser gets the new facts via
+// PUSH, and their Datalog program re-derives their own views.
+//
+// Everything belongs to a project: columns and cards carry the uuid
+// of the project they were created in, and the board only renders the
+// currently selected project. Which project is selected is local UI
+// state — it is not synced.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Store, useLiveQuery } from '@flow-ts/react'
 import type { Row } from 'flow-ts'
-import { SEED_COLUMNS, SYNCED_RELATIONS, serverUrl } from '../shared/facts.js'
+import {
+  DEFAULT_PROJECT_ID,
+  DEFAULT_PROJECT_NAME,
+  SEED_COLUMNS,
+  SYNCED_RELATIONS,
+  serverUrl,
+} from '../shared/facts.js'
 import { bidiStreamTransport } from '../shared/transport.js'
 import { makeBridge } from './sync.js'
 import { PROGRAM } from './program.js'
 
-type DisplayRow = readonly [number, string, number] // [id, text, colId]
-type ColRow = readonly [number, string, number] // [id, name, pos]
+type ProjectRow = readonly [string, string] // [pid, name]
+type ColRow = readonly [number, string, string, number] // [id, project, name, pos]
+type DisplayRow = readonly [number, string, string, number] // [id, project, text, colId]
 
 /** Module-scope random ids so entities created across multiple
  *  browser tabs/replicas don't collide. */
@@ -31,10 +43,12 @@ function newTs(): number {
 /** Deterministic seed facts: identical rows on every replica, so the
  *  sync layer dedups them into a single set. Seeds use ts=0, letting
  *  any real user action (rename, reorder, delete) win permanently. */
-function seedDefaultColumns(store: Store): void {
+function seedDefaults(store: Store): void {
+  store.update('Project', [DEFAULT_PROJECT_ID] as Row, +1)
+  store.update('ProjectName', [DEFAULT_PROJECT_ID, DEFAULT_PROJECT_NAME, 0] as Row, +1)
   SEED_COLUMNS.forEach((name, i) => {
     const id = i + 1
-    store.update('Col', [id] as Row, +1)
+    store.update('Col', [id, DEFAULT_PROJECT_ID] as Row, +1)
     store.update('ColName', [id, name, 0] as Row, +1)
     store.update('ColPos', [id, (i + 1) * 1024, 0] as Row, +1)
   })
@@ -49,7 +63,7 @@ export function App() {
   } | null>(null)
   if (!initRef.current) {
     const store = new Store(PROGRAM)
-    seedDefaultColumns(store)
+    seedDefaults(store)
     const bridge = makeBridge({
       store,
       replicaId: new Uint8Array([Math.floor(Math.random() * 255)]),
@@ -60,6 +74,7 @@ export function App() {
   }
   const { store } = initRef.current
   const [status, setStatus] = useState<'connecting' | 'synced' | 'offline'>('connecting')
+  const [projectId, setProjectId] = useState<string>(DEFAULT_PROJECT_ID)
 
   // Listen for sync status — the bridge exposes a promise on the
   // first attach; we recompute on (re)connect.
@@ -83,45 +98,137 @@ export function App() {
         </span>
       </header>
       <p style={{ color: '#666', fontSize: 13 }}>
-        Open this URL in another tab. Cards and columns added, renamed,
-        reordered or deleted in one tab appear in the other through the
-        server's MST — the latest edit wins via causal timestamp.
-        Double-click a card or column name to rename it.
+        Open this URL in another tab. Projects, cards and columns added,
+        renamed, reordered or deleted in one tab appear in the other
+        through the server's MST — the latest edit wins via causal
+        timestamp. Double-click a project, column or card name to rename
+        it.
       </p>
-      <Board store={store} />
+      <ProjectBar store={store} projectId={projectId} onSelect={setProjectId} />
+      <Board store={store} projectId={projectId} />
     </div>
   )
 }
 
-function Board({ store }: { store: Store }) {
+function ProjectBar({
+  store,
+  projectId,
+  onSelect,
+}: {
+  store: Store
+  projectId: string
+  onSelect: (pid: string) => void
+}) {
+  const rows = useLiveQuery<ProjectRow>(store, 'DisplayProject')
+  const [newName, setNewName] = useState('')
+
+  const projects = useMemo(() => {
+    const s = [...rows].sort(
+      (a, b) => (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : a[0] < b[0] ? -1 : 1),
+    )
+    // A same-ts rename conflict can briefly surface two names for one
+    // project id; render one of them deterministically.
+    const seen = new Set<string>()
+    return s.filter((p) => (seen.has(p[0]) ? false : (seen.add(p[0]), true)))
+  }, [rows])
+
+  const currentName = projects.find((p) => p[0] === projectId)?.[1] ?? ''
+
+  function addProject() {
+    const name = newName.trim()
+    if (!name) return
+    const pid = crypto.randomUUID()
+    const ts = newTs()
+    store.update('Project', [pid] as Row, +1)
+    store.update('ProjectName', [pid, name, ts] as Row, +1)
+    // Every project starts with the default columns. Random ids —
+    // unlike the default project's seeds, this runs once, on the
+    // creating replica only.
+    SEED_COLUMNS.forEach((cname, i) => {
+      const cid = newId()
+      store.update('Col', [cid, pid] as Row, +1)
+      store.update('ColName', [cid, cname, ts] as Row, +1)
+      store.update('ColPos', [cid, (i + 1) * 1024, ts] as Row, +1)
+    })
+    setNewName('')
+    onSelect(pid)
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+      <label htmlFor="project-select" style={{ fontSize: 13, color: '#555' }}>
+        project:
+      </label>
+      <select
+        id="project-select"
+        data-testid="project-select"
+        value={projectId}
+        onChange={(e) => onSelect(e.target.value)}
+        style={{ padding: 4, borderRadius: 4 }}
+      >
+        {projects.map(([pid, name]) => (
+          <option key={pid} value={pid}>
+            {name}
+          </option>
+        ))}
+      </select>
+      <EditableLabel
+        value={currentName}
+        onCommit={(next) => store.update('ProjectName', [projectId, next, newTs()] as Row, +1)}
+        displayTestId="project-name"
+        inputTestId="project-rename"
+        style={{ fontSize: 13, color: '#555' }}
+      />
+      <span style={{ flex: 1 }} />
+      <input
+        data-testid="new-project"
+        value={newName}
+        onChange={(e) => setNewName(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && addProject()}
+        placeholder="new project…"
+        style={{ padding: 6, border: '1px solid #ccc', borderRadius: 4 }}
+      />
+      <button
+        data-testid="add-project"
+        onClick={addProject}
+        style={{ padding: '6px 10px', borderRadius: 4, border: '1px solid #ccc' }}
+      >
+        add project
+      </button>
+    </div>
+  )
+}
+
+function Board({ store, projectId }: { store: Store; projectId: string }) {
   const cards = useLiveQuery<DisplayRow>(store, 'Display')
   const cols = useLiveQuery<ColRow>(store, 'DisplayCol')
 
   const sorted = useMemo(() => {
-    const s = [...cols].sort(
-      (a, b) => a[2] - b[2] || a[0] - b[0] || (a[1] < b[1] ? -1 : 1),
-    )
+    const s = cols
+      .filter((c) => c[1] === projectId)
+      .sort((a, b) => a[3] - b[3] || a[0] - b[0] || (a[2] < b[2] ? -1 : 1))
     // A same-ts rename conflict can briefly surface two names for one
     // column id; render one of them deterministically.
     const seen = new Set<number>()
     return s.filter((c) => (seen.has(c[0]) ? false : (seen.add(c[0]), true)))
-  }, [cols])
+  }, [cols, projectId])
 
   const grouped = useMemo(() => {
     const out = new Map<number, DisplayRow[]>()
     for (const row of cards) {
-      const list = out.get(row[2]) ?? []
+      if (row[1] !== projectId) continue
+      const list = out.get(row[3]) ?? []
       list.push(row)
-      out.set(row[2], list)
+      out.set(row[3], list)
     }
     return out
-  }, [cards])
+  }, [cards, projectId])
 
   // Reorder = the two columns trade positions under a fresh ts.
   function swapCols(a: ColRow, b: ColRow): void {
     const ts = newTs()
-    store.update('ColPos', [a[0], b[2], ts] as Row, +1)
-    store.update('ColPos', [b[0], a[2], ts] as Row, +1)
+    store.update('ColPos', [a[0], b[3], ts] as Row, +1)
+    store.update('ColPos', [b[0], a[3], ts] as Row, +1)
   }
 
   return (
@@ -132,23 +239,36 @@ function Board({ store }: { store: Store }) {
           col={c}
           cards={grouped.get(c[0]) ?? []}
           store={store}
+          projectId={projectId}
           onMoveLeft={i > 0 ? () => swapCols(c, sorted[i - 1]!) : undefined}
           onMoveRight={i < sorted.length - 1 ? () => swapCols(c, sorted[i + 1]!) : undefined}
         />
       ))}
-      <AddColumn store={store} nextPos={(sorted[sorted.length - 1]?.[2] ?? 0) + 1024} />
+      <AddColumn
+        store={store}
+        projectId={projectId}
+        nextPos={(sorted[sorted.length - 1]?.[3] ?? 0) + 1024}
+      />
     </div>
   )
 }
 
-function AddColumn({ store, nextPos }: { store: Store; nextPos: number }) {
+function AddColumn({
+  store,
+  projectId,
+  nextPos,
+}: {
+  store: Store
+  projectId: string
+  nextPos: number
+}) {
   const [name, setName] = useState('')
   function add() {
     const trimmed = name.trim()
     if (!trimmed) return
     const id = newId()
     const ts = newTs()
-    store.update('Col', [id] as Row, +1)
+    store.update('Col', [id, projectId] as Row, +1)
     store.update('ColName', [id, trimmed, ts] as Row, +1)
     store.update('ColPos', [id, nextPos, ts] as Row, +1)
     setName('')
@@ -231,16 +351,18 @@ function ColumnView({
   col,
   cards,
   store,
+  projectId,
   onMoveLeft,
   onMoveRight,
 }: {
   col: ColRow
   cards: DisplayRow[]
   store: Store
+  projectId: string
   onMoveLeft?: (() => void) | undefined
   onMoveRight?: (() => void) | undefined
 }) {
-  const [colId, name] = col
+  const [colId, , name] = col
   const [text, setText] = useState('')
   const [hover, setHover] = useState(false)
 
@@ -249,7 +371,7 @@ function ColumnView({
     if (!trimmed) return
     const id = newId()
     const ts = newTs()
-    store.update('Card', [id] as Row, +1)
+    store.update('Card', [id, projectId] as Row, +1)
     store.update('CardText', [id, trimmed, ts] as Row, +1)
     store.update('Move', [id, colId, ts] as Row, +1)
     setText('')
@@ -342,7 +464,7 @@ function ColumnView({
 }
 
 function Card({ card, store }: { card: DisplayRow; store: Store }) {
-  const [id, text] = card
+  const [id, , text] = card
   function onDragStart(e: React.DragEvent) {
     e.dataTransfer.setData('application/x-kanban-card', String(id))
     e.dataTransfer.effectAllowed = 'move'

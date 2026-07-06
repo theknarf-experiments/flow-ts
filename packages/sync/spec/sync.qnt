@@ -1,8 +1,7 @@
-// Formal model of the @flow-ts/sync session protocol — v2,
-// integrated with a concrete MST page-range model.
+// Formal model of the @flow-ts/sync session protocol.
 //
-// Same protocol shape as `sync.qnt` (HELLO → PAGE_RANGES → FETCH →
-// DATA → DONE), but the abstractions are tightened:
+// Protocol shape: HELLO → PAGE_RANGES → FETCH → DATA → DONE, plus
+// post-round PUSH gossip. Modeling choices:
 //   * PAGE_RANGES carries an actual list of (start, end, hash)
 //     triples — `Set[PageRange]` — derived deterministically from
 //     the sender's fact set via `pageRanges()`.
@@ -11,14 +10,17 @@
 //     fact ranges).
 //   * FETCH carries those `Set[DiffRange]` ranges; the responder
 //     extracts the keys those ranges cover from its own facts.
+//   * PUSH carries new facts post-round; dropMsg gate makes PUSH
+//     eventually-delivered (mirrors the impl's at-least-once
+//     PUSH_ACK retry loop).
 //
 // The page-range layout is the same toy model as `mst-diff.qnt`:
 // group keys by `level = fact mod 3`. Not a literal MST tree, but
 // it shares the load-bearing property — deterministic from the
 // fact set — and lets us verify diff completeness/soundness inside
-// the protocol flow under the same adversarial network as v1.
+// the protocol flow under an adversarial network.
 
-module syncV2 {
+module sync {
 
   // -------------------- Constants --------------------
 

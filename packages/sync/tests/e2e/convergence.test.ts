@@ -477,9 +477,61 @@ describe('SyncEngine e2e', () => {
           return rootsMatch
         },
       ),
-      { numRuns: 10 },
+      { numRuns: 20 },
     )
   })
+
+  it('converges across a reconnect cycle with mid-cycle writes (property)', async () => {
+    // Composes reconnect + drops + writes: attach, do a round, detach,
+    // write on each side, reattach on fresh transports, verify both
+    // engines end up with the union of everything. The reconnect
+    // path relies on the root-digest gate in HELLO to skip redundant
+    // work when both sides are already in sync, but the mid-cycle
+    // writes force a fresh diff round after reattach.
+    const retry = { intervalMs: 25, maxAttempts: 30 }
+    await fc.assert(
+      fc.asyncProperty(
+        fc.uniqueArray(fc.integer({ min: 0, max: 49 }), { minLength: 0, maxLength: 4 }),
+        fc.uniqueArray(fc.integer({ min: 50, max: 99 }), { minLength: 0, maxLength: 4 }),
+        fc.uniqueArray(fc.integer({ min: 100, max: 149 }), { minLength: 0, maxLength: 3 }),
+        fc.uniqueArray(fc.integer({ min: 150, max: 199 }), { minLength: 0, maxLength: 3 }),
+        fc.double({ min: 0, max: 0.15, noNaN: true }),
+        fc.integer({ min: 1, max: 1_000_000 }),
+        async (aInitial, bInitial, aOffline, bOffline, dropP, seed) => {
+          const a = newEngine(1)
+          const b = newEngine(2)
+          for (const i of aInitial) a.engine.add('R', [i])
+          for (const i of bInitial) b.engine.add('R', [i])
+          const [t1a, t1b] = inMemoryPair()
+          const ta1 = withInterference(t1a, { dropProbability: dropP }, makeRng(seed))
+          const tb1 = withInterference(t1b, { dropProbability: dropP }, makeRng(seed ^ 0x11))
+          const pa1 = a.engine.attachPeer(ta1, { retry })
+          const pb1 = b.engine.attachPeer(tb1, { retry })
+          await Promise.all([pa1.synced, pb1.synced])
+          pa1.detach()
+          pb1.detach()
+          for (const i of aOffline) a.engine.add('R', [i])
+          for (const i of bOffline) b.engine.add('R', [i])
+          const [t2a, t2b] = inMemoryPair()
+          const ta2 = withInterference(t2a, { dropProbability: dropP }, makeRng(seed ^ 0x22))
+          const tb2 = withInterference(t2b, { dropProbability: dropP }, makeRng(seed ^ 0x33))
+          const pa2 = a.engine.attachPeer(ta2, { retry })
+          const pb2 = b.engine.attachPeer(tb2, { retry })
+          await Promise.all([pa2.synced, pb2.synced])
+          await new Promise((r) => setTimeout(r, 100))
+          const expected = new Set([...aInitial, ...bInitial, ...aOffline, ...bOffline]).size
+          const converged =
+            a.engine.size === expected &&
+            b.engine.size === expected &&
+            toHex(a.engine.rootDigest()) === toHex(b.engine.rootDigest())
+          pa2.detach()
+          pb2.detach()
+          return converged
+        },
+      ),
+      { numRuns: 12 },
+    )
+  }, 60_000)
 
   it('converges with concurrent mid-round writes under interference (property)', async () => {
     // The big one: pre-existing facts on both sides + writes that

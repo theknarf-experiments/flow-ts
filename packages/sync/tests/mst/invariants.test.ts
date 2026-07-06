@@ -7,7 +7,13 @@
 import { describe, expect, it } from 'vitest'
 import * as fc from 'fast-check'
 import { babHash } from '../../src/bab/index.js'
-import { EMPTY_DIGEST, Mst, collectKeys, toHex } from '../../src/mst/index.js'
+import {
+  EMPTY_DIGEST,
+  Mst,
+  collectKeys,
+  serialisePageRanges,
+  toHex,
+} from '../../src/mst/index.js'
 
 function keyFrom(s: string): Uint8Array {
   return babHash(new TextEncoder().encode(s))
@@ -88,6 +94,77 @@ describe('MST invariants', () => {
         },
       ),
       { numRuns: 40 },
+    )
+  })
+
+  it('membership: has(k) iff k was inserted (property)', () => {
+    fc.assert(
+      fc.property(
+        fc.uniqueArray(fc.string({ minLength: 1, maxLength: 12 }), {
+          minLength: 0,
+          maxLength: 60,
+        }),
+        fc.array(fc.string({ minLength: 1, maxLength: 12 }), {
+          minLength: 0,
+          maxLength: 30,
+        }),
+        (inserted, queried) => {
+          const m = new Mst()
+          const insertedSet = new Set(inserted)
+          for (const w of inserted) m.insert(keyFrom(w))
+          if (m.size !== insertedSet.size) return false
+          for (const q of queried) {
+            const inMst = m.has(keyFrom(q))
+            const expected = insertedSet.has(q)
+            if (inMst !== expected) return false
+          }
+          return true
+        },
+      ),
+      { numRuns: 40 },
+    )
+  })
+
+  it('page-range serialisation is deterministic and covers every key (property)', () => {
+    // Two guarantees at once:
+    //   * `serialisePageRanges` output only depends on the key set,
+    //     not insertion order (redundant with the digest test but
+    //     covers a different code path — the pre-order walk).
+    //   * The union of pages' digest sets equals the key set. No key
+    //     is silently dropped by pagination.
+    fc.assert(
+      fc.property(
+        fc
+          .uniqueArray(fc.string({ minLength: 1, maxLength: 12 }), {
+            minLength: 1,
+            maxLength: 150,
+          })
+          .chain((words) =>
+            fc.tuple(
+              fc.constant(words),
+              fc.shuffledSubarray(words, {
+                minLength: words.length,
+                maxLength: words.length,
+              }),
+            ),
+          ),
+        ([words, shuffled]) => {
+          const a = new Mst()
+          for (const w of words) a.insert(keyFrom(w))
+          const b = new Mst()
+          for (const w of shuffled) b.insert(keyFrom(w))
+          const aRanges = serialisePageRanges(a.root())
+          const bRanges = serialisePageRanges(b.root())
+          if (aRanges.length !== bRanges.length) return false
+          for (let i = 0; i < aRanges.length; i++) {
+            if (toHex(aRanges[i]!.start) !== toHex(bRanges[i]!.start)) return false
+            if (toHex(aRanges[i]!.end) !== toHex(bRanges[i]!.end)) return false
+            if (toHex(aRanges[i]!.hash) !== toHex(bRanges[i]!.hash)) return false
+          }
+          return true
+        },
+      ),
+      { numRuns: 25 },
     )
   })
 

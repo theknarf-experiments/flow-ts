@@ -1,29 +1,43 @@
-// Kanban board. The board state lives in the Store's `Display` IDB,
-// derived by the Datalog program from `Card`, `Move`, and `Delete`
-// EDBs (kanban.dl). Local user actions write fresh facts to those
-// EDBs via `Collection.insert`. A bridge keeps the EDBs synced to
-// the server via @flow-ts/sync over WebTransport — every other
-// connected browser gets the new facts via PUSH, and their Datalog
-// program re-derives their own `Display` view.
+// Kanban board. The board view lives in the Store's `Display` and
+// `DisplayCol` IDBs, derived by the Datalog program (kanban.dl) from
+// append-only CRDT facts. Local user actions only ever *add* facts:
+// renames, moves and reorders are new facts with fresh timestamps
+// (last writer wins), deletes are tombstones. A bridge keeps the
+// EDBs synced to the server via @flow-ts/sync over WebTransport —
+// every other connected browser gets the new facts via PUSH, and
+// their Datalog program re-derives their own views.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Store, useLiveQuery } from '@flow-ts/react'
 import type { Row } from 'flow-ts'
-import { COLUMNS, SYNCED_RELATIONS, serverUrl, type Column } from '../shared/facts.js'
+import { SEED_COLUMNS, SYNCED_RELATIONS, serverUrl } from '../shared/facts.js'
 import { bidiStreamTransport } from '../shared/transport.js'
 import { makeBridge } from './sync.js'
 import { PROGRAM } from './program.js'
 
-type DisplayRow = readonly [number, string, string] // [id, text, col]
+type DisplayRow = readonly [number, string, number] // [id, text, colId]
+type ColRow = readonly [number, string, number] // [id, name, pos]
 
-/** Module-scope counters so cards added across multiple browser
- *  tabs/replicas don't collide on `id`. */
-function newCardId(): number {
+/** Module-scope random ids so entities created across multiple
+ *  browser tabs/replicas don't collide. */
+function newId(): number {
   return Math.floor(Math.random() * 1e15)
 }
 
 function newTs(): number {
   return Date.now() * 1000 + Math.floor(Math.random() * 1000)
+}
+
+/** Deterministic seed facts: identical rows on every replica, so the
+ *  sync layer dedups them into a single set. Seeds use ts=0, letting
+ *  any real user action (rename, reorder, delete) win permanently. */
+function seedDefaultColumns(store: Store): void {
+  SEED_COLUMNS.forEach((name, i) => {
+    const id = i + 1
+    store.update('Col', [id] as Row, +1)
+    store.update('ColName', [id, name, 0] as Row, +1)
+    store.update('ColPos', [id, (i + 1) * 1024, 0] as Row, +1)
+  })
 }
 
 export function App() {
@@ -35,6 +49,7 @@ export function App() {
   } | null>(null)
   if (!initRef.current) {
     const store = new Store(PROGRAM)
+    seedDefaultColumns(store)
     const bridge = makeBridge({
       store,
       replicaId: new Uint8Array([Math.floor(Math.random() * 255)]),
@@ -68,9 +83,10 @@ export function App() {
         </span>
       </header>
       <p style={{ color: '#666', fontSize: 13 }}>
-        Open this URL in another tab. Cards added or moved in one tab appear
-        in the other through the server's MST. Drag-and-drop columns; the
-        latest move wins via causal timestamp.
+        Open this URL in another tab. Cards and columns added, renamed,
+        reordered or deleted in one tab appear in the other through the
+        server's MST — the latest edit wins via causal timestamp.
+        Double-click a card or column name to rename it.
       </p>
       <Board store={store} />
     </div>
@@ -79,21 +95,135 @@ export function App() {
 
 function Board({ store }: { store: Store }) {
   const cards = useLiveQuery<DisplayRow>(store, 'Display')
+  const cols = useLiveQuery<ColRow>(store, 'DisplayCol')
+
+  const sorted = useMemo(() => {
+    const s = [...cols].sort(
+      (a, b) => a[2] - b[2] || a[0] - b[0] || (a[1] < b[1] ? -1 : 1),
+    )
+    // A same-ts rename conflict can briefly surface two names for one
+    // column id; render one of them deterministically.
+    const seen = new Set<number>()
+    return s.filter((c) => (seen.has(c[0]) ? false : (seen.add(c[0]), true)))
+  }, [cols])
+
   const grouped = useMemo(() => {
-    const out: Record<Column, DisplayRow[]> = { todo: [], doing: [], done: [] }
+    const out = new Map<number, DisplayRow[]>()
     for (const row of cards) {
-      const col = row[2] as Column
-      if (col in out) out[col].push(row)
+      const list = out.get(row[2]) ?? []
+      list.push(row)
+      out.set(row[2], list)
     }
     return out
   }, [cards])
 
+  // Reorder = the two columns trade positions under a fresh ts.
+  function swapCols(a: ColRow, b: ColRow): void {
+    const ts = newTs()
+    store.update('ColPos', [a[0], b[2], ts] as Row, +1)
+    store.update('ColPos', [b[0], a[2], ts] as Row, +1)
+  }
+
   return (
-    <div style={{ display: 'flex', gap: 12, marginTop: 16 }}>
-      {COLUMNS.map((col) => (
-        <ColumnView key={col} col={col} cards={grouped[col]} store={store} />
+    <div style={{ display: 'flex', gap: 12, marginTop: 16, alignItems: 'flex-start' }}>
+      {sorted.map((c, i) => (
+        <ColumnView
+          key={c[0]}
+          col={c}
+          cards={grouped.get(c[0]) ?? []}
+          store={store}
+          onMoveLeft={i > 0 ? () => swapCols(c, sorted[i - 1]!) : undefined}
+          onMoveRight={i < sorted.length - 1 ? () => swapCols(c, sorted[i + 1]!) : undefined}
+        />
       ))}
+      <AddColumn store={store} nextPos={(sorted[sorted.length - 1]?.[2] ?? 0) + 1024} />
     </div>
+  )
+}
+
+function AddColumn({ store, nextPos }: { store: Store; nextPos: number }) {
+  const [name, setName] = useState('')
+  function add() {
+    const trimmed = name.trim()
+    if (!trimmed) return
+    const id = newId()
+    const ts = newTs()
+    store.update('Col', [id] as Row, +1)
+    store.update('ColName', [id, trimmed, ts] as Row, +1)
+    store.update('ColPos', [id, nextPos, ts] as Row, +1)
+    setName('')
+  }
+  return (
+    <div style={{ minWidth: 200, display: 'flex', gap: 4 }}>
+      <input
+        data-testid="new-column"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && add()}
+        placeholder="new column…"
+        style={{ flex: 1, padding: 6, border: '1px solid #ccc', borderRadius: 4 }}
+      />
+      <button
+        data-testid="add-column"
+        onClick={add}
+        style={{ padding: '6px 10px', borderRadius: 4, border: '1px solid #ccc' }}
+      >
+        add
+      </button>
+    </div>
+  )
+}
+
+/** Inline-editable text: double-click to edit, Enter commits,
+ *  Escape/blur cancels. */
+function EditableLabel({
+  value,
+  onCommit,
+  displayTestId,
+  inputTestId,
+  style,
+}: {
+  value: string
+  onCommit: (next: string) => void
+  displayTestId: string
+  inputTestId: string
+  style?: React.CSSProperties
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  if (!editing) {
+    return (
+      <span
+        data-testid={displayTestId}
+        title="double-click to rename"
+        onDoubleClick={() => {
+          setDraft(value)
+          setEditing(true)
+        }}
+        style={{ cursor: 'text', ...style }}
+      >
+        {value}
+      </span>
+    )
+  }
+  return (
+    <input
+      data-testid={inputTestId}
+      value={draft}
+      autoFocus
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => setEditing(false)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          const next = draft.trim()
+          if (next && next !== value) onCommit(next)
+          setEditing(false)
+        } else if (e.key === 'Escape') {
+          setEditing(false)
+        }
+      }}
+      style={{ padding: 2, border: '1px solid #88c', borderRadius: 3, ...style }}
+    />
   )
 }
 
@@ -101,20 +231,27 @@ function ColumnView({
   col,
   cards,
   store,
+  onMoveLeft,
+  onMoveRight,
 }: {
-  col: Column
+  col: ColRow
   cards: DisplayRow[]
   store: Store
+  onMoveLeft?: (() => void) | undefined
+  onMoveRight?: (() => void) | undefined
 }) {
+  const [colId, name] = col
   const [text, setText] = useState('')
   const [hover, setHover] = useState(false)
 
   function addCard() {
-    if (!text.trim()) return
-    const id = newCardId()
+    const trimmed = text.trim()
+    if (!trimmed) return
+    const id = newId()
     const ts = newTs()
-    store.update('Card', [id, text.trim()] as Row, +1)
-    store.update('Move', [id, col, ts] as Row, +1)
+    store.update('Card', [id] as Row, +1)
+    store.update('CardText', [id, trimmed, ts] as Row, +1)
+    store.update('Move', [id, colId, ts] as Row, +1)
     setText('')
   }
 
@@ -124,12 +261,21 @@ function ColumnView({
     const id = Number(e.dataTransfer.getData('application/x-kanban-card'))
     if (!Number.isFinite(id)) return
     // Move = a fresh fact with the current ts. Last write wins.
-    store.update('Move', [id, col, newTs()] as Row, +1)
+    store.update('Move', [id, colId, newTs()] as Row, +1)
+  }
+
+  const headerBtn: React.CSSProperties = {
+    border: 'none',
+    background: 'transparent',
+    cursor: 'pointer',
+    color: '#999',
+    padding: '0 2px',
   }
 
   return (
     <div
-      data-col={col}
+      data-col={colId}
+      data-col-name={name}
       onDragOver={(e) => {
         e.preventDefault()
         setHover(true)
@@ -138,6 +284,7 @@ function ColumnView({
       onDrop={onDrop}
       style={{
         flex: 1,
+        minWidth: 180,
         background: hover ? '#eef6ff' : '#f5f5f5',
         border: '1px solid #ddd',
         borderRadius: 6,
@@ -145,9 +292,31 @@ function ColumnView({
         minHeight: 320,
       }}
     >
-      <h2 style={{ marginTop: 0, fontSize: 16, textTransform: 'uppercase', color: '#555' }}>
-        {col} <span style={{ color: '#999', fontSize: 12 }}>({cards.length})</span>
-      </h2>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginBottom: 8 }}>
+        <h2 style={{ margin: 0, fontSize: 16, color: '#555', flex: 1, fontWeight: 600 }}>
+          <EditableLabel
+            value={name}
+            onCommit={(next) => store.update('ColName', [colId, next, newTs()] as Row, +1)}
+            displayTestId="col-name"
+            inputTestId="col-rename"
+          />{' '}
+          <span style={{ color: '#999', fontSize: 12 }}>({cards.length})</span>
+        </h2>
+        <button data-testid="col-left" title="move column left" disabled={!onMoveLeft} onClick={onMoveLeft} style={headerBtn}>
+          ◀
+        </button>
+        <button data-testid="col-right" title="move column right" disabled={!onMoveRight} onClick={onMoveRight} style={headerBtn}>
+          ▶
+        </button>
+        <button
+          data-testid="col-delete"
+          title="delete column"
+          onClick={() => store.update('ColDelete', [colId] as Row, +1)}
+          style={headerBtn}
+        >
+          ×
+        </button>
+      </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {cards.map((c) => (
           <Card key={c[0]} card={c} store={store} />
@@ -196,7 +365,13 @@ function Card({ card, store }: { card: DisplayRow; store: Store }) {
         cursor: 'grab',
       }}
     >
-      <span style={{ flex: 1 }}>{text}</span>
+      <EditableLabel
+        value={text}
+        onCommit={(next) => store.update('CardText', [id, next, newTs()] as Row, +1)}
+        displayTestId="card-text"
+        inputTestId="card-rename"
+        style={{ flex: 1 }}
+      />
       <button
         onClick={onDelete}
         title="delete"

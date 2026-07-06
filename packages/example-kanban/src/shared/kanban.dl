@@ -1,35 +1,73 @@
-# CRDT semantics:
-# * `Card(id, text)`         — an add. Append-only.
-# * `Move(id, col, ts)`      — a single move event with a logical timestamp.
-# * `Delete(id)`             — tombstone. Append-only.
+# CRDT semantics — every relation is an append-only set of facts;
+# mutation is modelled as a new fact with a fresh logical timestamp
+# (last-writer-wins) and deletion as a tombstone:
 #
-# A card's current column is the column of its latest Move (last-writer-
-# wins per card). A card with a Delete is hidden from Display.
+# cards
+# * `Card(id)`                — a card exists. Append-only.
+# * `CardText(id, text, ts)`  — LWW text (creation writes the first one).
+# * `Move(id, col, ts)`       — LWW column membership.
+# * `Delete(id)`              — tombstone. Hides the card everywhere.
+#
+# columns
+# * `Col(id)`                 — a column exists. Append-only.
+# * `ColName(id, name, ts)`   — LWW name (creation writes the first one).
+# * `ColPos(id, pos, ts)`     — LWW ordering position; reordering swaps
+#                               two columns' positions with a fresh ts.
+# * `ColDelete(id)`           — tombstone. Hides the column AND its cards.
 
 .in
-.decl Card(id: number, text: string)
+.decl Card(id: number)
 .input Card.csv
 
-.decl Move(id: number, col: string, ts: number)
+.decl CardText(id: number, text: string, ts: number)
+.input CardText.csv
+
+.decl Move(id: number, col: number, ts: number)
 .input Move.csv
 
 .decl Delete(id: number)
 .input Delete.csv
 
+.decl Col(id: number)
+.input Col.csv
+
+.decl ColName(id: number, name: string, ts: number)
+.input ColName.csv
+
+.decl ColPos(id: number, pos: number, ts: number)
+.input ColPos.csv
+
+.decl ColDelete(id: number)
+.input ColDelete.csv
+
 .out
+.decl LatestColNameTs(id: number, ts: number)
+.decl LatestColPosTs(id: number, ts: number)
+.decl LatestTextTs(id: number, ts: number)
 .decl LatestMoveTs(id: number, ts: number)
-.decl LatestMove(id: number, col: string)
-.decl ActiveCard(id: number, text: string)
-.decl Display(id: number, text: string, col: string)
+.decl ActiveCol(id: number)
+.decl ActiveCard(id: number)
+.decl DisplayCol(id: number, name: string, pos: number)
+.decl Display(id: number, text: string, col: number)
 
-# Per-card latest timestamp across all its moves.
-LatestMoveTs(id, max(ts)) :- Move(id, _, ts).
+# Per-entity latest timestamp for each LWW register.
+LatestColNameTs(c, max(ts)) :- ColName(c, _, ts).
+LatestColPosTs(c, max(ts))  :- ColPos(c, _, ts).
+LatestTextTs(id, max(ts))   :- CardText(id, _, ts).
+LatestMoveTs(id, max(ts))   :- Move(id, _, ts).
 
-# The single Move row at that latest timestamp gives the current column.
-LatestMove(id, col) :- Move(id, col, ts), LatestMoveTs(id, ts).
+# Alive iff added and not tombstoned.
+ActiveCol(c)   :- Col(c), !ColDelete(c).
+ActiveCard(id) :- Card(id), !Delete(id).
 
-# A card is active iff it was added and not deleted.
-ActiveCard(id, text) :- Card(id, text), !Delete(id).
+# Column view: each live column with its current name and position.
+DisplayCol(c, n, p) :- ActiveCol(c),
+                       ColName(c, n, nts), LatestColNameTs(c, nts),
+                       ColPos(c, p, pts), LatestColPosTs(c, pts).
 
-# Final view: each active card with its current column.
-Display(id, text, col) :- ActiveCard(id, text), LatestMove(id, col).
+# Card view: each live card with its current text, in its current
+# column — but only while that column is itself alive.
+Display(id, t, c) :- ActiveCard(id),
+                     CardText(id, t, tts), LatestTextTs(id, tts),
+                     Move(id, c, mts), LatestMoveTs(id, mts),
+                     ActiveCol(c).

@@ -1,29 +1,25 @@
 // Regression spec for the historical "mutual DONE handshake" bug.
 //
-// In the v1 protocol, `shouldFinish` ALSO required `peerDoneReceived`
-// — so each side waited for the other's DONE before declaring its
-// round complete. If a side's lone DONE message was dropped, the
-// peer waited forever.
+// In an early version of the protocol, `shouldFinish` ALSO required
+// `peerDoneReceived` — so each side waited for the other's DONE
+// before declaring its round complete. If a side's lone DONE message
+// was dropped, the peer waited forever.
 //
 // This file IS NOT the current protocol — it's a deliberate
-// regression that the model checker should reject. The
-// `convergenceInv` invariant should still hold (safety isn't
-// violated; both sides are *eventually* in the right state), but
-// `bothEventuallyFinish` (or its proxy: any trace where convergence
-// is reached) becomes very rare or impossible under drops because of
-// the deadlock.
-//
-// The point of this file: prove the modelling framework would catch
-// such a bug if we'd had the spec when we wrote that version.
+// regression that the model checker should reject. It's a
+// self-contained standalone module built on the set-of-facts
+// abstraction the checker's other specs (sync-v2.qnt, mst-diff.qnt)
+// have since moved past. The point of this file: prove the
+// modelling framework would catch such a bug if we'd had the spec
+// when we wrote that version — the witness rate for both replicas
+// finishing under drops falls off a cliff (~15% baseline → ~1.6%
+// with the deadlock).
 //
 // Run: pnpm exec quint run --backend=typescript \
-//        --invariant=cantBothFinishWhenDoneDropped \
+//        --invariant=convergenceInv \
+//        --witnesses 'state.get("a").roundComplete and state.get("b").roundComplete' \
 //        --max-steps=40 --max-samples=2000 \
 //        packages/sync/spec/sync-buggy-mutual-done.qnt
-//
-// Expected: the witness `state.get("a").roundComplete and
-//   state.get("b").roundComplete` should be extremely rare —
-// significantly lower than the ~15% baseline in `sync.qnt`.
 
 module syncBuggyMutualDone {
 

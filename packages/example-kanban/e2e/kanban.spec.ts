@@ -350,6 +350,38 @@ test('a raw fact injected via the debug view syncs like a board action', async (
   await close()
 })
 
+test('forced offline: local edits keep working and sync on reconnect', async ({
+  browser,
+}) => {
+  const { a, b, close } = await twoBoards(browser)
+
+  // Partition A from the server.
+  await a.getByTestId('offline-toggle').check()
+  await expect(a.getByTestId('sync-status')).toHaveText('⚠ offline')
+
+  // Both sides keep editing during the partition.
+  const fromA = uniqueText('offline-a')
+  const fromB = uniqueText('online-b')
+  await addCard(a, 'todo', fromA)
+  await expect(col(a, 'todo').getByText(fromA)).toBeVisible()
+  await addCard(b, 'todo', fromB)
+  await expect(col(b, 'todo').getByText(fromB)).toBeVisible()
+
+  // Nothing crosses the partition in either direction.
+  await expect(col(b, 'todo').getByText(fromA)).toHaveCount(0)
+  await expect(col(a, 'todo').getByText(fromB)).toHaveCount(0)
+
+  // Reconnect: the fresh session's reconcile round syncs both ways.
+  await a.getByTestId('offline-toggle').uncheck()
+  await expect(a.getByTestId('sync-status')).toHaveText('✓ synced', {
+    timeout: 15_000,
+  })
+  await expect(col(a, 'todo').getByText(fromB)).toBeVisible({ timeout: 10_000 })
+  await expect(col(b, 'todo').getByText(fromA)).toBeVisible({ timeout: 10_000 })
+
+  await close()
+})
+
 test('facts persist on the server across a page reload', async ({ page }) => {
   await openBoard(page)
   const text = uniqueText('persist')

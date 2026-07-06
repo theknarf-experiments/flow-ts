@@ -56,11 +56,18 @@ function seedDefaults(store: Store): void {
 }
 
 export function App() {
+  // Live connection handle (null while offline/connecting) and the
+  // user's offline intent. The intent lives in a ref as well as state
+  // so an in-flight connect() can honour a toggle that happened while
+  // it was awaiting the handshake.
+  const connRef = useRef<Connection | null>(null)
+  const offlineRef = useRef(false)
+
   // Single Store / SyncEngine per page load. React StrictMode would
   // double-invoke effects so we guard with a ref.
   const initRef = useRef<{
     store: Store
-    engine: ReturnType<typeof makeBridge>['engine']
+    bridge: ReturnType<typeof makeBridge>
   } | null>(null)
   if (!initRef.current) {
     const store = new Store(PROGRAM)
@@ -70,13 +77,43 @@ export function App() {
       replicaId: new Uint8Array([Math.floor(Math.random() * 255)]),
       relations: SYNCED_RELATIONS as unknown as string[],
     })
-    initRef.current = { store, engine: bridge.engine }
-    void connect(bridge.attach)
+    initRef.current = { store, bridge }
+    void connect(bridge.attach).then((c) => {
+      if (offlineRef.current) {
+        c?.close()
+        return
+      }
+      connRef.current = c
+    })
   }
   const { store } = initRef.current
   const [status, setStatus] = useState<'connecting' | 'synced' | 'offline'>('connecting')
   const [projectId, setProjectId] = useState<string>(DEFAULT_PROJECT_ID)
   const [view, setView] = useState<'board' | 'data'>('board')
+  const [offline, setOffline] = useState(false)
+
+  // Forced-offline toggle: going offline tears down the WebTransport
+  // session; the local Store keeps working and the bridge keeps
+  // mirroring new facts into the engine. Going back online opens a
+  // fresh connection whose initial reconcile round exchanges
+  // everything both sides missed.
+  function toggleOffline(next: boolean) {
+    setOffline(next)
+    offlineRef.current = next
+    if (next) {
+      connRef.current?.close()
+      connRef.current = null
+    } else if (!connRef.current) {
+      window.dispatchEvent(new CustomEvent('kanban:status', { detail: 'connecting' }))
+      void connect(initRef.current!.bridge.attach).then((c) => {
+        if (offlineRef.current) {
+          c?.close()
+          return
+        }
+        connRef.current = c
+      })
+    }
+  }
 
   // Listen for sync status — the bridge exposes a promise on the
   // first attach; we recompute on (re)connect.
@@ -98,6 +135,24 @@ export function App() {
         <span data-testid="sync-status" style={{ color: statusColour(status), fontSize: 13 }}>
           {statusLabel(status)}
         </span>
+        <label
+          style={{
+            fontSize: 13,
+            color: '#555',
+            display: 'flex',
+            gap: 4,
+            alignItems: 'center',
+            cursor: 'pointer',
+          }}
+        >
+          <input
+            type="checkbox"
+            data-testid="offline-toggle"
+            checked={offline}
+            onChange={(e) => toggleOffline(e.target.checked)}
+          />
+          force offline
+        </label>
         <span style={{ flex: 1 }} />
         <ViewTab label="board" active={view === 'board'} onClick={() => setView('board')} />
         <ViewTab label="data" active={view === 'data'} onClick={() => setView('data')} />
@@ -551,10 +606,16 @@ function statusColour(s: 'connecting' | 'synced' | 'offline'): string {
   return s === 'connecting' ? '#888' : s === 'synced' ? '#2a8' : '#c44'
 }
 
+/** Handle for one live server connection; close() detaches the sync
+ *  peer and shuts the WebTransport session down. */
+interface Connection {
+  close(): void
+}
+
 async function connect(attach: (t: import('@flow-ts/sync').Transport) => {
   synced: Promise<void>
   detach: () => void
-}): Promise<void> {
+}): Promise<Connection | null> {
   // Pull the cert hash the server printed at startup. The Vite dev
   // server serves files under /public, so the cert-hash.json the
   // backend writes is reachable at /cert-hash.json.
@@ -565,7 +626,7 @@ async function connect(attach: (t: import('@flow-ts/sync').Transport) => {
   } catch {
     console.warn('[kanban] no cert-hash.json — is the server running?')
     window.dispatchEvent(new CustomEvent('kanban:status', { detail: 'offline' }))
-    return
+    return null
   }
   // SHA-256, base64 → Uint8Array.
   const hashBytes = Uint8Array.from(atob(hashBase64), (c) => c.charCodeAt(0))
@@ -583,7 +644,7 @@ async function connect(attach: (t: import('@flow-ts/sync').Transport) => {
       '[kanban] this browser has no native WebTransport — use Chrome or Edge.',
     )
     window.dispatchEvent(new CustomEvent('kanban:status', { detail: 'offline' }))
-    return
+    return null
   }
   const wt = new WebTransport(serverUrl(), {
     serverCertificateHashes: [{ algorithm: 'sha-256', value: hashBytes }],
@@ -593,7 +654,7 @@ async function connect(attach: (t: import('@flow-ts/sync').Transport) => {
   } catch (e) {
     console.error('[kanban] WebTransport open failed', e)
     window.dispatchEvent(new CustomEvent('kanban:status', { detail: 'offline' }))
-    return
+    return null
   }
   const bidi = await wt.createBidirectionalStream()
   const transport = bidiStreamTransport(bidi)
@@ -608,4 +669,15 @@ async function connect(attach: (t: import('@flow-ts/sync').Transport) => {
       window.dispatchEvent(new CustomEvent('kanban:status', { detail: 'offline' }))
     },
   )
+  return {
+    close() {
+      peer.detach()
+      try {
+        wt.close()
+      } catch {
+        // already closed
+      }
+      window.dispatchEvent(new CustomEvent('kanban:status', { detail: 'offline' }))
+    },
+  }
 }

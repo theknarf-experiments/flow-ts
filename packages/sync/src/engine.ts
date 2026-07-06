@@ -108,6 +108,7 @@ export class SyncEngine {
   }
 
   attachPeer(transport: Transport, opts?: { retry?: RetryOptions }): PeerHandle {
+    const entry: PeerEntry = { session: null as unknown as SyncSession, synced: false }
     const session = new SyncSession(transport, {
       replicaId: this.#replicaId,
       localKeysSorted: () => {
@@ -118,10 +119,11 @@ export class SyncEngine {
       localPageRanges: () => serialisePageRanges(this.#mst.root()),
       localRoot: () => this.#mst.rootDigest(),
       lookupFact: (k) => this.#facts.get(toHex(k)) ?? null,
-      onRemoteFact: (relation, encodedRow) => this.#applyRemote(relation, encodedRow),
+      onRemoteFact: (relation, encodedRow) =>
+        this.#applyRemote(relation, encodedRow, entry),
       ...(opts?.retry !== undefined ? { retry: opts.retry } : {}),
     })
-    const entry: PeerEntry = { session, synced: false }
+    entry.session = session
     this.#peers.add(entry)
     session.start()
     session.completion.then(
@@ -141,13 +143,22 @@ export class SyncEngine {
     }
   }
 
-  #applyRemote(relation: string, encodedRow: string): void {
+  #applyRemote(relation: string, encodedRow: string, from?: PeerEntry): void {
     if (!this.#relations.has(relation)) return // peer pushed an unsynced relation; drop
     const key = factKey(relation, encodedRow)
     const hex = toHex(key)
     if (this.#facts.has(hex)) return // already had it
     this.#mst.insert(key)
     this.#facts.set(hex, { relation, encodedRow })
+    // Relay to every peer except the sender. A hub engine with no
+    // local writer (like the kanban server) otherwise never forwards
+    // facts it learns from one peer to the others — they'd only
+    // converge on the next full reconcile. Loops can't happen: we
+    // only relay facts that were new to this engine.
+    for (const p of this.#peers) {
+      if (p === from) continue
+      p.session.push([{ relation, encodedRow }])
+    }
     let row: Row
     try {
       row = decodeRow(encodedRow)

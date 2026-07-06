@@ -9,7 +9,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Store, useLiveQuery } from '@flow-ts/react'
 import type { Row } from 'flow-ts'
-import { WebTransportPonyfill } from '@fails-components/webtransport'
 import { COLUMNS, SYNCED_RELATIONS, serverUrl, type Column } from '../shared/facts.js'
 import { bidiStreamTransport } from '../shared/transport.js'
 import { makeBridge } from './sync.js'
@@ -64,7 +63,7 @@ export function App() {
     <div style={{ fontFamily: 'system-ui, sans-serif', padding: 16 }}>
       <header style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
         <h1 style={{ margin: 0 }}>flow-ts kanban</h1>
-        <span style={{ color: statusColour(status), fontSize: 13 }}>
+        <span data-testid="sync-status" style={{ color: statusColour(status), fontSize: 13 }}>
           {statusLabel(status)}
         </span>
       </header>
@@ -235,12 +234,24 @@ async function connect(attach: (t: import('@flow-ts/sync').Transport) => {
   // SHA-256, base64 → Uint8Array.
   const hashBytes = Uint8Array.from(atob(hashBase64), (c) => c.charCodeAt(0))
 
-  // Use WebTransportPonyfill — speaks the WebSocket-based protocol
-  // our HTTP/2 server is exposing. The ponyfill has the same
-  // JS surface as the native WebTransport API.
-  const wt = new WebTransportPonyfill(serverUrl(), {
+  // Native WebTransport (HTTP/3) is required for cert-hash pinning:
+  // `serverCertificateHashes` only bypasses CA validation on QUIC.
+  // We deliberately don't fall back to the ponyfill from
+  // `@fails-components/webtransport`: its WebSocket transport goes
+  // through normal TLS validation (which rejects our self-signed
+  // cert), and merely importing the module fires a feature-detection
+  // probe to a dummy https://example.com URL that pollutes the
+  // console with a QUIC error.
+  if (!('WebTransport' in globalThis)) {
+    console.error(
+      '[kanban] this browser has no native WebTransport — use Chrome or Edge.',
+    )
+    window.dispatchEvent(new CustomEvent('kanban:status', { detail: 'offline' }))
+    return
+  }
+  const wt = new WebTransport(serverUrl(), {
     serverCertificateHashes: [{ algorithm: 'sha-256', value: hashBytes }],
-  } as any)
+  })
   try {
     await wt.ready
   } catch (e) {

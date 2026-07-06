@@ -5,10 +5,10 @@
 // each other (or aren't both online simultaneously) still
 // converge via the server's MST.
 
-import { writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { Http2Server } from '@fails-components/webtransport'
+import { Http3Server, quicheLoaded } from '@fails-components/webtransport'
 import { SyncEngine } from '@flow-ts/sync'
 import { SERVER_HOST, SERVER_PORT, SYNCED_RELATIONS } from '../shared/facts.js'
 import { bidiStreamTransport } from '../shared/transport.js'
@@ -23,8 +23,10 @@ async function main() {
 
   // Write the hash to a file the Vite client picks up — saves the
   // user from copy-pasting between terminals on every restart.
+  const publicDir = join(HERE, '..', '..', 'public')
+  mkdirSync(publicDir, { recursive: true })
   writeFileSync(
-    join(HERE, '..', '..', 'public', 'cert-hash.json'),
+    join(publicDir, 'cert-hash.json'),
     JSON.stringify({ hashBase64: cert.hashBase64 }, null, 2),
   )
 
@@ -39,15 +41,15 @@ async function main() {
     console.log(`[kanban] ${rel}(${row.join(', ')})`)
   })
 
-  // Http2Server uses WebTransport-over-HTTP/2 (via WebSocket
-  // upgrade); the native http3-quiche binary requires GLIBC ≥ 2.38
-  // which not every dev box has. The browser still talks to us
-  // through the WebTransport JS API — it just falls back to the
-  // polyfill (WebTransportPolyfill in `@fails-components/webtransport`),
-  // which speaks the same WebSocket-based protocol underneath.
-  const server = new Http2Server({
+  // Native WebTransport over HTTP/3 (QUIC). This is required for
+  // `serverCertificateHashes` to work: cert-hash pinning is a
+  // WebTransport/QUIC feature, so the WebSocket-based HTTP/2
+  // fallback would subject our self-signed cert to normal browser
+  // TLS validation (and fail the handshake).
+  await quicheLoaded
+  const server = new Http3Server({
     port: SERVER_PORT,
-    host: '0.0.0.0',
+    host: '::',
     secret: 'kanban-demo',
     cert: cert.cert,
     privKey: cert.privKey,

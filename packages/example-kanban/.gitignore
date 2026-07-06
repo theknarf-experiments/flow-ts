@@ -2,3 +2,5 @@ cert/
 public/cert-hash.json
 dist/
 .vite/
+test-results/
+playwright-report/

@@ -317,6 +317,16 @@ export class SyncSession {
   }
 
   #onPageRanges(m: Message & { type: typeof MSG_PAGE_RANGES }): void {
+    // PAGE_RANGES proves a live peer that saw differing roots — treat
+    // it as an implicit HELLO and make sure our own outbound side is
+    // engaged. Without this, a peer whose HELLO reached us while ours
+    // was dropped can complete its whole round off our PAGE_RANGES
+    // and declare DONE without ever sending its own ranges; their
+    // DONE then freezes our retry branches while `pendingFetch` is
+    // still null, and both sides stall forever (no retries, no
+    // failure). Seen under fast-check with dropProbability=0.15.
+    this.#helloReceived = true
+    if (!this.#pageRangesSent) this.#sendPageRanges()
     const wasReceived = this.#peerPageRangesReceived
     this.#peerPageRangesReceived = true
     const peerRanges: PageRange[] = m.ranges.map((r) => ({
@@ -431,6 +441,12 @@ export class SyncSession {
     this.#clearPump()
     this.#unsubMessage?.()
     this.#unsubClose?.()
+    // Close the transport so the peer observes onClose and fails its
+    // own session instead of idling against a zombie. Failing after
+    // our round completed (e.g. retry exhaustion on a message the
+    // peer still needed) previously went silent, leaving the peer
+    // hung with no retries and no failure path.
+    this.#transport.close()
     if (!this.#roundComplete) this.#reject(e)
   }
 

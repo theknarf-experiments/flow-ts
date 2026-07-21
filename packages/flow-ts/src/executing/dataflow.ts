@@ -782,6 +782,17 @@ function requireNumber(v: Value, ctx: string): number {
   return v
 }
 
+/** Evaluate a head argument. Anything with an operator in it is arithmetic
+ *  and must be numeric; anything without one is just a value, and passes
+ *  through as itself — which is what lets a rule head carry a string
+ *  constant, as in `Kind(x, "wiki") :- Link(x, _)`.
+ *
+ *  Same shape as the fast path in `evalCompare` below, and for the same
+ *  reason: `Const("wiki")` is not an attempt to add anything. */
+function evalHeadValue(arith: ArithArg, read: ArgReader): Value {
+  return arith.rest.length === 0 ? evalFactor(arith.init, read) : evalArith(arith, read)
+}
+
 function evalArith(arith: ArithArg, read: ArgReader): number {
   let acc = requireNumber(evalFactor(arith.init, read), 'evalArith')
   for (const [op, factor] of arith.rest) {
@@ -881,7 +892,7 @@ function makeRowToRowFn(flow: TransformationFlow): (encoded: string) => string |
       const row = decodeRow(encoded)
       const read = kvReader(EMPTY_KEY, row)
       const out: Value[] = projections.map((p) =>
-        p.kind === 'Copy' ? row[p.index]! : evalArith(p.arithmetic, read),
+        p.kind === 'Copy' ? row[p.index]! : evalHeadValue(p.arithmetic, read),
       )
       return encodeRow(out)
     }

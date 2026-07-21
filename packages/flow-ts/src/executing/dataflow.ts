@@ -118,6 +118,48 @@ export interface ProgramSession {
   close(): void
 }
 
+/** An atom has to pass as many arguments as its relation was declared with.
+ *
+ *  Without this a mismatch is silent and wrong rather than loud: the plan
+ *  reads whatever columns it was given, so `File(p)` over a two-column
+ *  relation returns two-column rows under one column name, and a query with
+ *  a typo in it looks like it worked.
+ *
+ *  Declarations with no attributes are skipped: `.decl X()` is used as a
+ *  placeholder for a relation whose shape is left to its rules. */
+function checkArities(program: Program): void {
+  const declared = new Map<string, number>()
+  for (const decl of [...program.edbs, ...program.idbs]) {
+    if (decl.attributes.length > 0) declared.set(decl.name, decl.attributes.length)
+  }
+  if (declared.size === 0) return
+
+  const check = (name: string, given: number, where: string): void => {
+    const want = declared.get(name)
+    if (want === undefined || want === given) return
+    throw new Error(
+      `relation "${name}" is declared with ${want} ` +
+        `${want === 1 ? 'column' : 'columns'}, but ${where} passes ${given}`,
+    )
+  }
+
+  for (const rule of program.rules) {
+    // Bodies only. A head that writes more columns than its declaration
+    // names is just as suspect, but the bundled examples do it — cc.dl
+    // declares CC2 with one column and writes two — and whether that's a
+    // convention for aggregates or a mistake in the example isn't something
+    // to decide from here.
+    for (const predicate of rule.rhs) {
+      if (predicate.kind !== 'Atom') continue
+      check(
+        predicate.atom.name,
+        predicate.atom.args.length,
+        `an atom in a rule for "${rule.head.name}"`,
+      )
+    }
+  }
+}
+
 /**
  * Open a streaming session over the given program. `executeProgram` is a
  * thin convenience wrapper that loads all EDB facts and closes the
@@ -128,6 +170,8 @@ export function openSession(
   options: ExecuteOptions,
   sink: IdbSink,
 ): ProgramSession {
+  checkArities(program)
+
   const strata = Strata.fromParser(program)
   const plan = ProgramQueryPlanCls.fromStrata(
     strata,

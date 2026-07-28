@@ -209,6 +209,32 @@ body replay is already a probe; SIP's extra semijoin transformations are
 per-advance overhead, and the scan it avoids is one a maintained graph never
 performs.
 
+## A limit the fuzzer found
+
+Incremental retraction is unsound when derivations can be cyclic. Plain
+transitive closure over `0→1, 1⇄2`, retracting `Arc(0,1)`:
+
+```
+want  T = {(1,1) (1,2) (2,1) (2,2)}
+got   T = {(0,1) (0,2) (1,1) (1,2) (2,1) (2,2)}
+```
+
+`T(0,1)` and `T(0,2)` support each other once both exist, so removing their only
+external support leaves the pair standing. db-ivm is d2ts with the time
+machinery removed, so nothing distinguishes a self-supporting cycle from a
+well-founded derivation; fixing it needs timestamps back or support counting
+(DRed). Batch evaluation is unaffected — it computes the fixpoint from nothing
+every time.
+
+This bounds the session rather than the design. `openBackwardSession` retracts
+constantly: every proposal un-seeds itself, every speculation rolls back. Over a
+recursive program those retractions leave residue — a second proposal returns
+the first one's candidates — so the session now **refuses** a recursive program
+outright rather than answering from stale state. `resolveBackward` recomputes
+per request and is unaffected, so it stays the entry point for recursion.
+
+Found by the model-based tests below, not by reasoning about it.
+
 ## Testing
 
 The forward engine is the oracle throughout. Hand-picked shapes cover the cases
@@ -223,6 +249,18 @@ Properties assert soundness, groundedness, stability (GetPut), completeness
 (one pass for monotone programs, fixpoint in general), monotonicity, and that
 `resolveBackward` never reports `ok` without the request holding. Each carries a
 floor on how often it was genuinely exercised, so the suite can't go vacuous.
+
+Two further layers matter more than the one-shot properties:
+
+- **Model-based sequences.** A session is compared against a from-scratch run
+  after *every* operation in a random sequence of EDB churn, deletes, rewrites,
+  inserts and proposals. One-shot tests can't see residue left for the next
+  request, and that is what found the retraction limit above.
+- **Generator coverage.** The feature mix is asserted, not assumed, with the
+  numbers printed on every run. A constraint added to dodge one engine gap can
+  quietly stop producing negation, and the suite would go on passing while
+  testing less. Columns are mixed number/string, which the generator did not do
+  at first — the entire codec and type-inference path was unreachable.
 
 ## Type inference
 

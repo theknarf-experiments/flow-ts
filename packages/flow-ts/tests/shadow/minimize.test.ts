@@ -126,19 +126,50 @@ Open(p, t) :- Task(p, "open", t).
 })
 
 describe('sessions minimise too', () => {
+  // Not over `Path`: a session refuses recursive programs, because incremental
+  // retraction is unsound there (tests/executing/retraction-limits.test.ts).
+  // Over-collection isn't unique to recursion, though — an existence test
+  // gathers every row of the witness relation, and only one candidate is
+  // actually load-bearing.
+  const EXISTS = parseProgram(
+    `\
+.in
+.decl A(x: number)
+.input A.csv
+.decl C(y: number)
+.input C.csv
+
+.printsize
+.decl H(x: number)
+
+.rule
+H(x) :- A(x), C(y).
+`,
+    { grammarSource: 'e.dl' },
+  )
+
   it('and leave the graph reflecting only the changes kept', () => {
-    const s = openBackwardSession(PATH, { ...PARSE, minimize: true })
-    for (const row of CHAIN.Arc!) s.update('Arc', row, 1)
+    const s = openBackwardSession(EXISTS, { ...PARSE, minimize: true })
+    for (const row of [[1], [2]] as Row[]) s.update('A', row, 1)
+    for (const row of [[7], [8], [9]] as Row[]) s.update('C', row, 1)
     s.advance()
 
-    const r = s.resolve({ rel: 'Path', row: [0, 3] })
+    const r = s.resolve({ rel: 'H', row: [1] })
     expect(r.status).toBe('ok')
     if (r.status !== 'ok') return
-    expect(r.changes).toHaveLength(1)
-    // The session's own Arc mirror lost exactly one row, not three.
-    expect(s.rows('Arc')).toHaveLength(2)
-    expect(s.rows('Path').some((p) => p[0] === 0 && p[1] === 3)).toBe(false)
+    // Dropping A(1) is enough; the full support set would take all of C too.
+    expect(r.changes).toEqual([{ kind: 'del', rel: 'A', row: [1] }])
+    expect(s.rows('C')).toHaveLength(3)
+    expect(s.rows('H').some((h) => h[0] === 1)).toBe(false)
+    // …and H(2) survives, which taking all of C would have destroyed.
+    expect(s.rows('H').some((h) => h[0] === 2)).toBe(true)
     s.close()
+  })
+
+  it('refuses a recursive program rather than answering from stale residue', () => {
+    expect(() => openBackwardSession(PATH, { ...PARSE, minimize: true })).toThrow(
+      /recursive stratum/i,
+    )
   })
 })
 

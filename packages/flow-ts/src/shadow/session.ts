@@ -26,6 +26,7 @@
 
 import type { Program } from '../ast/index.js'
 import { type ProgramSession, openSession } from '../executing/dataflow.js'
+import { Strata } from '../strata/index.js'
 import type { Row } from '../reading/row.js'
 import { inferRelationTypes } from '../typing/index.js'
 import { SEED_INS_PREFIX, SEED_PREFIX, SEED_UPD_PREFIX, compileShadow } from './compile.js'
@@ -46,6 +47,18 @@ export interface BackwardSessionOptions extends ResolveOptions {
    *  highly selective row, so it is exactly the case SIP is for. */
   optLevel?: number | null
   noSharing?: boolean
+  /** Open a session over a recursive program anyway.
+   *
+   *  Incremental retraction is unsound when derivations can be cyclic — see
+   *  tests/executing/retraction-limits.test.ts — and this session retracts
+   *  constantly: every proposal un-seeds itself, and every speculation rolls
+   *  back. Over a recursive program those retractions don't fully propagate,
+   *  so a proposal leaves residue and the next one reads it.
+   *
+   *  `resolveBackward` recomputes per request and is unaffected, so it is the
+   *  right entry point for a recursive program. This escape hatch exists for
+   *  testing the limitation itself. */
+  allowRecursive?: boolean
 }
 
 export interface BackwardSession {
@@ -72,6 +85,21 @@ export function openBackwardSession(
   program: Program,
   options: BackwardSessionOptions,
 ): BackwardSession {
+  // Refuse rather than answer wrongly. A recursive program is exactly where
+  // this session's un-seed-and-roll-back design breaks: the retractions it
+  // depends on don't fully propagate through a recursive stratum.
+  if (!options.allowRecursive) {
+    const strata = Strata.fromParser(program)
+    if (strata.isRecursiveStrataBitmap.some(Boolean)) {
+      throw new Error(
+        'openBackwardSession: this program has a recursive stratum, and incremental ' +
+          'retraction is unsound there — a proposal would leave residue for the next one. ' +
+          'Use resolveBackward, which recomputes per request, or pass allowRecursive to ' +
+          'override.',
+      )
+    }
+  }
+
   const shadow = compileShadow(program, options)
   const shadowProgram = options.parse(shadow.source)
   const inferred = inferRelationTypes(program)

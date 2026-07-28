@@ -28,6 +28,7 @@ import type { Row } from '../../src/reading/index.js'
 export interface GenRel {
   name: string
   arity: number
+  cols: ColType[]
 }
 
 export interface GenProgram {
@@ -58,9 +59,25 @@ class Draw {
   }
 }
 
-const VARS = ['a', 'b', 'c', 'd'] as const
-/** Small domain, so joins actually hit. */
-const DOMAIN = [0, 1, 2] as const
+// Variables are typed, and a column only ever hosts one of its own type. The
+// alternative — letting any variable land anywhere — generates programs that
+// are legal but never join, and whose relations infer as type conflicts, so the
+// interesting paths would go untested while coverage looked fine.
+const NUM_VARS = ['a', 'b'] as const
+const STR_VARS = ['s', 't'] as const
+type ColType = 'number' | 'string'
+
+/** Small domains, so joins actually hit. */
+const NUM_DOMAIN = [0, 1, 2] as const
+const STR_DOMAIN = ['x', 'y'] as const
+
+const varsOfType = (t: ColType): readonly string[] => (t === 'number' ? NUM_VARS : STR_VARS)
+const literalOfType = (d: Draw, t: ColType): string =>
+  t === 'number' ? String(d.pick(NUM_DOMAIN)) : `"${d.pick(STR_DOMAIN)}"`
+const isVarName = (x: string): boolean =>
+  (NUM_VARS as readonly string[]).includes(x) || (STR_VARS as readonly string[]).includes(x)
+const typeOfVar = (v: string): ColType =>
+  (NUM_VARS as readonly string[]).includes(v) ? 'number' : 'string'
 
 interface BuiltAtom {
   rel: GenRel
@@ -78,20 +95,25 @@ function buildAtom(
 ): BuiltAtom {
   const args: string[] = []
   for (let i = 0; i < rel.arity; i++) {
+    const t = rel.cols[i]!
     const roll = d.next(10)
     if (allowPlaceholder && roll === 0) args.push('_')
-    else if (roll === 1) args.push(String(d.pick(DOMAIN)))
-    else args.push(d.pick(VARS))
+    else if (roll === 1) args.push(literalOfType(d, t))
+    else args.push(d.pick(varsOfType(t)))
   }
   // Bodies are usually tied together, but not always: an atom sharing nothing
   // with the rest is an existence test, and those are supported now, so the
   // generator emits them deliberately rather than avoiding them.
-  const isVar = (s: string): boolean => (VARS as readonly string[]).includes(s)
+  const isVar = isVarName
+  // Tie to something already in scope, but only where the types line up.
   if (bound && bound.length > 0 && d.chance(80)) {
     const shared = d.pick(bound)
-    if (!args.includes(shared)) args[d.next(rel.arity)] = shared
+    const slots = rel.cols
+      .map((t, i) => (t === typeOfVar(shared) ? i : -1))
+      .filter((i) => i >= 0)
+    if (slots.length > 0 && !args.includes(shared)) args[d.pick(slots)] = shared
   } else if (!bound && !args.some(isVar)) {
-    args[0] = d.pick(VARS)
+    args[0] = d.pick(varsOfType(rel.cols[0]!))
   }
   // Derive the bound set from the *final* arguments. Deriving it as we go was
   // a bug: the tie-in above overwrites a position, so a variable counted on
@@ -106,10 +128,17 @@ export function buildProgram(pool: readonly number[], recursive = false): GenPro
   const d = new Draw(pool)
 
   const edbCount = 1 + d.next(3)
-  const edbs: GenRel[] = Array.from({ length: edbCount }, (_, i) => ({
-    name: `E${i}`,
-    arity: 1 + d.next(3),
-  }))
+  const edbs: GenRel[] = Array.from({ length: edbCount }, (_, i) => {
+    const arity = 1 + d.next(3)
+    return {
+      name: `E${i}`,
+      arity,
+      // Mixed columns, so the codec and type-inference paths are reachable.
+      cols: Array.from({ length: arity }, () =>
+        d.chance(35) ? ('string' as const) : ('number' as const),
+      ),
+    }
+  })
 
   const idbCount = 1 + d.next(3)
   const idbs: GenRel[] = []
@@ -120,6 +149,7 @@ export function buildProgram(pool: readonly number[], recursive = false): GenPro
     const available: GenRel[] = [...edbs, ...idbs]
     const ruleCount = 1 + d.next(2)
     let arity: number | null = null
+    let headCols: ColType[] | null = null
     const texts: string[] = []
 
     for (let r = 0; r < ruleCount; r++) {
@@ -135,7 +165,7 @@ export function buildProgram(pool: readonly number[], recursive = false): GenPro
       if (positive.length === 0) {
         // Nothing to put in the head; force one variable into the first atom.
         const first = atoms[0]!
-        const v = d.pick(VARS)
+        const v = d.pick(varsOfType(first.rel.cols[0]!))
         first.args[0] = v
         first.vars.push(v)
         positive.push(v)
@@ -149,43 +179,90 @@ export function buildProgram(pool: readonly number[], recursive = false): GenPro
       // body also carried a comparison, which is how that bug was found.
       if (d.chance(25)) {
         const rel = d.pick(edbs)
-        const args = Array.from({ length: rel.arity }, () =>
-          d.next(5) === 0 ? String(d.pick(DOMAIN)) : d.pick(positive),
-        )
+        const args = rel.cols.map((t) => {
+          const candidates = positive.filter((v) => typeOfVar(v) === t)
+          if (candidates.length === 0 || d.next(5) === 0) return literalOfType(d, t)
+          return d.pick(candidates)
+        })
         parts.push(`!${rel.name}(${args.join(', ')})`)
       }
 
-      // A comparison, to exercise replay of filters.
+      // A comparison, to exercise replay of filters. Same-typed operands only:
+      // a number/string compare is a runtime error, not an interesting program.
       if (d.chance(20)) {
-        parts.push(`${d.pick(positive)} < ${d.pick(DOMAIN) + 1}`)
+        const v = d.pick(positive)
+        parts.push(
+          typeOfVar(v) === 'number'
+            ? `${v} < ${d.pick(NUM_DOMAIN) + 1}`
+            : `${v} < "${d.pick(STR_DOMAIN)}"`,
+        )
       }
 
       // Head: a non-empty prefix of the positively-bound variables. Fixed
       // across a relation's rules, since they share one declaration.
-      const headVars = positive.slice(0, arity ?? 1 + d.next(positive.length))
-      if (arity === null) arity = headVars.length
-      while (headVars.length < arity) headVars.push(positive[0]!)
+      // A relation's rules share one declaration, so its column types are fixed
+      // by whichever rule got there first and every later rule has to line up.
+      // A rule that can't supply a variable of the required type is dropped
+      // rather than bent into shape: emitting it anyway produces a program whose
+      // declared types contradict what it derives, and the engine doesn't
+      // type-check, so that would silently poison everything downstream.
+      let headVars: string[]
+      if (headCols === null) {
+        headVars = positive.slice(0, 1 + d.next(positive.length))
+        while (headVars.length < (arity ?? headVars.length)) headVars.push(positive[0]!)
+        arity = headVars.length
+        headCols = headVars.map(typeOfVar)
+      } else {
+        const chosen: string[] = []
+        for (const want of headCols) {
+          const candidates = positive.filter((v) => typeOfVar(v) === want)
+          if (candidates.length === 0) break
+          chosen.push(d.pick(candidates))
+        }
+        if (chosen.length !== headCols.length) continue // can't type this rule
+        headVars = chosen
+      }
 
       texts.push(`I${i}(${headVars.join(', ')}) :- ${parts.join(', ')}.`)
     }
 
-    const self: GenRel = { name: `I${i}`, arity: arity ?? 1 }
+    const self: GenRel = {
+      name: `I${i}`,
+      arity: arity ?? 1,
+      cols: headCols ?? [Array.from(['number' as ColType])[0]!],
+    }
 
     // A recursive rule: the relation's own body references itself, so it lands
     // in an SCC and the shadow rules for it are recursive too — their fixpoint
     // is the support set. Recursion is only ever through *positive* atoms here,
     // which is what keeps the program stratified.
     if (recursive && d.chance(70)) {
-      const carried = Array.from({ length: self.arity }, (_, j) => VARS[j % VARS.length]!)
+      const carried = self.cols.map((t, j) => varsOfType(t)[j % varsOfType(t).length]!)
       const link = buildAtom(d, d.pick(edbs), false, carried)
       // Head variables must be bound positively; `carried` and the link atom's
       // variables are, so draw from those.
       const bound = [...new Set([...carried, ...link.vars])]
-      const headVars = Array.from(
-        { length: self.arity },
-        (_, j) => bound[(j + 1) % bound.length]!,
-      )
-      texts.push(`${self.name}(${headVars.join(', ')}) :- ${self.name}(${carried.join(', ')}), ${render(link)}.`)
+      // The recursive rule shares the relation's declaration too, so its head
+      // has to match column for column. Prefer a variable the link atom brought
+      // in rather than one already carried: that is the transitive-closure
+      // shape, and it keeps the rule from being its own support.
+      const linkOnly = link.vars.filter((v) => !carried.includes(v))
+      const headVars = self.cols.map((t) => {
+        const preferred = linkOnly.filter((v) => typeOfVar(v) === t)
+        if (preferred.length > 0) return d.pick(preferred)
+        const candidates = bound.filter((v) => typeOfVar(v) === t)
+        return candidates.length > 0 ? d.pick(candidates) : null
+      })
+      // A rule whose head is identical to its recursive atom is its own
+      // support. It adds nothing to the fixpoint, and incremental retraction
+      // cannot undo it — see tests/executing/retraction-limits.test.ts — so
+      // generating it would test a shape no real program wants.
+      const tautological = headVars.every((v, j) => v === carried[j])
+      if (headVars.every((v) => v !== null) && !tautological) {
+        texts.push(
+          `${self.name}(${headVars.join(', ')}) :- ${self.name}(${carried.join(', ')}), ${render(link)}.`,
+        )
+      }
     }
 
     idbs.push(self)
@@ -198,14 +275,14 @@ export function buildProgram(pool: readonly number[], recursive = false): GenPro
     const rows = new Map<string, Row>()
     const n = d.next(6)
     for (let k = 0; k < n; k++) {
-      const row: Row = Array.from({ length: e.arity }, () => d.pick(DOMAIN))
+      const row: Row = e.cols.map((t) => (t === 'number' ? d.pick(NUM_DOMAIN) : d.pick(STR_DOMAIN)))
       rows.set(row.join(','), row)
     }
     facts[e.name] = [...rows.values()]
   }
 
   const decl = (r: GenRel) =>
-    `.decl ${r.name}(${Array.from({ length: r.arity }, (_, i) => `c${i}: number`).join(', ')})`
+    `.decl ${r.name}(${r.cols.map((t, i) => `c${i}: ${t}`).join(', ')})`
 
   const source = [
     '.in',

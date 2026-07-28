@@ -234,6 +234,16 @@ export function shrink(
   changes: readonly Change[],
   holds: (subset: Change[]) => boolean,
 ): Change[] {
+  // Try single changes first. Greedy dropping alone lands on whichever
+  // irreducible set the iteration order happens to reach, and that can be far
+  // from the smallest: for `H(x) :- A(x), C(y).` it drops the one load-bearing
+  // A row — because emptying C also works — and keeps all of C instead. One
+  // extra pass finds the common case, which is that a single fact was holding
+  // the row up.
+  if (changes.length > 1) {
+    for (const c of changes) if (holds([c])) return [c]
+  }
+
   let kept = [...changes]
   for (const c of changes) {
     const without = kept.filter((x) => x !== c)

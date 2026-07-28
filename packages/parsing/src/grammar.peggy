@@ -53,13 +53,24 @@ IdbRelationDecl
 // not of a request that arrives later.
 PutDecl
   = ".put" _ "spread" _ "(" _ r:Residual _ ")" { return { kind: "spread", residual: r }; }
-  / ".put" _ "insert" _ "via" _ name:RelationName { return { kind: "insertVia", rel: name }; }
+  / ".put" _ "insert" _ "via" _ name:RelationName d:(_ InsertDefaults)? {
+      return { kind: "insert", via: name, defaults: d ? d[1] : [] };
+    }
+  / ".put" _ "insert" _ d:InsertDefaults { return { kind: "insert", via: null, defaults: d }; }
   / ".put" _ "into" _ name:RelationName { return { kind: "into", rel: name }; }
   / ".put" _ "none" { return { kind: "none" }; }
 
 Residual
   = "min" { return "min"; }
   / "max" { return "max"; }
+
+InsertDefaults
+  = "defaults" _ "(" _ first:InsertDefault rest:(_ "," _ InsertDefault)* _ ")" {
+      return [first, ...rest.map(r => r[3])];
+    }
+
+InsertDefault
+  = name:Variable _ "=" _ c:Constant { return [name, c]; }
 
 AttributesDecl
   = first:AttributeDecl rest:(_ "," _ AttributeDecl)* {

@@ -62,7 +62,11 @@ const applyChanges = (
 
 describe('parsing', () => {
   it('reads the target relation', () => {
-    expect(parseProgram(VIA_DRAFT).idbs[0]!.put).toEqual({ kind: 'insertVia', rel: 'Draft' })
+    expect(parseProgram(VIA_DRAFT).idbs[0]!.put).toEqual({
+      kind: 'insert',
+      via: 'Draft',
+      defaults: [],
+    })
   })
 
   it('round-trips', () => {

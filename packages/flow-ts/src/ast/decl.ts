@@ -1,5 +1,8 @@
 // Port of flowlog/src/parsing/src/decl.rs
 
+import type { Const } from './constant.js'
+import { constToString } from './constant.js'
+
 export type DataType = 'Integer' | 'String' | 'Float'
 
 export const NULL_SENTINEL = -9223372036854775808n // i64::MIN as bigint
@@ -59,11 +62,18 @@ export type PutPolicy =
    *  Bancilhon & Spyratos' constant complement, named directly: the side you
    *  don't write is the invariant that makes the update well-defined. */
   | { kind: 'into'; rel: string }
-  /** Which rule an *insertion* satisfies, named by a relation its body
-   *  mentions. Deletion through a multi-rule head is mechanical — killing a
-   *  disjunction kills every disjunct — but satisfying one is a choice, and
-   *  nothing in the program makes it. */
-  | { kind: 'insertVia'; rel: string }
+  /** How an *insertion* is carried out.
+   *
+   *  `via` names which rule to satisfy, by a relation its body mentions:
+   *  deleting through a multi-rule head is mechanical, since killing a
+   *  disjunction kills every disjunct, but satisfying one is a choice nothing
+   *  in the program makes.
+   *
+   *  `defaults` supplies values for body variables the head doesn't carry.
+   *  Deleting and rewriting recover those by replaying the body against a row
+   *  that already exists; inserting has no such row, so the value has to come
+   *  from somewhere, and the schema is where that convention belongs. */
+  | { kind: 'insert'; via: string | null; defaults: Array<[string, Const]> }
 
 export function putPolicyToString(p: PutPolicy): string {
   switch (p.kind) {
@@ -73,8 +83,13 @@ export function putPolicyToString(p: PutPolicy): string {
       return `.put spread(${p.residual})`
     case 'into':
       return `.put into ${p.rel}`
-    case 'insertVia':
-      return `.put insert via ${p.rel}`
+    case 'insert': {
+      const via = p.via ? ` via ${p.via}` : ''
+      const defs = p.defaults.length
+        ? ` defaults(${p.defaults.map(([n, c]) => `${n} = ${constToString(c)}`).join(', ')})`
+        : ''
+      return `.put insert${via}${defs}`
+    }
   }
 }
 

@@ -165,8 +165,9 @@ export function compileShadow(
   const insertViaRuleCount = new Map<string, number>()
   for (const rule of program.rules) {
     const p = policies[rule.head.name]
-    if (p?.kind !== 'insertVia') continue
-    const mentions = rule.rhs.some((x) => x.kind !== 'Compare' && x.atom.name === p.rel)
+    if (p?.kind !== 'insert' || !p.via) continue
+    const via = p.via
+    const mentions = rule.rhs.some((x) => x.kind !== 'Compare' && x.atom.name === via)
     if (mentions) {
       insertViaRuleCount.set(rule.head.name, (insertViaRuleCount.get(rule.head.name) ?? 0) + 1)
     }
@@ -263,7 +264,7 @@ export function compileShadow(
       headArgs,
       ruleCountByHead.get(rule.head.name) ?? 1,
       only,
-      policy?.kind === 'insertVia' ? policy.rel : null,
+      policy?.kind === 'insert' ? policy : null,
       insertViaRuleCount,
       rules,
       refusals,
@@ -498,7 +499,7 @@ function emitInsertRules(
   headArgs: readonly string[],
   ruleCount: number,
   only: string | null,
-  insertVia: string | null,
+  insertPolicy: Extract<PutPolicy, { kind: 'insert' }> | null,
   insertViaRuleCount: ReadonlyMap<string, number>,
   out: ShadowRule[],
   refusals: ShadowRefusal[],
@@ -507,6 +508,9 @@ function emitInsertRules(
   const headVars = new Set(
     rule.head.headArguments.flatMap((ha) => (ha.kind === 'Var' ? [ha.name] : [])),
   )
+
+  const insertVia = insertPolicy?.via ?? null
+  const defaults = new Map(insertPolicy?.defaults ?? [])
 
   if (insertVia !== null) {
     const matches = insertViaRuleCount.get(rule.head.name) ?? 0
@@ -550,12 +554,13 @@ function emitInsertRules(
         })
         return
       }
-      if (!headVars.has(arg.name)) {
+      if (!headVars.has(arg.name) && !defaults.has(arg.name)) {
         refusals.push({
           subject,
           reason:
             `inserting into "${rule.head.name}" would need a value for "${arg.name}", which ` +
-            `appears in ${p.atom.name} but not in the head`,
+            `appears in ${p.atom.name} but not in the head — supply one with ` +
+            '`.put insert defaults(...)`',
         })
         return
       }
@@ -572,10 +577,18 @@ function emitInsertRules(
     if (p.kind === 'Compare') continue
     if (only !== null && p.atom.name !== only) continue
     const prefix = p.kind === 'Atom' ? INS_PREFIX : DEL_PREFIX
+    // A variable the head doesn't carry takes its declared default. The value
+    // is a constant in the generated rule, so it needs no channel of its own.
+    const subst = new Map<number, string>()
+    p.atom.args.forEach((arg, i) => {
+      if (arg.kind !== 'Var') return
+      const d = defaults.get(arg.name)
+      if (d) subst.set(i, constToString(d))
+    })
     out.push({
       headRel: prefix + p.atom.name,
       needs: [INS_PREFIX + rule.head.name],
-      text: `${prefix}${renderAtom(p.atom)} :- ${body}.`,
+      text: `${prefix}${renderAtom(p.atom, subst)} :- ${body}.`,
     })
   }
 }

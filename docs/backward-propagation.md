@@ -104,16 +104,19 @@ on the relation's declaration:
   replayed, so they constrain which tuples qualify, but nothing proposes a
   change to them. Turns `ambiguous` into `ok` for the request that reaches both
   sides, and a request reaching *only* the held side into `refused`.
-- **`.put insert via R`** — which rule an *insertion* satisfies, named by a
-  relation its body mentions. Deleting through a multi-rule head is mechanical,
-  since killing a disjunction kills every disjunct; satisfying one is a choice
-  nothing in the program makes.
+- **`.put insert via R defaults(v = c, …)`** — how an *insertion* is carried
+  out. `via` names which rule to satisfy: deleting through a multi-rule head is
+  mechanical, since killing a disjunction kills every disjunct, but satisfying
+  one is a choice nothing in the program makes. `defaults` supplies values for
+  body variables the head doesn't carry — deleting and rewriting recover those
+  by replaying the body against a row that exists, and inserting has no such
+  row. Either part may appear alone.
 - **`.put none`** — read-only on purpose, so a refusal reads as a decision
   rather than an omission.
 
-Still refused: insertion into a rule whose body carries a variable the head
-doesn't — there is no value to insert, and a template annotation would have to
-supply one.
+Still refused: multi-step head arithmetic (its inverse would need a helper
+relation per operation), non-injective head arithmetic (`/`, `%`), and
+insertion whose missing values no `defaults` covers. Each names what it wants.
 
 ## Findings that changed the design
 

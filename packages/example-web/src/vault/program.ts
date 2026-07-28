@@ -12,6 +12,9 @@
 //             table writes into two different source relations
 //   Outline   headings, where `depth` is a number the writer turns back into
 //             a run of `#`
+//   Effort    an aggregate, where a write is a distribution rather than a copy
+//   Line      a view with *two* rules, so an insert has to pick one of them
+//   Load      a view that is deliberately not writable at all
 //
 // `Doc(path, title)` is *derived* — from the note's level-1 heading — rather
 // than stored, so editing an Agenda title has to trace through two rules to
@@ -47,6 +50,10 @@ export const SOURCE = `\
 .decl Outline(title: string, depth: number, text: string)
 .decl Effort(path: string, hours: number)
 .put spread(min)
+.decl Line(path: string, text: string)
+.put insert via MdTask defaults(l = 0, s = "open")
+.decl Load(path: string, open: number)
+.put none
 
 Doc(p, title) :- MdHeading(p, l, 1, title).
 Task(p, s, t) :- MdTask(p, l, s, t).
@@ -54,9 +61,19 @@ Open(p, t) :- MdTask(p, l, "open", t).
 Agenda(title, t) :- Open(p, t), Doc(p, title).
 Outline(title, d, t) :- MdHeading(p, l, d, t), Doc(p, title).
 Effort(p, sum(h)) :- MdEstimate(p, l, h).
+Line(p, t) :- MdTask(p, l, s, t).
+Line(p, t) :- MdHeading(p, l, d, t).
+Load(p, count(t)) :- Open(p, t).
 `
 
 export const program = parseProgram(SOURCE, { grammarSource: 'vault.dl' })
+
+/** The `.put into Open` line the Agenda panel offers to add, and where it goes.
+ *  Kept here so the demo and the program agree on the exact text. */
+export const AGENDA_INTO = {
+  after: '.decl Agenda(title: string, text: string)',
+  line: '.put into Open',
+}
 
 /** The notes the demo starts from. */
 export const SEED_NOTES: Record<string, string> = {

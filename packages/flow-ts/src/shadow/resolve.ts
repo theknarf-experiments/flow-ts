@@ -21,7 +21,7 @@
 // again against the new state. That terminates because each round strictly
 // shrinks a finite EDB and safety guarantees an empty one derives nothing.
 
-import type { Program } from '../ast/index.js'
+import type { Program, PutPolicy } from '../ast/index.js'
 import { executeProgram } from '../executing/dataflow.js'
 import type { Row } from '../reading/row.js'
 import { inferRelationTypes } from '../typing/index.js'
@@ -144,11 +144,15 @@ export function resolveBackward(
     return { status: 'refused', reason: `shadow program failed to compile: ${String(err)}` }
   }
   const edbNames = new Set(program.edbs.map((d) => d.name))
+  // Same precedence as the compiler: a caller-supplied policy overrides the
+  // one in the source text.
+  const policy =
+    options.put?.[request.rel] ?? program.idbs.find((d) => d.name === request.rel)?.put
 
   if (isInsert) {
     const changes = propose(shadowProgram, edbNames, facts, request)
     if (changes.length === 0) {
-      return { status: 'refused', reason: noCandidateReason(shadow.refusals, request) }
+      return { status: 'refused', reason: noCandidateReason(shadow.refusals, request, policy) }
     }
     const ambiguity = checkAmbiguous(changes, options)
     if (ambiguity) return ambiguity
@@ -169,7 +173,7 @@ export function resolveBackward(
   if (isUpdate) {
     const changes = propose(shadowProgram, edbNames, facts, request)
     if (changes.length === 0) {
-      return { status: 'refused', reason: noCandidateReason(shadow.refusals, request) }
+      return { status: 'refused', reason: noCandidateReason(shadow.refusals, request, policy) }
     }
     const ambiguity = checkAmbiguous(changes, options)
     if (ambiguity) return ambiguity
@@ -195,7 +199,7 @@ export function resolveBackward(
     if (changes.length === 0) {
       return {
         status: 'refused',
-        reason: rounds === 1 ? noCandidateReason(shadow.refusals, request) : 'no further candidates',
+        reason: rounds === 1 ? noCandidateReason(shadow.refusals, request, policy) : 'no further candidates',
       }
     }
     if (rounds === 1) {
@@ -313,7 +317,16 @@ export function shrink(
 function noCandidateReason(
   refusals: ReadonlyArray<{ subject: string; reason: string }>,
   request: BackwardRequest,
+  policy: PutPolicy | null | undefined,
 ): string {
+  // `.put none` and "the compiler could not work it out" both end with nothing
+  // proposed, and they are not the same answer. One is a decision the schema
+  // made; the other is a gap the schema could close. Saying "no candidate
+  // change reaches a source relation" for a view that was *declared* read-only
+  // invites the reader to go looking for the missing rule.
+  if (policy?.kind === 'none') {
+    return `${request.rel} is declared read-only with \`.put none\``
+  }
   const relevant = refusals.filter((r) => r.subject.startsWith(`${request.rel}(`))
   return relevant.length > 0
     ? `no candidate: ${relevant[0]!.reason}`

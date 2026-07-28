@@ -361,3 +361,149 @@ test.describe('spreading an aggregate', () => {
     await expect(page.getByTestId('effort-input-work.md')).toHaveAttribute('readonly', '')
   })
 })
+
+// `.put into R` — naming which side of a join a write lands on, and paying for
+// it. Removing an agenda row is genuinely ambiguous: dropping the task line and
+// dropping the document heading both make the row stop existing. The engine
+// finds both and will not choose. `.put into Open` is the schema choosing once,
+// and the price is the other side being held constant — which is what makes the
+// title column read-only. Both consequences come from the same annotation.
+test.describe('naming the side of a join a write lands on', () => {
+  const agendaInto = async (page: Page) => {
+    await page.getByTestId('agenda-remove-reply to sam').click()
+    await page.getByTestId('agenda-choice-annotate').click()
+  }
+
+  test('without it, both columns are editable and removing is a question', async ({ page }) => {
+    await gotoVault(page)
+    await expect(page.getByTestId('agenda-writable')).toHaveText('editable: title, text')
+    await page.getByTestId('agenda-remove-reply to sam').click()
+    await expect(page.getByTestId('agenda-choice')).toBeVisible()
+  })
+
+  test('adding it makes removing unambiguous — straight to the task line', async ({ page }) => {
+    await gotoVault(page)
+    await agendaInto(page)
+    await expect(page.getByTestId('agenda-choice')).toHaveCount(0)
+
+    await page.getByTestId('agenda-remove-reply to sam').click()
+    // No dialog this time: the schema already answered.
+    await expect(page.getByTestId('agenda-choice')).toHaveCount(0)
+    await expect(page.getByTestId('note-work.md')).not.toContainText('reply to sam')
+    // And the heading it might have removed instead is untouched.
+    await expect(page.getByTestId('note-work.md')).toContainText('# Work')
+  })
+
+  test('and the constant side stops being writable', async ({ page }) => {
+    await gotoVault(page)
+    await agendaInto(page)
+    await expect(page.getByTestId('agenda-writable')).toHaveText('editable: text')
+    await expect(page.getByTestId('agenda-input-0-water the plants')).toHaveAttribute(
+      'readonly',
+      '',
+    )
+    // The subject side still writes through.
+    const text = page.getByTestId('agenda-input-1-water the plants')
+    await text.fill('water the ferns')
+    await text.blur()
+    await expect(page.getByTestId('note-home.md')).toContainText('- [ ] water the ferns')
+  })
+
+  test('the annotation lands in the program panel, where it can be taken back', async ({
+    page,
+  }) => {
+    await gotoVault(page)
+    await agendaInto(page)
+    await page.getByTestId('vault-program-panel').getByText('Datalog program').click()
+    await expect(page.getByTestId('vault-program-source')).toHaveValue(/\.put into Open/)
+
+    await page.getByTestId('vault-program-reset').click()
+    await expect(page.getByTestId('agenda-writable')).toHaveText('editable: title, text')
+  })
+})
+
+// `.put insert via R` — choosing which rule an insertion satisfies. `Line` has
+// two rules, and the asymmetry is the point: reading and editing need no help,
+// because an existing row can be traced to the rule that produced it. A row
+// that does not exist yet cannot be, so "task or heading?" has no answer in the
+// program until one is written down.
+test.describe('choosing which rule an insert satisfies', () => {
+  test('the view unions both rules', async ({ page }) => {
+    await gotoVault(page)
+    // A task…
+    await expect(page.getByTestId('line-reply to sam')).toBeVisible()
+    // …and a heading, in the same view.
+    await expect(page.getByTestId('line-This week')).toBeVisible()
+  })
+
+  test('inserting goes to the rule the annotation names', async ({ page }) => {
+    await gotoVault(page)
+    await expect(page.getByTestId('line-insert-status')).toContainText('insert via MdTask')
+    await page.getByTestId('line-new-text').fill('buy stamps')
+    await page.getByTestId('line-new-note').selectOption('home.md')
+    await page.getByTestId('line-add').click()
+
+    // A task, not a heading — and `defaults(s = "open")` is why it is unchecked.
+    await expect(page.getByTestId('note-home.md')).toContainText('- [ ] buy stamps')
+    await expect(page.getByTestId('note-home.md')).not.toContainText('# buy stamps')
+    await expect(page.getByTestId('line-buy stamps')).toBeVisible()
+  })
+
+  test('without it the engine refuses, and says the head has several rules', async ({ page }) => {
+    await gotoVault(page)
+    await page.getByTestId('vault-program-panel').getByText('Datalog program').click()
+    const source = page.getByTestId('vault-program-source')
+    await source.fill(
+      (await source.inputValue()).replace(
+        '.put insert via MdTask defaults(l = 0, s = "open")',
+        '',
+      ),
+    )
+    await page.getByTestId('vault-program-rebuild').click()
+
+    // The view still reads — both rules still derive rows.
+    await expect(page.getByTestId('line-reply to sam')).toBeVisible()
+    // Only the insert is gone, and the message says why.
+    await expect(page.getByTestId('line-insert-status')).toContainText('several rules')
+    await page.getByTestId('line-new-text').fill('buy stamps')
+    await expect(page.getByTestId('line-add')).toBeDisabled()
+  })
+})
+
+// `.put none` — explicit read-only. The distinction worth seeing is against the
+// host's `writable` list: `Load` is in it, so the application is offering the
+// edit, and the schema is the thing declining. And a refusal that says "declared
+// read-only" is a different answer from one that says "I could not work it out".
+test.describe('a view that is read-only on purpose', () => {
+  test('is opted in by the host and still not writable', async ({ page }) => {
+    await gotoVault(page)
+    await expect(page.getByTestId('load-count-work.md')).toHaveText('2')
+    await expect(page.getByTestId('load-writable')).toHaveText('editable: none')
+  })
+
+  test('refuses by naming the annotation', async ({ page }) => {
+    await gotoVault(page)
+    await page.getByTestId('load-try-work.md').click()
+    await expect(page.getByTestId('load-refusal')).toHaveText(
+      'Load is declared read-only with `.put none`',
+    )
+  })
+
+  test('and without it the refusal is about what could not be worked out', async ({ page }) => {
+    await gotoVault(page)
+    await page.getByTestId('vault-program-panel').getByText('Datalog program').click()
+    const source = page.getByTestId('vault-program-source')
+    await source.fill((await source.inputValue()).replace('\n.put none', ''))
+    await page.getByTestId('vault-program-rebuild').click()
+
+    await page.getByTestId('load-try-work.md').click()
+    await expect(page.getByTestId('load-refusal')).toContainText('aggregation')
+    await expect(page.getByTestId('load-refusal')).not.toContainText('read-only')
+  })
+
+  test('the count still derives, and follows the tasks', async ({ page }) => {
+    await gotoVault(page)
+    await page.getByTestId('task-check-reply to sam').click()
+    await expect(page.getByTestId('load-count-work.md')).toHaveText('1')
+  })
+})

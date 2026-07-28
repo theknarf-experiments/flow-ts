@@ -121,6 +121,50 @@ Total(p, sum(h)) :- Hours(p, w, h).
     expect(shadow.refusals.filter((r) => /aggregation/i.test(r.reason))).toEqual([])
   })
 
+  it('a refusal for a read-only view names the annotation', () => {
+    // "No candidate change reaches a source relation" is what the engine says
+    // when it looked and found nothing, and it sends the reader off to hunt for
+    // the missing rule. A view declared read-only is not a gap, and the two
+    // must not read the same.
+    const r = resolveBackward(
+      parseProgram(ANNOTATED.replace('.put spread(min)', '.put none')),
+      { Hours: [['x', 1, 5], ['x', 2, 7]] },
+      { rel: 'Total', row: ['x', 12], newRow: ['x', 15] },
+      { parse: (src) => parseProgram(src, { grammarSource: 'shadow.dl' }) },
+    )
+    expect(r.status).toBe('refused')
+    if (r.status !== 'refused') return
+    expect(r.reason).toBe('Total is declared read-only with `.put none`')
+  })
+
+  it('and without it, says what it could not work out instead', () => {
+    const r = resolveBackward(
+      parseProgram(ANNOTATED.replace('\n.put spread(min)', '')),
+      { Hours: [['x', 1, 5], ['x', 2, 7]] },
+      { rel: 'Total', row: ['x', 12], newRow: ['x', 15] },
+      { parse: (src) => parseProgram(src, { grammarSource: 'shadow.dl' }) },
+    )
+    expect(r.status).toBe('refused')
+    if (r.status !== 'refused') return
+    expect(r.reason).toMatch(/aggregation/)
+    expect(r.reason).not.toMatch(/read-only/)
+  })
+
+  it('a policy passed by the caller reads the same way', () => {
+    const r = resolveBackward(
+      parseProgram(ANNOTATED.replace('\n.put spread(min)', '')),
+      { Hours: [['x', 1, 5], ['x', 2, 7]] },
+      { rel: 'Total', row: ['x', 12], newRow: ['x', 15] },
+      {
+        parse: (src) => parseProgram(src, { grammarSource: 'shadow.dl' }),
+        put: { Total: { kind: 'none' } },
+      },
+    )
+    expect(r.status).toBe('refused')
+    if (r.status !== 'refused') return
+    expect(r.reason).toBe('Total is declared read-only with `.put none`')
+  })
+
   it('options override the directive', () => {
     const shadow = compileShadow(parseProgram(ANNOTATED), {
       put: { Total: { kind: 'none' } },

@@ -24,13 +24,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Store, useProgram, useWritableQuery } from '@flow-ts/react'
 import type { Resolution } from 'flow-ts'
-import { SEED_NOTES, SOURCE, program } from './vault/program.js'
+import { AGENDA_INTO, SEED_NOTES, SOURCE, program } from './vault/program.js'
 import { parseProgram } from '@flow-ts/parsing'
 import { type Row, type VaultFacts, applyToVault, parseVault } from './vault/markdown.js'
 
 // Only these views are writable. The others are just as derived; they simply
 // aren't opted in, because shadow rules aren't free and most tables are read.
-const store = new Store(program, { writable: ['Task', 'Agenda', 'Outline', 'Effort'] })
+const store = new Store(program, {
+  writable: ['Task', 'Agenda', 'Outline', 'Effort', 'Line', 'Load'],
+})
 
 const EDBS = ['MdTask', 'MdHeading', 'MdEstimate'] as const
 const keyOf = (row: Row) => row.map((v) => `${typeof v}:${v}`).join('')
@@ -53,7 +55,15 @@ const EMPTY: VaultFacts = { MdTask: [], MdHeading: [], MdEstimate: [] }
 export function VaultDemo() {
   const [notes, setNotes] = useState<Record<string, string>>(SEED_NOTES)
   const [status, setStatus] = useState<string | null>(null)
+  // The active program lives here rather than in the panel, because the panel
+  // is no longer the only thing that edits it: the Agenda table offers to add
+  // an annotation, and that has to be the same edit the panel would show.
+  const [source, setSource] = useState<string>(SOURCE.trim())
   useProgram(store)
+
+  useEffect(() => {
+    store.replaceProgram(parseProgram(source, { grammarSource: 'live.dl' }))
+  }, [source])
 
   // Keep the engine's facts in step with the text — in an effect, not during
   // render. `syncFacts` flushes the store, which notifies subscribers, and
@@ -111,7 +121,7 @@ export function VaultDemo() {
         </p>
       </header>
 
-      <VaultProgramPanel />
+      <VaultProgramPanel source={source} setSource={setSource} />
 
       <div className="vault-grid">
         <section className="card">
@@ -131,9 +141,20 @@ export function VaultDemo() {
 
         <div className="vault-views">
           <TaskTable write={write} />
-          <AgendaTable write={write} />
+          <AgendaTable
+            write={write}
+            annotate={() =>
+              setSource((s) =>
+                s.includes(AGENDA_INTO.line)
+                  ? s
+                  : s.replace(AGENDA_INTO.after, `${AGENDA_INTO.after}\n${AGENDA_INTO.line}`),
+              )
+            }
+          />
           <OutlineTable write={write} />
           <EffortTable write={write} />
+          <LineTable write={write} />
+          <LoadTable />
           {status && (
             <p className="muted" data-testid="vault-status">
               {status}
@@ -148,16 +169,27 @@ export function VaultDemo() {
 /** The rules, editable. Everything above is derived from these — including
  *  which cells are editable at all — so changing them here changes the whole
  *  demo, write-back included. */
-function VaultProgramPanel() {
-  const [draft, setDraft] = useState<string>(SOURCE.trim())
+function VaultProgramPanel({
+  source,
+  setSource,
+}: {
+  source: string
+  setSource: (next: string) => void
+}) {
+  const [draft, setDraft] = useState<string>(source)
   const [error, setError] = useState<string | null>(null)
-  const [dirty, setDirty] = useState(false)
+  const dirty = draft !== source
+  // The panel is not the only editor any more, so the draft follows the active
+  // program when something else changes it.
+  useEffect(() => setDraft(source), [source])
 
   const rebuild = () => {
     try {
-      store.replaceProgram(parseProgram(draft, { grammarSource: 'live.dl' }))
+      // Parsed here only to keep a broken draft out of the active source; the
+      // effect that owns `replaceProgram` parses the copy it commits.
+      parseProgram(draft, { grammarSource: 'live.dl' })
       setError(null)
-      setDirty(false)
+      setSource(draft)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -179,7 +211,6 @@ function VaultProgramPanel() {
           onChange={(e) => {
             setDraft(e.target.value)
             setError(null)
-            setDirty(e.target.value.trim() !== SOURCE.trim())
           }}
           spellCheck={false}
           rows={Math.min(24, draft.split('\n').length + 1)}
@@ -191,12 +222,10 @@ function VaultProgramPanel() {
           <button
             data-testid="vault-program-reset"
             onClick={() => {
-              setDraft(SOURCE.trim())
               setError(null)
-              setDirty(false)
-              store.replaceProgram(parseProgram(SOURCE, { grammarSource: 'vault.dl' }))
+              setSource(SOURCE.trim())
             }}
-            disabled={draft.trim() === SOURCE.trim()}
+            disabled={draft === SOURCE.trim() && source === SOURCE.trim()}
           >
             reset
           </button>
@@ -261,6 +290,162 @@ function EffortTable({ write }: { write: Write }) {
           </li>
         ))}
       </ul>
+    </section>
+  )
+}
+
+/** `Line(path, text) :- MdTask(path, line, status, text).`
+ *  `Line(path, text) :- MdHeading(path, line, depth, text).`
+ *
+ *  Two rules for one head. *Reading* needs no choice — every row came from one
+ *  rule or the other, and replaying the body says which, so editing and
+ *  removing a line work with nothing declared. *Adding* one has no body to
+ *  replay and therefore no way to ask: a new line is a task under one rule and
+ *  a heading under the other, and the program does not prefer either.
+ *
+ *  `.put insert via MdTask` picks the rule, and `defaults(l = 0, s = "open")`
+ *  fills the two columns that rule needs and the head does not carry. */
+function LineTable({ write }: { write: Write }) {
+  const view = useWritableQuery<readonly [string, string]>(store, 'Line')
+  const [adding, setAdding] = useState('')
+  const [target, setTarget] = useState('work.md')
+  const rows = useMemo(
+    () => [...view.rows].sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1])),
+    [view.rows],
+  )
+  const notes = useMemo(() => [...new Set(rows.map((r) => r[0]))].sort(), [rows])
+
+  // Whether adding is possible at all is a question about the program, and the
+  // only honest way to answer it is to ask the engine. A dry run resolves and
+  // verifies without applying anything, so this is the real answer rather than
+  // a guess about which annotations are present.
+  const probe = useMemo(
+    () => view.insert([target, adding.trim() || 'a new line'], { dryRun: true }),
+    [view, target, adding],
+  )
+  const canAdd = probe.status === 'ok'
+
+  const add = () => {
+    const text = adding.trim()
+    if (!text) return
+    write(`added "${text}"`, () => view.insert([target, text], { dryRun: true }))
+    setAdding('')
+  }
+
+  return (
+    <section className="card">
+      <h2>Lines</h2>
+      <p className="muted">
+        <code>Line(path, text) :- MdTask(path, line, status, text).</code>
+        <br />
+        <code>Line(path, text) :- MdHeading(path, line, depth, text).</code> One view, two
+        rules. Editing a row works without anything declared — the row exists, so replaying
+        the body says which rule it came from. Adding one has no row to replay, and a new
+        line is a task under one rule and a heading under the other.
+      </p>
+      <ul className="tasks" data-testid="line-list">
+        {rows.map((row) => (
+          <li key={`${row[0]}/${row[1]}`} data-testid={`line-${row[1]}`}>
+            <span>{row[1]}</span>
+            <span className="muted">{row[0]}</span>
+          </li>
+        ))}
+      </ul>
+      <div className="task-add">
+        <input
+          aria-label="new line"
+          data-testid="line-new-text"
+          placeholder="add a line…"
+          value={adding}
+          onChange={(e) => setAdding(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && canAdd) add()
+          }}
+        />
+        <select
+          aria-label="note for new line"
+          data-testid="line-new-note"
+          value={target}
+          onChange={(e) => setTarget(e.target.value)}
+        >
+          {notes.map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          data-testid="line-add"
+          onClick={add}
+          disabled={!adding.trim() || !canAdd}
+          title={canAdd ? 'inserts via MdTask' : reasonOf(probe)}
+        >
+          add
+        </button>
+      </div>
+      <p className="muted" data-testid="line-insert-status">
+        {canAdd
+          ? '.put insert via MdTask defaults(l = 0, s = "open") — a new line is a task.'
+          : reasonOf(probe)}
+      </p>
+    </section>
+  )
+}
+
+/** `Load(path, count(text)) :- Open(path, text).`
+ *
+ *  The view that is read-only on purpose. Its inverse is not ambiguous — it is
+ *  absent. No assignment of tasks is *the* meaning of setting a count to 3, so
+ *  there is nothing for an annotation like `spread` to pick between.
+ *
+ *  `.put none` is how the schema says that, and it is a different statement
+ *  from leaving the view out of the host's `writable` list. That list is this
+ *  application declining to offer the edit, and it travels with the
+ *  application; `Load` is in it. `.put none` travels with the program, so every
+ *  consumer gets the same answer — and the refusal names the annotation instead
+ *  of reading like a rule someone forgot to write. */
+function LoadTable() {
+  const view = useWritableQuery<readonly [string, number]>(store, 'Load')
+  const [refusal, setRefusal] = useState<string | null>(null)
+  const rows = useMemo(() => [...view.rows].sort((a, b) => a[0].localeCompare(b[0])), [view.rows])
+
+  return (
+    <section className="card">
+      <h2>Load</h2>
+      <p className="muted">
+        <code>Load(path, count(text)) :- Open(path, text).</code> Opted in by this
+        application — it is in the store's <code>writable</code> list like every other table
+        here — and still not writable, because the program says so.{' '}
+        <span data-testid="load-writable">
+          editable: {view.writableColumns.map((i) => columnNames('Load')[i] ?? i).join(', ') || 'none'}
+        </span>
+      </p>
+      <ul className="tasks" data-testid="load-list">
+        {rows.map((row) => (
+          <li key={row[0]} data-testid={`load-${row[0]}`}>
+            <span data-testid={`load-count-${row[0]}`}>{row[1]}</span>
+            <span className="muted">open in {row[0]}</span>
+            <button
+              type="button"
+              data-testid={`load-try-${row[0]}`}
+              onClick={() => setRefusal(reasonOf(view.update(row, [row[0], row[1] + 1], { dryRun: true })))}
+            >
+              try +1
+            </button>
+          </li>
+        ))}
+      </ul>
+      {refusal && (
+        <p className="muted" data-testid="load-refusal">
+          {refusal}
+        </p>
+      )}
+      <p className="muted">
+        Remove <code>.put none</code> from the program and the refusal changes: the engine
+        goes back to reporting what it could not work out — an aggregate whose inverse is a
+        distribution policy — which is a different answer from "there isn't one".
+      </p>
     </section>
   )
 }
@@ -365,7 +550,7 @@ function TaskTable({ write }: { write: Write }) {
 
 /** `Agenda(title, text) :- Open(p, t), Doc(p, title).` — a join whose two
  *  columns write into two different source relations, three rules apart. */
-function AgendaTable({ write }: { write: Write }) {
+function AgendaTable({ write, annotate }: { write: Write; annotate: () => void }) {
   const view = useWritableQuery<readonly [string, string]>(store, 'Agenda')
   // One cell at a time. Keying drafts by the row's *values* meant an entry
   // outlived the row it belonged to the moment a rename changed those values,
@@ -478,6 +663,23 @@ function AgendaTable({ write }: { write: Write }) {
           ))}
           <button type="button" data-testid="agenda-choice-cancel" onClick={() => setChoice(null)}>
             cancel
+          </button>
+          <p className="muted">
+            Or answer it once, in the schema. <code>.put into Open</code> on{' '}
+            <code>Agenda</code> names the side of the join a write lands on; the other side
+            is held constant, which is the classical condition for a view update to be
+            well-defined. It is not free — holding <code>Doc</code> constant is exactly what
+            makes the title column read-only, and you can watch that happen.
+          </p>
+          <button
+            type="button"
+            data-testid="agenda-choice-annotate"
+            onClick={() => {
+              setChoice(null)
+              annotate()
+            }}
+          >
+            add <code>.put into Open</code> to the program
           </button>
         </div>
       )}

@@ -39,16 +39,29 @@ const E0 = (arity: number, head: string) => `\
 // GAP 1 — a body atom that shares no variable with the rest of the body (a
 // cartesian factor) *and* contributes no column to the head.
 //
-// The planner then builds an intermediate collection with neither key columns
-// (nothing to join on) nor value columns (nothing to carry), and `buildKvToKv`
-// has no name for a zero-column shape. Semantically these rules are ordinary
-// existence tests — "I0(a) if E0(a) holds and E0 is non-empty" — so supporting
-// them means a unit/boolean collection kind through planning and execution.
-//
 // The boundary is sharp, and both halves matter:
 //   ok     I0(a, b) :- E0(a), E0(b).      cartesian, but `b` reaches the head
 //   ok     I0(a)    :- E0(a, b), E0(b, c). shares `b`, so not cartesian
 //   CRASH  I0(a)    :- E0(a), E0(b).      cartesian *and* `b` is dropped
+//
+// Diagnosis, for whoever picks this up. In `recursiveSemijoins`
+// (`planning/rule.ts`), `subatomVarSigs` drops constants, var-equalities and
+// placeholders; when nothing survives it is empty, so `buildKvToKv` is asked
+// for an output with neither key nor value columns and has no name for that
+// shape. The semijoin it feeds joins on that empty key, which means "the left
+// side passes through iff the right relation is non-empty" — data-dependent,
+// so a static plan cannot decide it.
+//
+// Cross products themselves are fine (the first control below is one). What's
+// missing is the *nullary* case: a unit/boolean collection, a join kind whose
+// right side is a guard rather than a key, and a db-ivm operator that gates one
+// stream on another's non-emptiness. That is a feature across planning,
+// transformations and execution, not a repair — which is why it is still here
+// while the other two gaps found alongside it are fixed.
+//
+// It does not block backward propagation: the shadow compiler never generates
+// this shape, it only inherits it from a source program that already cannot run
+// forward.
 describe('planner gap: cartesian body atom with no surviving column', () => {
   it.fails('existence test via an unrelated atom', () => {
     const rows = run(`${E0(1, 'h0: number')}I0(a) :- E0(a), E0(b).`, { E0: [[1], [2]] })

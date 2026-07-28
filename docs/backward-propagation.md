@@ -99,12 +99,17 @@ on the relation's declaration:
 
 - **`spread(min|max)`** — inverting a linear aggregate. See below; the residual
   owner is a genuine free choice.
+- **`.put into R`** — which side of a join a write lands on. Bancilhon &
+  Spyratos' constant complement named directly: the other atoms are still
+  replayed, so they constrain which tuples qualify, but nothing proposes a
+  change to them. Turns `ambiguous` into `ok` for the request that reaches both
+  sides, and a request reaching *only* the held side into `refused`.
 - **`.put none`** — read-only on purpose, so a refusal reads as a decision
   rather than an omission.
 
 Still refused, not yet annotatable: head arithmetic, the insert branch of a
-multi-rule head, insert templates for existentials, the write-side of a join,
-and a minimal cut under recursion.
+multi-rule head, insert templates for existentials, and a minimal cut under
+recursion.
 
 ## Findings that changed the design
 
@@ -151,16 +156,45 @@ multi-step expressions thread through helper relations, one operation per rule.
 
 ## Engine bugs found by the fuzzer
 
-- **Head-constant collision** (fixed, `4afc001`). Two rules over the same body
-  with a constant in different head positions produced each other's results, and
-  when both wrote the same relation a row vanished. The shadow compiler emits
+- **Head-constant collision** (fixed). Two rules over the same body with a
+  constant in different head positions produced each other's results, and when
+  both wrote the same relation a row vanished. The shadow compiler emits
   precisely this shape, so it was silently corrupting backward propagation.
+- **Constant in a negated atom plus a comparison** (fixed). The trace aligning a
+  negated atom's arguments demanded a signature-map entry for every position; a
+  constant has no variable name, so it has none — and can never match a trace
+  argument anyway. Either ingredient alone always planned, which is why it went
+  unnoticed.
 - **Cartesian body atom** (open, `tests/executing/planner-gaps.test.ts`). An atom
   sharing no variable with the rest of the body and contributing no head column
-  leaves a zero-column intermediate the planner can't name. These are ordinary
-  existence tests; supporting them needs a unit collection kind.
-- **Constant in a negated atom plus a comparison** (open, same file). Either
-  ingredient alone plans fine.
+  leaves a zero-column intermediate. Cross products themselves work; the nullary
+  case doesn't, and it needs a unit collection, a guard-shaped join, and a
+  db-ivm operator gating one stream on another's non-emptiness — a feature
+  across planning and execution, not a repair. It doesn't block this work: the
+  shadow compiler never generates the shape, only inherits it from a program
+  that already can't run forward.
+
+## Cost
+
+Measured, not argued. Sink emissions for one request, batch versus a loaded
+session:
+
+| database | batch | incremental |
+| --- | --- | --- |
+| 5 rows | 8 | 4 |
+| 80 rows | 83 | 4 |
+
+Batch re-derives everything, so its cost tracks the database; an incremental
+request touches only what the seed reaches. Wall-clock agrees — request cost is
+flat from 200 to 8000 rows.
+
+One prediction was wrong. I expected SIP to be the optimisation that makes this
+cheap, since a seeded request is a single highly selective row. It costs about
+5x instead, at every size tried, and `-O 2` (planning) is best or tied
+throughout. Incremental maintenance has already built the join index, so the
+body replay is already a probe; SIP's extra semijoin transformations are
+per-advance overhead, and the scan it avoids is one a maintained graph never
+performs.
 
 ## Testing
 

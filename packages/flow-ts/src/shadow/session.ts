@@ -19,6 +19,17 @@
 // everything derived from it — and `a proposal leaves the session exactly as it
 // found it` holds that to account over generated programs.
 //
+// It holds for non-recursive programs, and the session refuses the rest. The
+// original reason — retraction through a recursive stratum did not fully
+// propagate, so a proposal left residue — is fixed, in db-ivm's
+// `recursiveDistinct`. Lifting the refusal on the strength of that turned out
+// to be premature: the model-based test still finds programs where the
+// session's own view drifts after an operation, while the *executor* on the
+// same program agrees with recomputation across two hundred fuzzed
+// retractions. So whatever is left is in this layer, not underneath it, and it
+// is a separate piece of work. The counterexample is pinned in
+// tests/shadow/stateful.test.ts.
+//
 // Speculation works the same way. Apply the proposed EDB changes, advance, ask
 // whether the view moved; if it didn't, apply the inverse and the session is
 // unpoisoned. That is the propose → apply → verify → commit-or-rollback protocol
@@ -49,15 +60,11 @@ export interface BackwardSessionOptions extends ResolveOptions {
   noSharing?: boolean
   /** Open a session over a recursive program anyway.
    *
-   *  Incremental retraction is unsound when derivations can be cyclic — see
-   *  tests/executing/retraction-limits.test.ts — and this session retracts
-   *  constantly: every proposal un-seeds itself, and every speculation rolls
-   *  back. Over a recursive program those retractions don't fully propagate,
-   *  so a proposal leaves residue and the next one reads it.
-   *
-   *  `resolveBackward` recomputes per request and is unaffected, so it is the
-   *  right entry point for a recursive program. This escape hatch exists for
-   *  testing the limitation itself. */
+   *  It will drift. Retraction through a recursive stratum is sound as of
+   *  db-ivm's `recursiveDistinct`, and that was the original reason for the
+   *  refusal, but the model-based test still finds this layer disagreeing with
+   *  recomputation on some recursive programs. The escape hatch exists so that
+   *  gap can be worked on. */
   allowRecursive?: boolean
 }
 
@@ -100,17 +107,22 @@ export function openBackwardSession(
     )
   }
 
-  // Refuse rather than answer wrongly. A recursive program is exactly where
-  // this session's un-seed-and-roll-back design breaks: the retractions it
-  // depends on don't fully propagate through a recursive stratum.
+  // Refuse rather than answer wrongly.
+  //
+  // Not for the reason it used to be. Retraction through a recursive stratum
+  // is sound now, and the executor agrees with recomputation on exactly the
+  // programs this used to reject. But the model-based test still catches this
+  // session drifting over some of them, and a drifting session is worse than
+  // an absent one — `resolveBackward` recomputes per request and is correct
+  // over recursive programs today.
   if (!options.allowRecursive) {
     const strata = Strata.fromParser(program)
     if (strata.isRecursiveStrataBitmap.some(Boolean)) {
       throw new Error(
-        'openBackwardSession: this program has a recursive stratum, and incremental ' +
-          'retraction is unsound there — a proposal would leave residue for the next one. ' +
-          'Use resolveBackward, which recomputes per request, or pass allowRecursive to ' +
-          'override.',
+        'openBackwardSession: this program has a recursive stratum, and a session over one ' +
+          'still drifts from recomputation — see tests/shadow/stateful.test.ts. The executor ' +
+          'itself is sound here; this is a gap in the session layer. Use resolveBackward, ' +
+          'which recomputes per request, or pass allowRecursive to override.',
       )
     }
   }

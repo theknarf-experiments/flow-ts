@@ -127,7 +127,7 @@ Open(p, t) :- Task(p, "open", t).
 
 describe('sessions minimise too', () => {
   // Not over `Path`: a session refuses recursive programs, because incremental
-  // retraction is unsound there (tests/executing/retraction-limits.test.ts).
+  // this layer still drifts there (tests/shadow/stateful.test.ts).
   // Over-collection isn't unique to recursion, though — an existence test
   // gathers every row of the witness relation, and only one candidate is
   // actually load-bearing.

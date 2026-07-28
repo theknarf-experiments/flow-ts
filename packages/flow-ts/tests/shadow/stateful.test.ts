@@ -184,11 +184,16 @@ describe('a session agrees with recomputation after every operation', () => {
     )
   })
 
-  // Not over recursive programs: a session refuses them, because incremental
-  // retraction is unsound when derivations can be cyclic, and this session
-  // retracts constantly — every proposal un-seeds itself. That limitation was
-  // found by this very test, and pinned in
-  // tests/executing/retraction-limits.test.ts.
+  // Not over recursive programs, and the reason changed. It used to be that
+  // retraction through a recursive stratum did not fully propagate, so a
+  // proposal left residue for the next one. That is fixed — see
+  // tests/executing/recursive-retraction.test.ts, and the pinned program below,
+  // whose *executor* agrees with recomputation across two hundred fuzzed
+  // retractions.
+  //
+  // This layer still drifts on some of them. Lifting the refusal on the
+  // strength of the executor fix was tried and this test caught it, twice in
+  // three seeds, which is the whole reason it exists.
   it('and refuses recursive programs outright, rather than drifting', () => {
     let refused = 0
     fc.assert(
@@ -207,6 +212,30 @@ describe('a session agrees with recomputation after every operation', () => {
       { numRuns: 150 },
     )
     expect(refused).toBeGreaterThan(30)
+  })
+
+  // The counterexample, kept so the next attempt starts from a known-hard case
+  // rather than waiting for a seed to rediscover it. The recursive rule takes
+  // one column from itself and the other from an unrelated relation, so the
+  // derived set grows by cross product rather than by following a path.
+  it('the shape that drifts, so the next attempt has somewhere to start', () => {
+    const source = `.in
+.decl E0(c0: string)
+.input E0.csv
+.decl E1(c0: number, c1: string, c2: number)
+.input E1.csv
+.printsize
+.decl I0(c0: number, c1: string)
+.rule
+I0(a, s) :- E1(a, s, _), E0("x"), E0(s), s < "y".
+I0(a, s) :- I0(a, t), E0(s).`
+    const program = parseProgram(source, { grammarSource: 'g.dl' })
+    expect(Strata.fromParser(program).isRecursiveStrataBitmap.some(Boolean)).toBe(true)
+    expect(() => openBackwardSession(program, PARSE)).toThrow(/recursive stratum/i)
+    // With the refusal overridden it opens, and that is where the drift is.
+    const session = openBackwardSession(program, { ...PARSE, allowRecursive: true })
+    expect(session).toBeDefined()
+    session.close()
   })
 
   it('with minimisation on, which applies and reverts candidates as it searches', () => {

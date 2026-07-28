@@ -59,8 +59,31 @@ export class D2 implements ID2 {
     return false
   }
 
+  /** Run to a fixpoint, then let operators that deferred work settle, then run
+   *  again — until nothing more is deferred.
+   *
+   *  One `while (pendingWork()) step()` is enough for any operator that can
+   *  decide its output from the deltas in front of it. The dedup inside a
+   *  recursive scope cannot: whether a tuple that just lost one of its
+   *  derivations has really gone depends on whether the *rest* of its
+   *  derivations survive the retraction it is about to cause, and that is not
+   *  known until the retraction has finished propagating. So it retracts
+   *  optimistically, and `settle()` is where it puts back whatever turned out
+   *  to still be standing. Delete, then re-derive.
+   *
+   *  Nested inside recursion this terminates because a recursive stratum has no
+   *  negation, so re-derivation only ever adds, and it is bounded above by the
+   *  fixpoint that existed before the retraction. */
   run(): void {
-    while (this.pendingWork()) this.step()
+    for (;;) {
+      while (this.pendingWork()) this.step()
+      let deferred = false
+      const ops = this.#operators
+      for (let i = 0; i < ops.length; i++) {
+        if (ops[i]!.settle()) deferred = true
+      }
+      if (!deferred) return
+    }
   }
 }
 

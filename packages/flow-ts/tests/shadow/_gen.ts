@@ -254,9 +254,10 @@ export function buildProgram(pool: readonly number[], recursive = false): GenPro
         return candidates.length > 0 ? d.pick(candidates) : null
       })
       // A rule whose head is identical to its recursive atom is its own
-      // support. It adds nothing to the fixpoint, and incremental retraction
-      // cannot undo it — see tests/executing/retraction-limits.test.ts — so
-      // generating it would test a shape no real program wants.
+      // support: it adds nothing to the least fixpoint, since it can only
+      // re-derive what is already there. Retraction handles it correctly now
+      // (tests/executing/recursive-retraction.test.ts), but generating it would
+      // still spend the budget on a shape no real program writes.
       const tautological = headVars.every((v, j) => v === carried[j])
       if (headVars.every((v) => v !== null) && !tautological) {
         texts.push(

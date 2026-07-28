@@ -308,8 +308,8 @@ export class Store {
   // away, rather than holding a maintained backward session. That costs more
   // per write and nothing per read, which is the right way round for a UI; it
   // scopes itself to the relation being edited; and it works on recursive
-  // programs, which a maintained session refuses outright because incremental
-  // retraction is unsound there.
+  // programs, which a maintained session still refuses — the executor retracts
+  // correctly through recursion now, but the session layer drifts there.
 
   /** True if edits to this view were opted into. */
   canWrite(relation: string): boolean {

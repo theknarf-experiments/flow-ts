@@ -41,6 +41,7 @@ import {
   minByKey,
   output,
   reduce,
+  recursiveStringDistinct,
   stringDistinct,
 } from '@flow-ts/db-ivm'
 import { iterateMulti } from './iterate-multi.js'
@@ -403,7 +404,7 @@ function buildRecursiveStratum(
         const aggHead = aggCatalog.get(headName)
         out[headName] = aggHead
           ? applyAggregation(unioned, aggHead)
-          : dedupeEncodedRows(unioned)
+          : dedupeEncodedRowsInLoop(unioned)
       }
       return out
     },
@@ -475,10 +476,15 @@ function applyAggregation(
             }
           }
         }
-        const result: number =
-          operator === 'Count' ? count : acc !== null ? acc : 0
-        if (operator !== 'Count' && acc === null) return []
-        return [[encodeRow([result]), 1]]
+        // An empty group is not a group. `C(x, count(y)) :- R(x, y).` cannot
+        // fire for an `x` with no `y`, so a group whose last member was
+        // retracted has to stop producing a row rather than start producing a
+        // zero — which is what batch evaluation does, and what this did for
+        // Sum/Min/Max already. Count emitting 0 only became reachable once
+        // recursive retraction started emptying groups.
+        if (operator === 'Count') return count > 0 ? [[encodeRow([count]), 1]] : []
+        if (acc === null) return []
+        return [[encodeRow([acc]), 1]]
       }),
     )
     .pipe(
@@ -532,6 +538,17 @@ function dedupeEncodedRows(
   stream: IStreamBuilder<EncodedRow>,
 ): IStreamBuilder<EncodedRow> {
   return stream.pipe(stringDistinct())
+}
+
+/** The same, inside a recursive scope, where counting derivations is not
+ *  enough: a tuple re-derived by going round a cycle keeps its own count
+ *  positive after the fact underneath it is gone, and never retracts. The
+ *  recursive variant records support per iteration instead, so depth can be
+ *  told from multiplicity. See `recursiveDistinct.ts`. */
+function dedupeEncodedRowsInLoop(
+  stream: IStreamBuilder<EncodedRow>,
+): IStreamBuilder<EncodedRow> {
+  return stream.pipe(recursiveStringDistinct())
 }
 
 // -----------------------------------------------------------------------

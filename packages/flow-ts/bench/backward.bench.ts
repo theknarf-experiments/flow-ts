@@ -284,3 +284,97 @@ it('5. forward evaluation is unchanged by any of this', () => {
   }
   table('5. plain batch evaluation', ['size', 'total', 'per task'], rows)
 })
+
+
+it('6. correct recursive retraction is still incremental', () => {
+  // The dedup inside a recursive scope cannot tell from a reference count
+  // alone whether a tuple that lost a derivation has really gone — the
+  // survivors might be leaning on the tuple itself. So it retracts on
+  // suspicion and puts back whatever the cascade left standing.
+  //
+  // The question that matters is not what that costs in the abstract but
+  // whether it is still proportional to the *affected region*. A fix that made
+  // retraction correct by touching the whole database would be batch
+  // evaluation wearing a hat.
+  //
+  // So: disjoint components of fixed size, and more and more of them. A
+  // retraction inside one component can only affect that component. If the
+  // cost is flat as the database grows, the work is local; if it climbs with
+  // the row count, it is not.
+  const tc = `\
+.in
+.decl Arc(x: number, y: number)
+.input Arc.csv
+
+.printsize
+.decl T(x: number, y: number)
+
+.rule
+T(x, y) :- Arc(x, y).
+T(x, z) :- T(x, y), Arc(y, z).
+`
+  const program = parseProgram(tc, { grammarSource: 'tc.dl' })
+  const SIZE = 6
+
+  /** `parts` disjoint components of `SIZE` nodes each. */
+  const components = (parts: number, cyclic: boolean): Row[] => {
+    const arcs: Row[] = []
+    for (let c = 0; c < parts; c++) {
+      const base = c * SIZE
+      for (let i = 0; i < SIZE - 1; i++) arcs.push([base + i, base + i + 1])
+      if (cyclic) arcs.push([base + SIZE - 1, base])
+    }
+    return arcs
+  }
+
+  const rows: string[][] = []
+  for (const cyclic of [false, true]) {
+    for (const parts of [10, 40, 160]) {
+      const arcs = components(parts, cyclic)
+      let derived = 0
+      const session = openSession(program, {}, (_r, _row, d) => {
+        derived += d
+      })
+      for (const a of arcs) session.update('Arc', a, 1)
+      session.advance()
+
+      // Always the same edge, in the first component, whatever else exists.
+      const edge: Row = [1, 2]
+      const retract = time(
+        () => {
+          session.update('Arc', edge, -1)
+          session.advance()
+          session.update('Arc', edge, 1)
+          session.advance()
+        },
+        { trials: 30, warmup: 10 },
+      )
+      // An insertion of the same edge for contrast: the path that the fix does
+      // not touch at all.
+      const insert = time(
+        () => {
+          session.update('Arc', [0, 3], 1)
+          session.advance()
+          session.update('Arc', [0, 3], -1)
+          session.advance()
+        },
+        { trials: 30, warmup: 10 },
+      )
+      session.close()
+
+      rows.push([
+        cyclic ? 'cyclic' : 'acyclic',
+        `${parts} parts`,
+        String(derived),
+        fmt(insert),
+        fmt(retract),
+        ratio(retract.median, insert.median),
+      ])
+    }
+  }
+  table(
+    `6. retraction inside one component of ${SIZE} nodes, as the rest of the database grows`,
+    ['shape', 'components', 'derived rows', 'insert round trip', 'retract round trip', 'x'],
+    rows,
+  )
+})

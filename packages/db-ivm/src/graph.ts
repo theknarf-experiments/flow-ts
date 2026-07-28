@@ -69,6 +69,13 @@ export abstract class Operator<T> implements IOperator<T> {
 
   abstract run(): void
 
+  /** Emit work deferred until the graph reached a fixpoint, and report whether
+   *  anything was emitted. Only the recursive dedup needs this — see `D2.run`.
+   *  Everything else decides from the deltas in front of it and defers nothing. */
+  settle(): boolean {
+    return false
+  }
+
   hasPendingWork(): boolean {
     // Hot path: the scheduler calls this on every operator before every
     // step. Most operators have one or two inputs, so a manual loop

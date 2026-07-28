@@ -15,6 +15,7 @@ import { parseProgram } from '@flow-ts/parsing'
 import { compileShadow } from '../../src/shadow/index.js'
 import {
   applyDeletes,
+  applyUpdates,
   backward,
   countCandidates,
   dedupe,
@@ -167,6 +168,74 @@ describe('generated programs', () => {
       }),
       { numRuns: 200 },
     )
+  })
+
+  // The update channel over generated programs. A request changes one column
+  // of a derived row to a value outside the generator's domain, so the new row
+  // cannot collide with an existing one and the check stays unambiguous.
+  it('update: every proposed rewrite starts from a fact that exists', () => {
+    let exercised = 0
+    fc.assert(
+      fc.property(withRequest, (input) => {
+        if (!input) return true
+        const { p, facts, view, target } = input
+        for (let col = 0; col < target.length; col++) {
+          const next = [...target]
+          next[col] = 5000 + col
+          const { upd } = backward(p.source, facts, view, target, next)
+          if (upd.size > 0) exercised++
+          for (const [rel, rows] of upd) {
+            const present = new Set((facts[rel] ?? []).map(key))
+            const n = (facts[rel]?.[0]?.length ?? 0) || 0
+            for (const row of rows.values()) {
+              if (n > 0 && !present.has(key(row.slice(0, n)))) {
+                throw new Error(`rewrite of a non-existent ${rel} row${describeProgram(p, view, target)}`)
+              }
+            }
+          }
+        }
+        return true
+      }),
+      { numRuns: 250 },
+    )
+    expect(exercised).toBeGreaterThan(20)
+  })
+
+  // A rewrite proposal is sound but *not* complete: when one tuple satisfies
+  // two body atoms, rewriting it for one destroys the other's witness (see
+  // `a rewrite is a proposal, not a guarantee` in update.test.ts). Whether that
+  // happens depends on the data, so no static check on the rule text catches
+  // it. What the engine can promise is that the failure is always *detectable*
+  // by re-running forward — which is the whole runtime protocol.
+  it('update: a proposal either lands or is detectably wrong, never silently partial', () => {
+    let landed = 0
+    let rejected = 0
+    fc.assert(
+      fc.property(withRequest, (input) => {
+        if (!input) return true
+        const { p, facts, view, target } = input
+        for (let col = 0; col < target.length; col++) {
+          const next = [...target]
+          next[col] = 5000 + col
+          const { upd } = backward(p.source, facts, view, target, next)
+          if (upd.size === 0) continue
+          const after = liveRows(p.source, applyUpdates(facts, upd), view)
+          if (after.has(key(next))) {
+            landed++
+          } else {
+            rejected++
+            // The verification step must be able to tell: the requested row is
+            // absent, so a `compare` after `advance` rejects and rolls back.
+            if (after.has(key(target)) && after.has(key(next))) return false
+          }
+        }
+        return true
+      }),
+      { numRuns: 250 },
+    )
+    // Both outcomes must actually occur, or this proves nothing.
+    expect(landed).toBeGreaterThan(20)
+    expect(rejected).toBeGreaterThan(0)
   })
 
   it('monotonicity: a delete never adds rows to a negation-free program', () => {

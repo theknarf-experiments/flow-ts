@@ -45,8 +45,10 @@ import {
 } from '../ast/index.js'
 
 export const SEED_PREFIX = 'Seed_'
+export const SEED_UPD_PREFIX = 'SeedUpd_'
 export const DEL_PREFIX = 'Del_'
 export const INS_PREFIX = 'Ins_'
+export const UPD_PREFIX = 'Upd_'
 
 /** A rule (or part of one) the compiler declined to invert. */
 export interface ShadowRefusal {
@@ -101,6 +103,14 @@ export function compileShadow(program: Program): ShadowProgram {
       needs: [],
       text: `${DEL_PREFIX}${idb.name}(${vars}) :- ${SEED_PREFIX}${idb.name}(${vars}).`,
     })
+    // The update channel carries the old tuple followed by its replacement, so
+    // its arity is 2n and the seed's decl needs two sets of attribute names.
+    const pair = updVars(idb).join(', ')
+    rules.push({
+      headRel: UPD_PREFIX + idb.name,
+      needs: [],
+      text: `${UPD_PREFIX}${idb.name}(${pair}) :- ${SEED_UPD_PREFIX}${idb.name}(${pair}).`,
+    })
   }
 
   for (const rule of program.rules) {
@@ -131,6 +141,53 @@ export function compileShadow(program: Program): ShadowProgram {
       taken.add(name)
       return name
     }
+
+    // --- update channel ------------------------------------------------
+    //
+    // For each head column, if its variable occurs at exactly one position of
+    // exactly one body atom, an edit to that column rewrites that position.
+    // The request atom repeats the *unchanged* head variables, so the rule
+    // matches "this column moved and the others didn't" structurally.
+    //
+    // More than one occurrence means the value is joined on, and rewriting it
+    // would have to change every occurrence at once — the join ambiguity,
+    // which is a policy rather than an inference. Skipped for now.
+    rule.head.headArguments.forEach((ha, k) => {
+      if (ha.kind !== 'Var') return
+      const sites = occurrencesOf(ha.name, rule.rhs)
+      if (sites.length !== 1) return
+      const [site] = sites
+      const { atomIndex, argIndex } = site!
+      const pred = rule.rhs[atomIndex]!
+      if (pred.kind !== 'Atom') return
+      const atom = pred.atom
+
+      const fresh = freshName(`${ha.name}_n`, taken)
+      const request = headArgs.map((a, j) => (j === k ? [a, fresh] : [a, a]))
+      // Placeholders can't be projected into the shadow head, and the rewrite
+      // has to carry them through unchanged — so name them, here and in the
+      // replayed body, exactly as the delete channel does.
+      const subst = new Map<number, string>()
+      atom.args.forEach((a, j) => {
+        if (a.kind === 'Placeholder') subst.set(j, nextVar())
+      })
+      const before = atom.args.map((a, j) => subst.get(j) ?? atomArgToString(a))
+      const after = before.map((a, j) => (j === argIndex ? fresh : a))
+      const body = rule.rhs
+        .map((p, j) => (j === atomIndex ? renderAtom(atom, subst) : predicateToString(p)))
+        .join(', ')
+
+      rules.push({
+        headRel: UPD_PREFIX + atom.name,
+        needs: [UPD_PREFIX + rule.head.name],
+        text:
+          `${UPD_PREFIX}${atom.name}(${[...before, ...after].join(', ')}) :- ` +
+          `${UPD_PREFIX}${rule.head.name}(${[
+            ...request.map((r) => r[0]),
+            ...request.map((r) => r[1]),
+          ].join(', ')}), ${body}.`,
+      })
+    })
 
     rule.rhs.forEach((pred, i) => {
       if (pred.kind === 'Compare') return
@@ -209,6 +266,43 @@ function seedVars(decl: RelDecl): string[] {
   return usable ? names : decl.attributes.map((_, i) => `s${i}`)
 }
 
+/** Variables for the update channel's 2n columns: old tuple, then new. Always
+ *  positional — the two halves would otherwise collide with each other. */
+function updVars(decl: RelDecl): string[] {
+  return [
+    ...decl.attributes.map((_, i) => `a${i}`),
+    ...decl.attributes.map((_, i) => `b${i}`),
+  ]
+}
+
+/** Every (atom, argument) position where `name` occurs in the body, counting
+ *  comparisons too — a variable a filter reads is one the rewrite would also
+ *  have to satisfy, so it isn't a free copy. */
+function occurrencesOf(
+  name: string,
+  rhs: readonly Predicate[],
+): Array<{ atomIndex: number; argIndex: number }> {
+  const out: Array<{ atomIndex: number; argIndex: number }> = []
+  rhs.forEach((p, atomIndex) => {
+    if (p.kind === 'Compare') {
+      if (p.expr.varsSet().has(name)) out.push({ atomIndex, argIndex: -1 })
+      return
+    }
+    p.atom.args.forEach((a, argIndex) => {
+      if (a.kind === 'Var' && a.name === name) out.push({ atomIndex, argIndex })
+    })
+  })
+  return out
+}
+
+function freshName(base: string, taken: Set<string>): string {
+  let name = base
+  let n = 0
+  while (taken.has(name)) name = `${base}${n++}`
+  taken.add(name)
+  return name
+}
+
 function renderAtom(atom: Atom, subst?: ReadonlyMap<number, string>): string {
   const args = atom.args.map((a, i) => subst?.get(i) ?? atomArgToString(a))
   return `${atom.name}(${args.join(', ')})`
@@ -242,6 +336,15 @@ function attrsOf(decl: RelDecl): string {
     .join(', ')
 }
 
+/** Attributes for an update channel: the relation's columns twice over, named
+ *  positionally so the two halves can't collide. */
+function pairAttrsOf(decl: RelDecl): string {
+  return [
+    ...decl.attributes.map((a, i) => `a${i}: ${dataTypeToString(a.dataType)}`),
+    ...decl.attributes.map((a, i) => `b${i}: ${dataTypeToString(a.dataType)}`),
+  ].join(', ')
+}
+
 function render(
   program: Program,
   rules: readonly ShadowRule[],
@@ -261,6 +364,7 @@ function render(
   for (const idb of program.idbs) {
     if (!seeded.has(idb.name)) continue
     lines.push(`.decl ${SEED_PREFIX}${idb.name}(${attrsOf(idb)})`)
+    lines.push(`.decl ${SEED_UPD_PREFIX}${idb.name}(${pairAttrsOf(idb)})`)
   }
 
   lines.push('.printsize')
@@ -274,7 +378,12 @@ function render(
   for (const rel of new Set(rules.map((r) => r.headRel))) {
     const base = rel.slice(rel.indexOf('_') + 1)
     const decl = declOf.get(base)
-    const attrs = decl && decl.attributes.length > 0 ? attrsOf(decl) : ''
+    const typed = decl && decl.attributes.length > 0
+    const attrs = typed
+      ? rel.startsWith(UPD_PREFIX)
+        ? pairAttrsOf(decl)
+        : attrsOf(decl)
+      : ''
     lines.push(`.decl ${rel}(${attrs})`)
   }
   // Every EDB is also a *destination*, so its Del_/Ins_ channels are IDBs of

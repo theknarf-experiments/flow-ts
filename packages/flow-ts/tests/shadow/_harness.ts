@@ -43,15 +43,20 @@ export function liveRows(source: string, facts: Facts, rel: string): RowSet {
 export interface Candidates {
   del: Map<string, RowSet>
   ins: Map<string, RowSet>
+  /** Rows of arity 2n: the old tuple followed by its replacement. */
+  upd: Map<string, RowSet>
 }
 
 /** Compile the shadow program, seed a request, and read the candidate EDB
- *  changes at the write frontier. */
+ *  changes at the write frontier.
+ *
+ *  Passing `newRow` seeds the *update* channel instead of the delete one. */
 export function backward(
   source: string,
   facts: Facts,
   seedRel: string,
   seedRow: Row,
+  newRow?: Row,
 ): Candidates {
   const program = parseProgram(source, { grammarSource: 'fwd.dl' })
   const shadow = compileShadow(program)
@@ -59,7 +64,8 @@ export function backward(
   const edbNames = new Set(program.edbs.map((d) => d.name))
 
   const edbFacts = new Map<string, Row[]>(Object.entries(facts))
-  edbFacts.set(`Seed_${seedRel}`, [seedRow])
+  if (newRow) edbFacts.set(`SeedUpd_${seedRel}`, [[...seedRow, ...newRow]])
+  else edbFacts.set(`Seed_${seedRel}`, [seedRow])
 
   const counts = new Map<string, Map<string, number>>()
   const rows = new Map<string, RowSet>()
@@ -85,7 +91,19 @@ export function backward(
     }
     return out
   }
-  return { del: collect('Del_'), ins: collect('Ins_') }
+  return { del: collect('Del_'), ins: collect('Ins_'), upd: collect('Upd_') }
+}
+
+/** Apply candidate rewrites: each row is `old ++ new`. */
+export function applyUpdates(facts: Facts, upd: Map<string, RowSet>): Facts {
+  const out: Facts = { ...facts }
+  for (const [rel, rows] of upd) {
+    const n = (out[rel]?.[0]?.length ?? 0) || [...rows.values()][0]!.length / 2
+    const replace = new Map<string, Row>()
+    for (const row of rows.values()) replace.set(key(row.slice(0, n)), row.slice(n))
+    out[rel] = (out[rel] ?? []).map((r) => replace.get(key(r)) ?? r)
+  }
+  return out
 }
 
 export const countCandidates = (c: Map<string, RowSet>): number => {

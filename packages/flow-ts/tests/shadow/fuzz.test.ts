@@ -12,7 +12,7 @@
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 import { parseProgram } from '@flow-ts/parsing'
-import { compileShadow } from '../../src/shadow/index.js'
+import { type Change, compileShadow, resolveBackward } from '../../src/shadow/index.js'
 import {
   applyDeletes,
   applyUpdates,
@@ -25,6 +25,19 @@ import {
   subset,
 } from './_harness.js'
 import { type GenProgram, programGen } from './_gen.js'
+import type { Row } from '../../src/reading/index.js'
+
+/** Apply resolved changes, independently of the resolver's own helper. */
+function applyChanges(facts: Record<string, Row[]>, changes: readonly Change[]) {
+  const out: Record<string, Row[]> = { ...facts }
+  for (const c of changes) {
+    const rows = out[c.rel] ?? []
+    if (c.kind === 'del') out[c.rel] = rows.filter((r) => key(r) !== key(c.row))
+    else if (c.kind === 'ins') out[c.rel] = [...rows, c.row]
+    else out[c.rel] = rows.map((r) => (key(r) === key(c.row) ? c.newRow! : r))
+  }
+  return out
+}
 
 /** A generated program plus a request drawn from one of its live views.
  *  `null` when the program derives nothing (common and uninteresting). */
@@ -236,6 +249,53 @@ describe('generated programs', () => {
     // Both outcomes must actually occur, or this proves nothing.
     expect(landed).toBeGreaterThan(20)
     expect(rejected).toBeGreaterThan(0)
+  })
+
+  // The protocol's one promise: `ok` is never a lie. Everything else it may
+  // report — refused, ambiguous, unsatisfied — is a caller's problem, but an
+  // `ok` whose changes don't achieve the request would be silent corruption.
+  it('resolveBackward: ok always means the request actually holds', () => {
+    const outcomes = { ok: 0, refused: 0, ambiguous: 0, unsatisfied: 0 }
+    fc.assert(
+      fc.property(withRequest, fc.boolean(), (input, asUpdate) => {
+        if (!input) return true
+        const { p, facts, view, target } = input
+        const program = parseProgram(p.source, { grammarSource: 'gen.dl' })
+        const req = asUpdate
+          ? { rel: view, row: target, newRow: target.map((v, i) => (i === 0 ? 7000 : v)) }
+          : { rel: view, row: target }
+
+        const r = resolveBackward(program, facts, req)
+        outcomes[r.status]++
+        if (r.status !== 'ok') return true
+
+        // Check independently of the implementation's own verification.
+        const after = liveRows(p.source, applyChanges(facts, r.changes), view)
+        const holds = asUpdate ? after.has(key(req.newRow!)) : !after.has(key(target))
+        if (!holds) {
+          throw new Error(
+            `reported ok but the request does not hold${describeProgram(p, view, target)}`,
+          )
+        }
+        return true
+      }),
+      { numRuns: 250 },
+    )
+    expect(outcomes.ok).toBeGreaterThan(30)
+  })
+
+  it('resolveBackward: never reports ok for a row the program does not derive', () => {
+    fc.assert(
+      fc.property(withRequest, (input) => {
+        if (!input) return true
+        const { p, facts, view, target } = input
+        const program = parseProgram(p.source, { grammarSource: 'gen.dl' })
+        const bogus = target.map((v) => (typeof v === 'number' ? v + 9000 : `${v}~no`))
+        const r = resolveBackward(program, facts, { rel: view, row: bogus })
+        return r.status === 'refused'
+      }),
+      { numRuns: 200 },
+    )
   })
 
   it('monotonicity: a delete never adds rows to a negation-free program', () => {

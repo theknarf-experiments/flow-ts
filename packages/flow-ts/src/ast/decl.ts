@@ -55,9 +55,20 @@ export class Attribute {
 export type PutPolicy =
   | { kind: 'none' }
   | { kind: 'spread'; residual: 'min' | 'max' }
+  /** Land writes on this body relation, holding the rest of the body constant.
+   *  Bancilhon & Spyratos' constant complement, named directly: the side you
+   *  don't write is the invariant that makes the update well-defined. */
+  | { kind: 'into'; rel: string }
 
 export function putPolicyToString(p: PutPolicy): string {
-  return p.kind === 'none' ? '.put none' : `.put spread(${p.residual})`
+  switch (p.kind) {
+    case 'none':
+      return '.put none'
+    case 'spread':
+      return `.put spread(${p.residual})`
+    case 'into':
+      return `.put into ${p.rel}`
+  }
 }
 
 export class RelDecl {

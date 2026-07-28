@@ -44,6 +44,7 @@ import {
   constToString,
   dataTypeToString,
   predicateToString,
+  putPolicyToString,
 } from '../ast/index.js'
 
 export const SEED_PREFIX = 'Seed_'
@@ -143,6 +144,22 @@ export function compileShadow(
     const policy = policies[rule.head.name]
     if (policy?.kind === 'none') continue
 
+    // `into R` restricts which body atoms are candidates. R is still replayed
+    // in every body — it is held constant, not ignored — but nothing proposes a
+    // change to it.
+    let only: string | null = null
+    if (policy?.kind === 'into') {
+      const mentioned = rule.rhs.some((p) => p.kind !== 'Compare' && p.atom.name === policy.rel)
+      if (!mentioned) {
+        refusals.push({
+          subject,
+          reason: `"${rule.head.name}" declares .put into ${policy.rel}, but no atom of this rule's body is ${policy.rel}`,
+        })
+        continue
+      }
+      only = policy.rel
+    }
+
     if (policy?.kind === 'spread') {
       const emitted = compileSpread(
         rule,
@@ -202,6 +219,7 @@ export function compileShadow(
       const pred = rule.rhs[atomIndex]!
       if (pred.kind !== 'Atom') return
       const atom = pred.atom
+      if (only !== null && atom.name !== only) return
 
       const fresh = freshName(`${ha.name}_n`, taken)
       const request = headArgs.map((a, j) => (j === k ? [a, fresh] : [a, a]))
@@ -235,6 +253,7 @@ export function compileShadow(
       const atom = pred.atom
 
       if (pred.kind === 'Atom') {
+        if (only !== null && atom.name !== only) return
         // Placeholders carry no name, so they can't be projected into the
         // shadow head — give them one. Only in *this* atom's occurrence: the
         // rest of the body is replayed as written.
@@ -253,6 +272,7 @@ export function compileShadow(
         return
       }
 
+      if (only !== null && atom.name !== only) return
       // Negated atom: the polarity flips. Un-deriving the head can be achieved
       // by making the negation fail — i.e. inserting the tuple it excludes.
       if (atom.args.some((a) => a.kind === 'Placeholder')) {
@@ -556,6 +576,10 @@ function render(
   for (const idb of program.idbs) {
     lines.push(`.decl ${idb.name}(${attrsOf(idb)})`)
     if (idb.path) lines.push(`.output ${idb.path}`)
+    // Preserve the directive. The shadow source is only ever read back, never
+    // recompiled, so it is inert here — but silently dropping it would make the
+    // generated program an unfaithful rendering of the one it came from.
+    if (idb.put) lines.push(putPolicyToString(idb.put))
   }
   // One decl per shadow relation actually derived. Attributes are copied from
   // the relation being shadowed where they exist; an untyped source stays

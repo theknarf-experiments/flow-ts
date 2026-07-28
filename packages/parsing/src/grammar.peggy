@@ -53,6 +53,7 @@ IdbRelationDecl
 // not of a request that arrives later.
 PutDecl
   = ".put" _ "spread" _ "(" _ r:Residual _ ")" { return { kind: "spread", residual: r }; }
+  / ".put" _ "into" _ name:RelationName { return { kind: "into", rel: name }; }
   / ".put" _ "none" { return { kind: "none" }; }
 
 Residual

@@ -79,12 +79,14 @@ describe('planner gap: cartesian body atom with no surviving column', () => {
   })
 })
 
-// GAP 2 — a constant inside a *negated* atom, combined with a comparison
-// elsewhere in the same body. Either ingredient alone plans fine; together, the
-// negated atom's constant argument has no entry in the signature map by the
-// time comparisons are assembled.
-describe('planner gap: constant in a negated atom alongside a comparison', () => {
-  it.fails('both ingredients together', () => {
+// FIXED — was a gap, now a regression test. A constant inside a negated atom,
+// combined with a comparison elsewhere in the body, used to crash: the trace
+// that aligns a negated atom's arguments demanded a signature-map entry for
+// every position, and a constant has no variable name so it has none. It can
+// never match a trace argument either, so skipping it is the right answer.
+// Either ingredient alone always planned, which is why this went unnoticed.
+describe('constant in a negated atom alongside a comparison', () => {
+  it('both ingredients together', () => {
     const rows = run(`${E0(2, 'h0: number')}I0(a) :- E0(a, a), !E0(0, a), a < 5.`, {
       E0: [[1, 1]],
     })

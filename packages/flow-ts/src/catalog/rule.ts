@@ -561,11 +561,11 @@ export class Catalog {
       let pushed = false
       for (const sig of negatedSignatures) {
         const argStr = this.signatureToArgumentStrMap.get(sig)
-        if (argStr === undefined) {
-          throw new Error(
-            `topDownTraceNegated: argument signature ${sig.toString()} absent from the signature map`,
-          )
-        }
+        // A constant argument has no variable name, so it has no entry here —
+        // and it can never match a trace argument, which is always a variable.
+        // Demanding an entry made `!E0(0, a)` crash as soon as the body also
+        // carried a comparison, since that is when this trace runs at all.
+        if (argStr === undefined) continue
         if (argStr === traceArg) {
           out.push(sig)
           pushed = true

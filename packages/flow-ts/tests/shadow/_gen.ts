@@ -144,13 +144,17 @@ export function buildProgram(pool: readonly number[], recursive = false): GenPro
 
       // Negation, only over an EDB and only over variables already bound
       // positively — both required for a legal, stratified program. Constants
-      // are kept out of negated atoms: combined with a comparison they hit a
-      // planner gap (tests/executing/planner-gaps.test.ts).
+      // in negated atoms are included: they used to hit a planner gap when the
+      // body also carried a comparison, which is how that bug was found.
       if (d.chance(25)) {
         const rel = d.pick(edbs)
-        parts.push(
-          `!${rel.name}(${Array.from({ length: rel.arity }, () => d.pick(positive)).join(', ')})`,
+        const args = Array.from({ length: rel.arity }, () =>
+          d.next(5) === 0 ? String(d.pick(DOMAIN)) : d.pick(positive),
         )
+        // At least one variable: an all-ground negated atom contributes no
+        // columns, which is the cartesian gap that is still open.
+        if (!args.some((a) => positive.includes(a))) args[d.next(rel.arity)] = d.pick(positive)
+        parts.push(`!${rel.name}(${args.join(', ')})`)
       }
 
       // A comparison, to exercise replay of filters.

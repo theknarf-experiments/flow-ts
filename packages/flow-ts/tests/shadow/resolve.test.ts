@@ -167,6 +167,76 @@ Assigned(i, n) :- Task(i, p), Person(p, n).
   })
 })
 
+describe('a flow-md-shaped program', () => {
+  // This is what `vault.ts` assembles: plugin rules, plus one synthetic rule
+  // per query block whose head is a hash-named relation declared with no
+  // attributes, since the arity is left to the rule. Every such view used to be
+  // unseedable, which put the whole backward path out of reach from a vault.
+  const VAULT = prog(`\
+.in
+.decl MdNode(path: string, id: number, kind: string, line: number)
+.input MdNode.csv
+.decl MdNodeText(path: string, id: number, text: string)
+.input MdNodeText.csv
+
+.printsize
+.decl Task(path: string, status: string, text: string, line: number)
+.decl Qa1b2c3()
+
+.rule
+Task(p, "open", t, l) :- MdNode(p, i, "task-open", l), MdNodeText(p, i, t).
+Qa1b2c3(p, t) :- Task(p, "open", t, l).
+`)
+
+  const VAULT_FACTS: Facts = {
+    MdNode: [
+      ['todo.md', 1, 'task-open', 3],
+      ['todo.md', 2, 'task-open', 7],
+    ],
+    MdNodeText: [
+      ['todo.md', 1, 'buy milk'],
+      ['todo.md', 2, 'water plants'],
+    ],
+  }
+
+  it('the untyped query view is seedable', () => {
+    const r = resolveBackward(VAULT, VAULT_FACTS, { rel: 'Qa1b2c3', row: ['todo.md', 'buy milk'] }, P)
+    expect(r.status).toBe('ok')
+  })
+
+  it('an edit resolves through two rules to the owning source facts', () => {
+    const r = resolveBackward(
+      VAULT,
+      VAULT_FACTS,
+      {
+        rel: 'Qa1b2c3',
+        row: ['todo.md', 'buy milk'],
+        newRow: ['todo.md', 'buy oat milk'],
+      },
+      P,
+    )
+    expect(r.status).toBe('ok')
+    if (r.status !== 'ok') return
+    // The rewrite lands on the text node, not on the tree node — `text` occurs
+    // once, in MdNodeText, and the walk found it through the Task rule.
+    expect(r.changes).toEqual([
+      {
+        kind: 'upd',
+        rel: 'MdNodeText',
+        row: ['todo.md', 1, 'buy milk'],
+        newRow: ['todo.md', 1, 'buy oat milk'],
+      },
+    ])
+  })
+
+  it('still refuses a request that names the wrong types', () => {
+    const r = resolveBackward(VAULT, VAULT_FACTS, { rel: 'Qa1b2c3', row: [1, 2] }, P)
+    expect(r.status).toBe('refused')
+    if (r.status !== 'refused') return
+    expect(r.reason).toMatch(/column 0 expects string/i)
+  })
+})
+
 describe('properties', () => {
   const name = fc.constantFrom('a', 'b', 'c')
   const factsGen = fc

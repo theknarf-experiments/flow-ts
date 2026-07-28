@@ -27,7 +27,9 @@
 import type { Program } from '../ast/index.js'
 import { type ProgramSession, openSession } from '../executing/dataflow.js'
 import type { Row } from '../reading/row.js'
+import { inferRelationTypes } from '../typing/index.js'
 import { SEED_PREFIX, SEED_UPD_PREFIX, compileShadow } from './compile.js'
+import { validateRequest } from './validate.js'
 import {
   type BackwardRequest,
   type Change,
@@ -71,6 +73,7 @@ export function openBackwardSession(
 ): BackwardSession {
   const shadow = compileShadow(program, options)
   const shadowProgram = options.parse(shadow.source)
+  const inferred = inferRelationTypes(program)
   const edbNames = new Set(program.edbs.map((d) => d.name))
   const idbNames = new Set(program.idbs.map((d) => d.name))
 
@@ -145,6 +148,11 @@ export function openBackwardSession(
     request.newRow !== undefined ? [...request.row, ...request.newRow] : request.row
 
   const propose = (request: BackwardRequest): Change[] => {
+    // `propose` is the raw primitive, so a malformed request is a caller bug
+    // and throws. `resolve` turns the same message into a `refused` status,
+    // because there it is one outcome among several.
+    const malformed = validateRequest(program, inferred, shadow.seeds, request)
+    if (malformed) throw new Error(malformed)
     const rel = seedRel(request)
     const row = seedRow(request)
     update(rel, row, 1)
@@ -176,12 +184,8 @@ export function openBackwardSession(
   }
 
   const resolve = (request: BackwardRequest): Resolution => {
-    if (!idbNames.has(request.rel)) {
-      return {
-        status: 'refused',
-        reason: `"${request.rel}" is not a derived relation of this program`,
-      }
-    }
+    const malformed = validateRequest(program, inferred, shadow.seeds, request)
+    if (malformed) return { status: 'refused', reason: malformed }
     if (!isLive(request.rel, request.row)) {
       return {
         status: 'refused',

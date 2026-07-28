@@ -191,7 +191,9 @@ S(x) :- R(x, y), y < 10.
     expect(ruleLines(shadow.source)).toContain('Del_R(x, y) :- Del_S(x), R(x, y), y < 10.')
   })
 
-  it('refuses to seed an untyped IDB decl (no attributes to build an EDB from)', () => {
+  it('seeds an untyped IDB decl by inferring its column types', () => {
+    // `.decl H()` leaves the arity to the rules — which is how flow-md declares
+    // every query. The types are recoverable from the body, so this is seedable.
     const shadow = compileShadow(
       parseProgram(`\
 .in
@@ -205,8 +207,30 @@ S(x) :- R(x, y), y < 10.
 H(x) :- A(x).
 `),
     )
-    expect(shadow.seeds).not.toContain('H')
-    expect(shadow.refusals.some((r) => /untyped|attribute/i.test(r.reason))).toBe(true)
+    expect(shadow.seeds).toContain('H')
+    expect(shadow.source).toContain('.decl Seed_H(c0: number)')
+    expect(shadow.refusals).toEqual([])
+  })
+
+  it('refuses only when the types genuinely cannot be recovered', () => {
+    const shadow = compileShadow(
+      parseProgram(`\
+.in
+.decl A(x: number)
+.input A.csv
+
+.printsize
+.decl H()
+.decl Orphan()
+
+.rule
+H(x) :- A(x).
+`),
+    )
+    expect(shadow.seeds).toContain('H')
+    expect(shadow.seeds).not.toContain('Orphan')
+    // And it says *why*, rather than just declining.
+    expect(shadow.refusals.find((r) => r.subject === 'Orphan')?.reason).toMatch(/no rules/i)
   })
 })
 

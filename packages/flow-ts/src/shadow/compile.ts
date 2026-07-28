@@ -32,6 +32,8 @@
 // is deliberate — ambiguity becomes data you can query rather than a static
 // analysis that has to be conservative.
 
+import { type InferredTypes, inferRelationTypes } from '../typing/index.js'
+import { Attribute as AttributeCls, RelDecl as RelDeclCls } from '../ast/index.js'
 import {
   type Atom,
   type FLRule,
@@ -104,17 +106,27 @@ export function compileShadow(
   let helperSeq = 0
 
   const edbNames = new Set(program.edbs.map((d) => d.name))
+  // An untyped `.decl Foo()` leaves the arity to the rules, which is fine while
+  // rows only flow out — but a Seed_ EDB needs a codec per column. Recovering
+  // the types is what makes flow-md's `.decl Q<hash>()` queries seedable at all.
+  const inferred = inferRelationTypes(program)
   const declOf = new Map<string, RelDecl>()
-  for (const d of [...program.edbs, ...program.idbs]) declOf.set(d.name, d)
+  for (const d of [...program.edbs, ...program.idbs]) {
+    declOf.set(d.name, d.attributes.length > 0 ? d : withInferredAttrs(d, inferred))
+  }
 
   // A request enters on a view, so every IDB gets a seed. It has to become an
   // EDB of the shadow program, which means real attributes: `.decl H()` (arity
   // inferred from the rules) carries nothing to build a fact channel from.
-  for (const idb of program.idbs) {
+  for (const decl of program.idbs) {
+    const idb = declOf.get(decl.name)!
     if (idb.attributes.length === 0) {
+      const why = inferred.unresolved.find((u) => u.rel === decl.name)?.reason
       refusals.push({
-        subject: idb.name,
-        reason: `"${idb.name}" has an untyped .decl (no attributes), so no Seed_ EDB can be declared for it`,
+        subject: decl.name,
+        reason:
+          `"${decl.name}" has an untyped .decl and its column types could not be ` +
+          `inferred, so no Seed_ EDB can be declared for it${why ? ` — ${why}` : ''}`,
       })
       continue
     }
@@ -464,6 +476,20 @@ function refusalFor(ha: HeadArg): string {
 /** Variable names for the seed rule. The decl's own attribute names read best
  *  (`Del_Open(p, t) :- Seed_Open(p, t).`), but they're documentation, not
  *  identifiers — fall back to positional names if they can't serve as vars. */
+/** A declaration with inferred attributes filled in, when the source left them
+ *  out and inference could recover them. Names are positional: the point is the
+ *  types, and invented names would read as if the author had written them. */
+function withInferredAttrs(decl: RelDecl, inferred: InferredTypes): RelDecl {
+  const cols = inferred.types.get(decl.name)
+  if (!cols || cols.length === 0) return decl
+  return new RelDeclCls(
+    decl.name,
+    cols.map((t, i) => new AttributeCls(`c${i}`, t)),
+    decl.path,
+    decl.put,
+  )
+}
+
 function seedVars(decl: RelDecl): string[] {
   const names = decl.attributes.map((a) => a.name)
   const usable =
@@ -566,14 +592,20 @@ function render(
   }
   // Seeds are fed by the caller, so they are EDBs of the shadow program.
   const seeded = new Set(seeds)
-  for (const idb of program.idbs) {
-    if (!seeded.has(idb.name)) continue
+  for (const decl of program.idbs) {
+    if (!seeded.has(decl.name)) continue
+    // The resolved declaration, so an inferred view gets a typed fact channel.
+    const idb = declOf.get(decl.name) ?? decl
     lines.push(`.decl ${SEED_PREFIX}${idb.name}(${attrsOf(idb)})`)
     lines.push(`.decl ${SEED_UPD_PREFIX}${idb.name}(${pairAttrsOf(idb)})`)
   }
 
   lines.push('.printsize')
-  for (const idb of program.idbs) {
+  for (const decl of program.idbs) {
+    // Emit the *resolved* declaration: the shadow program's rules reference
+    // these relations by arity, and an untyped decl would leave the seeded
+    // channels without a shape to match.
+    const idb = declOf.get(decl.name) ?? decl
     lines.push(`.decl ${idb.name}(${attrsOf(idb)})`)
     if (idb.path) lines.push(`.output ${idb.path}`)
     // Preserve the directive. The shadow source is only ever read back, never

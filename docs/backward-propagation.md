@@ -217,16 +217,40 @@ Properties assert soundness, groundedness, stability (GetPut), completeness
 `resolveBackward` never reports `ok` without the request holding. Each carries a
 floor on how often it was genuinely exercised, so the suite can't go vacuous.
 
+## Type inference
+
+`.decl Foo()` is legal — the arity is left to the rules — and nothing needed the
+types while IDB rows only flowed *out*. Feeding rows *in* is different, because a
+fact channel needs a codec per column, so every view flow-md declares
+(`vault.ts` emits `.decl Q<hash>()`) was unseedable and the backward path was out
+of reach from a vault.
+
+`inferRelationTypes` recovers them: a head variable comes from some body
+position, and that position has a declared type; aggregates and arithmetic have
+known result types; constants carry their own. It iterates to a fixpoint so IDBs
+over IDBs resolve, then re-checks every rule — recursive relations settle from
+their base rule while the recursive rule is still unresolvable, so validating it
+has to wait for the fixpoint. A relation two rules disagree about, or that
+nothing pins down, is reported unresolved with a reason rather than guessed at.
+
+## Error reporting
+
+A seed row is fed in as a fact, so mistyped columns simply failed to join, and
+the caller was told the row was "not derived from the current facts (stale?)" —
+confidently pointing at the data when the fault was in the request. Requests are
+now checked for arity, column types and seedability first, and the distinction
+that matters is kept: wrong arity or wrong types is a *mistake* and says so
+precisely; not-currently-derived is a legitimate answer about the data and keeps
+its own wording. `resolve` reports it as `refused`; `propose`, the raw
+primitive, throws, since a malformed request there is a caller bug.
+
 ## Not done
 
 - Insert requests other than the negation flip; no templates for existentials.
 - Head arithmetic, join write-side, and recursion cuts are refused rather than
   annotatable.
 - The generator is numeric-only and non-recursive by default.
-- flow-md integration needs typed IDB decls: `vault.ts` emits `.decl Q<hash>()`
-  and lets arity be inferred, but a `Seed_` EDB needs real attributes. A
-  mistyped seed currently yields zero candidates rather than an error, which
-  should be loud.
+- Insert requests other than the negation flip.
 
 ## References
 

@@ -24,6 +24,8 @@
 import type { Program } from '../ast/index.js'
 import { executeProgram } from '../executing/dataflow.js'
 import type { Row } from '../reading/row.js'
+import { inferRelationTypes } from '../typing/index.js'
+import { validateRequest } from './validate.js'
 import {
   SEED_PREFIX,
   SEED_UPD_PREFIX,
@@ -87,9 +89,17 @@ export function resolveBackward(
   const maxRounds = options.maxRounds ?? 12
   const isUpdate = request.newRow !== undefined
 
-  if (!program.idbs.some((d) => d.name === request.rel)) {
-    return { status: 'refused', reason: `"${request.rel}" is not a derived relation of this program` }
-  }
+  const shadow = compileShadow(program, options)
+  // Shape first. A mistyped row would otherwise just fail to join, and get
+  // reported as stale data rather than as the malformed request it is.
+  const malformed = validateRequest(
+    program,
+    inferRelationTypes(program),
+    shadow.seeds,
+    request,
+  )
+  if (malformed) return { status: 'refused', reason: malformed }
+
   if (!liveRows(program, facts, request.rel).has(keyOf(request.row))) {
     return {
       status: 'refused',
@@ -97,7 +107,6 @@ export function resolveBackward(
     }
   }
 
-  const shadow = compileShadow(program, options)
   let shadowProgram: Program
   try {
     shadowProgram = options.parse(shadow.source)

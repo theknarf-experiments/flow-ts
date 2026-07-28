@@ -11,13 +11,18 @@
 
 import { useMemo, useState } from 'react'
 import { parseProgram } from '@flow-ts/parsing'
-import { Store, useLiveQuery, useProgram } from '@flow-ts/react'
+import { Store, useLiveQuery, useProgram, useWritableQuery } from '@flow-ts/react'
+import type { Resolution } from 'flow-ts'
 import { program as initialProgram, SOURCE } from './program.js'
 import { RelationTable } from './components/RelationTable.js'
 
 // One store per app. Seeded outside the React tree so HMR / strict-mode
 // double-mounts don't try to spin up a second graph.
-const store = new Store(initialProgram)
+// `ICanReach` is opted in as writable; nothing else is. Shadow rules force
+// joins on the relations they read, which roughly doubles ordinary forward
+// maintenance, so a view only carries them if someone is going to write
+// through it. Nothing is compiled until an edit is actually made.
+const store = new Store(initialProgram, { writable: ['ICanReach'] })
 const persons = store.collection<readonly [number, string]>('Person')
 const me = store.collection<readonly [number]>('Me')
 const friends = store.collection<readonly [number, number]>('Friend')
@@ -226,24 +231,95 @@ function PeoplePanel() {
   )
 }
 
+/** Turn a resolution into something a person can read. */
+function describeResolution(what: string, r: Resolution): string {
+  switch (r.status) {
+    case 'ok': {
+      const where = [...new Set(r.changes.map((c) => c.rel))].join(', ')
+      const n = r.changes.length
+      return `${what}: ${n} change${n === 1 ? '' : 's'} to ${where}`
+    }
+    case 'ambiguous':
+      return `${what}: ambiguous — ${r.candidates.length} ways to do it (${[
+        ...new Set(r.candidates.map((c) => c.rel)),
+      ].join(', ')})`
+    case 'unsatisfied':
+      return `${what}: ${r.reason}`
+    case 'refused':
+      return `${what}: ${r.reason}`
+  }
+}
+
 function ReachablePanel() {
-  // The pure derived view: only the names currently reachable from Me.
-  const reach = useLiveQuery<readonly [string]>(store, 'ICanReach')
+  // The derived view — and, unlike every other panel here, one you can edit.
+  // `ICanReach(name) :- Me(me), Reach(me, id), Person(id, name).` is two rules
+  // and a recursion away from any stored fact, so renaming a row here has to
+  // be traced back to the `Person` row it was copied from. Watch the Person
+  // table in the inspector below: that is where the write lands.
+  const view = useWritableQuery<readonly [string]>(store, 'ICanReach')
+  const [draft, setDraft] = useState<Record<string, string>>({})
+  const [status, setStatus] = useState<string | null>(null)
   const sorted = useMemo(
-    () => [...reach].map((r) => r[0]).sort((a, b) => a.localeCompare(b)),
-    [reach],
+    () => [...view.rows].map((r) => r[0]).sort((a, b) => a.localeCompare(b)),
+    [view.rows],
   )
+
+  const rename = (name: string) => {
+    const next = (draft[name] ?? name).trim()
+    if (!next || next === name) return
+    setStatus(describeResolution(`renamed ${name} → ${next}`, view.update([name], [next])))
+    setDraft((d) => ({ ...d, [name]: '' }))
+  }
+
   return (
     <div className="card">
       <h2>I can reach</h2>
+      <p className="muted">
+        Derived, and writable. Editing a name here rewrites the <code>Person</code> fact it
+        came from; removing one cuts a friendship. Nothing else in this demo is writable —
+        it is opted into per view.
+      </p>
       {sorted.length === 0 ? (
         <p className="muted" data-testid="reachable-empty">(none — add a row to Me, or a friendship from me, in the inspector below)</p>
       ) : (
         <ul className="reachable" data-testid="reachable-list">
           {sorted.map((name) => (
-            <li key={name} data-testid={`reachable-${name}`}>{name}</li>
+            <li key={name} data-testid={`reachable-${name}`}>
+              <input
+                aria-label={`rename ${name}`}
+                data-testid={`reachable-input-${name}`}
+                value={draft[name] ?? name}
+                onChange={(e) => setDraft((d) => ({ ...d, [name]: e.target.value }))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') rename(name)
+                }}
+              />
+              <button
+                type="button"
+                data-testid={`reachable-rename-${name}`}
+                onClick={() => rename(name)}
+              >
+                rename
+              </button>
+              <button
+                type="button"
+                data-testid={`reachable-remove-${name}`}
+                onClick={() =>
+                  setStatus(
+                    describeResolution(`removed ${name}`, view.remove([name], { minimize: true })),
+                  )
+                }
+              >
+                remove
+              </button>
+            </li>
           ))}
         </ul>
+      )}
+      {status && (
+        <p className="muted" data-testid="reachable-status">
+          {status}
+        </p>
       )}
     </div>
   )

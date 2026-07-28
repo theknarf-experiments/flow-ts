@@ -43,7 +43,9 @@ test.describe('friend-graph demo', () => {
     await expect(page.getByTestId('stat-reachable')).toHaveText('4')
 
     for (const name of ['bob', 'carol', 'dave', 'eve']) {
-      await expect(page.getByTestId(`reachable-${name}`)).toHaveText(name)
+      // The list is editable now, so the name is an input value rather than
+      // text — see `writes back through the derived view` below.
+      await expect(page.getByTestId(`reachable-input-${name}`)).toHaveValue(name)
     }
     // alice (=me) doesn't appear in ICanReach; frank has no incoming edge.
     await expect(page.getByTestId('reachable-alice')).toHaveCount(0)
@@ -286,5 +288,65 @@ test.describe('friend-graph demo', () => {
     await expect(page.getByTestId('relation-table-ICanReach')).toBeVisible()
     await expect(page.getByTestId('relation-count-ICanReach')).toHaveText('4 rows')
     await expect(page.getByTestId('stat-reachable')).toHaveText('4')
+  })
+})
+
+// Writing back through the derived view.
+//
+// `ICanReach(name) :- Me(me), Reach(me, id), Person(id, name).` is two rules
+// and a recursion away from anything stored, so an edit here has to be traced
+// to the `Person` row the name was copied from. The point of these tests is
+// that the write lands in the *source* relation, not just in the view.
+test.describe('writes back through the derived view', () => {
+  test('renaming a reachable person rewrites the Person fact', async ({ page }) => {
+    await gotoApp(page)
+    await expect(page.getByTestId('person-2')).toHaveAttribute('data-name', 'bob')
+
+    await page.getByTestId('reachable-input-bob').fill('bobby')
+    await page.getByTestId('reachable-rename-bob').click()
+
+    // The view followed…
+    await expect(page.getByTestId('reachable-input-bobby')).toHaveValue('bobby')
+    await expect(page.getByTestId('reachable-bob')).toHaveCount(0)
+    // …because the source fact changed. This is the whole point.
+    await expect(page.getByTestId('person-2')).toHaveAttribute('data-name', 'bobby')
+    await expect(page.getByTestId('reachable-status')).toContainText('Person')
+  })
+
+  test('the rename survives a rebuild, because it is in the EDB', async ({ page }) => {
+    await gotoApp(page)
+    await page.getByTestId('reachable-input-eve').fill('evelyn')
+    await page.getByTestId('reachable-rename-eve').click()
+    await expect(page.getByTestId('person-5')).toHaveAttribute('data-name', 'evelyn')
+
+    // Rebuild only enables once the source diverges, so give it a harmless
+    // edit to react to. The point is the *facts* surviving the swap, not the
+    // rules changing.
+    const textarea = page.getByTestId('program-source')
+    await textarea.fill(`${await textarea.inputValue()}\n// touched\n`)
+    await expect(page.getByTestId('program-rebuild')).toBeEnabled()
+    await page.getByTestId('program-rebuild').click()
+
+    await expect(page.getByTestId('reachable-input-evelyn')).toHaveValue('evelyn')
+  })
+
+  test('removing a reachable person cuts a friendship, not the person', async ({ page }) => {
+    await gotoApp(page)
+    await expect(page.getByTestId('stat-friends')).toHaveText('4')
+
+    await page.getByTestId('reachable-remove-eve').click()
+
+    await expect(page.getByTestId('reachable-eve')).toHaveCount(0)
+    // Minimised to one change: the edge, rather than everything supporting it.
+    await expect(page.getByTestId('stat-friends')).toHaveText('3')
+    await expect(page.getByTestId('stat-people')).toHaveText('6')
+  })
+
+  test('removing one reachable person leaves the others alone', async ({ page }) => {
+    await gotoApp(page)
+    await page.getByTestId('reachable-remove-eve').click()
+    for (const name of ['bob', 'carol', 'dave']) {
+      await expect(page.getByTestId(`reachable-input-${name}`)).toHaveValue(name)
+    }
   })
 })

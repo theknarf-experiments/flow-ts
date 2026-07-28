@@ -22,6 +22,7 @@ import {
   type BackwardRequest,
   type PutPolicy,
   type Resolution,
+  type ShadowChannel,
   compileShadow,
   resolveBackward,
 } from 'flow-ts'
@@ -48,6 +49,17 @@ export interface StoreOptions {
    *  trying a policy against a program you don't own, and overrides the
    *  directive when both are present. */
   put?: Record<string, PutPolicy>
+  /** Which request channels to compile. Omitted means all three.
+   *
+   *  The second axis of the same trade as `writable`, and the one worth
+   *  reaching for when a UI's writes are all of one kind. A table of editable
+   *  cells only ever sends `upd`; compiling `del` and `ins` for it builds rules
+   *  nothing will seed. Deletion is the dearest of the three, because it fans
+   *  out over every rule of a head rather than picking one.
+   *
+   *  A request on a channel that wasn't compiled is refused by name, so a
+   *  narrowed store fails loudly rather than looking like it found nothing. */
+  channels?: readonly ShadowChannel[]
 }
 
 /** Knobs for one edit, passed straight through to `resolveBackward`. */
@@ -110,6 +122,7 @@ export class Store {
 
   readonly #writable: ReadonlySet<string>
   readonly #put: Record<string, PutPolicy>
+  readonly #channels: readonly ShadowChannel[] | undefined
   /** Per-view writable columns, computed once per program. */
   #writableColumns: Record<string, number[]> | null = null
 
@@ -117,6 +130,7 @@ export class Store {
     this.#program = program
     this.#writable = new Set(options.writable ?? [])
     this.#put = options.put ?? {}
+    this.#channels = options.channels
     // The sink only fires for IDB heads — the executor doesn't echo EDB
     // writes back through it. EDB live state is mirrored directly by
     // `update()` below so `useLiveQuery` on an EDB still works.
@@ -311,6 +325,7 @@ export class Store {
       this.#writableColumns = compileShadow(this.#program, {
         views: [...this.#writable],
         put: this.#put,
+        channels: this.#channels,
       }).writableColumns
     }
     return this.#writableColumns[relation] ?? []
@@ -350,6 +365,7 @@ export class Store {
     const resolution = resolveBackward(this.#program, facts, request, {
       ...options,
       put: this.#put,
+      channels: this.#channels,
       parse: (src) => parseProgram(src, { grammarSource: 'shadow.dl' }),
     })
     if (resolution.status !== 'ok' || options.dryRun) return resolution

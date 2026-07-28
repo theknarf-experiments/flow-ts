@@ -30,6 +30,7 @@ import {
   SEED_INS_PREFIX,
   SEED_PREFIX,
   SEED_UPD_PREFIX,
+  type ShadowChannel,
   type ShadowOptions,
   compileShadow,
 } from './compile.js'
@@ -121,6 +122,20 @@ export function resolveBackward(
     request,
   )
   if (malformed) return { status: 'refused', reason: malformed }
+
+  // A channel that was never compiled produces no candidates, and "no candidate
+  // change reaches a source relation" is the wrong account of why: nothing was
+  // looked at. The same distinction as `.put none` — a decision, not a gap —
+  // except this one was made by the caller rather than the schema.
+  const channel: ShadowChannel = isInsert ? 'ins' : isUpdate ? 'upd' : 'del'
+  if (options.channels && !options.channels.includes(channel)) {
+    return {
+      status: 'refused',
+      reason:
+        `the "${channel}" channel was not compiled — this session opted into ` +
+        `${options.channels.map((c) => `"${c}"`).join(', ')}`,
+    }
+  }
 
   const live = liveRows(program, facts, request.rel).has(keyOf(request.row))
   if (isInsert && live) {

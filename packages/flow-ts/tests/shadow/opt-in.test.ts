@@ -125,3 +125,121 @@ describe('channels are separable too', () => {
     expect(count(one.source)).toBeLessThan(count(all.source) / 3)
   })
 })
+
+describe('nothing is compiled that nothing reads', () => {
+  // Found by pointing the demo's "what gets compiled" panel at `views: []` and
+  // seeing two rules come back. Pruning only ran forwards — a rule whose
+  // channel was never seeded cannot fire — and `spread`'s aggregate helpers
+  // read nothing but EDBs, so they needed nothing, so they survived however
+  // thoroughly their view had been scoped out.
+  const SPREAD = `\
+.in
+.decl Hours(p: string, w: number, h: number)
+.input Hours.csv
+
+.printsize
+.decl Total(p: string, s: number)
+.put spread(min)
+
+.rule
+Total(p, sum(h)) :- Hours(p, w, h).
+`
+
+  const emitted = (options: object): string[] => {
+    const program = parseProgram(SPREAD, { grammarSource: 'o.dl' })
+    const forward = new Set(program.rules.map((r) => r.toString()))
+    const src = compileShadow(program, options as never).source
+    return src
+      .slice(src.indexOf('.rule') + '.rule'.length)
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0 && !forward.has(l))
+  }
+
+  it('scoping every view out compiles nothing at all', () => {
+    expect(emitted({ views: [] })).toEqual([])
+  })
+
+  it('and the helpers come back when the view is asked for', () => {
+    const rules = emitted({ views: ['Total'], channels: ['upd'] })
+    expect(rules.some((r) => /count\(w\)|count\(h\)/.test(r))).toBe(true)
+    expect(rules.some((r) => r.startsWith('Upd_Hours('))).toBe(true)
+  })
+
+  it('a view with no reachable answer keeps its seed, so it can still refuse', () => {
+    // Without `spread` there is no inverse for the aggregate, so nothing
+    // downstream reads the channel. The entry rule stays anyway: the view was
+    // opted into, so the request has to be *seedable* — otherwise resolving it
+    // dies on an unknown relation instead of reporting a refusal.
+    const rules = emitted({ views: ['Total'], channels: ['upd'] })
+    const noSpread = parseProgram(SPREAD.replace('.put spread(min)\n', ''), {
+      grammarSource: 'o.dl',
+    })
+    expect(compileShadow(noSpread, { views: ['Total'], channels: ['upd'] }).seeds).toContain(
+      'Total',
+    )
+    expect(rules.length).toBeGreaterThan(0)
+    const r = resolveBackward(
+      noSpread,
+      { Hours: [['x', 1, 5]] },
+      { rel: 'Total', row: ['x', 5], newRow: ['x', 9] },
+      { parse: (src) => parseProgram(src, { grammarSource: 's.dl' }), views: ['Total'] },
+    )
+    expect(r.status).toBe('refused')
+  })
+})
+
+describe('a channel that was switched off says so', () => {
+  // Same shape of mistake as `.put none`: nothing was proposed, and "no
+  // candidate change reaches a source relation" describes a search that never
+  // happened. Here the decision is the caller's rather than the schema's, so
+  // the message names the caller's own option back to them.
+  const SRC = `\
+.in
+.decl Task(p: string, t: string)
+.input Task.csv
+
+.printsize
+.decl Open(p: string, t: string)
+
+.rule
+Open(p, t) :- Task(p, t).
+`
+  const PROGRAM = parseProgram(SRC, { grammarSource: 'c.dl' })
+  const FACTS = { Task: [['a.md', 'milk'] as Row] }
+  const opts = (channels: ReadonlyArray<'del' | 'ins' | 'upd'>) => ({
+    parse: (src: string) => parseProgram(src, { grammarSource: 's.dl' }),
+    views: ['Open'],
+    channels,
+  })
+
+  it('refuses a delete when only updates were compiled', () => {
+    const r = resolveBackward(PROGRAM, FACTS, { rel: 'Open', row: ['a.md', 'milk'] }, opts(['upd']))
+    expect(r.status).toBe('refused')
+    if (r.status !== 'refused') return
+    expect(r.reason).toBe('the "del" channel was not compiled — this session opted into "upd"')
+  })
+
+  it('refuses an insert the same way, naming every channel that is on', () => {
+    const r = resolveBackward(
+      PROGRAM,
+      FACTS,
+      { rel: 'Open', row: ['a.md', 'bread'], insert: true },
+      opts(['del', 'upd']),
+    )
+    expect(r.status).toBe('refused')
+    if (r.status !== 'refused') return
+    expect(r.reason).toContain('"ins" channel was not compiled')
+    expect(r.reason).toContain('"del", "upd"')
+  })
+
+  it('and the channel that was compiled still works', () => {
+    const r = resolveBackward(
+      PROGRAM,
+      FACTS,
+      { rel: 'Open', row: ['a.md', 'milk'], newRow: ['a.md', 'oat milk'] },
+      opts(['upd']),
+    )
+    expect(r.status).toBe('ok')
+  })
+})

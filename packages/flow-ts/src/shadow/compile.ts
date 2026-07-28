@@ -116,6 +116,11 @@ interface ShadowRule {
   /** Shadow relations appearing in the body — the pruning dependency. */
   needs: string[]
   text: string
+  /** The rule that takes a request off its seed. Kept even when nothing reads
+   *  its channel: the view was opted into, so the request has to be *seedable*,
+   *  and a channel that finds no candidates is a refusal to report rather than
+   *  an unknown relation to crash on. */
+  entry?: true
 }
 
 /** Compile the backward direction of `program` into shadow rules. */
@@ -180,6 +185,7 @@ export function compileShadow(
       rules.push({
         headRel: DEL_PREFIX + idb.name,
         needs: [],
+        entry: true,
         text: `${DEL_PREFIX}${idb.name}(${vars}) :- ${SEED_PREFIX}${idb.name}(${vars}).`,
       })
     }
@@ -190,6 +196,7 @@ export function compileShadow(
       rules.push({
         headRel: UPD_PREFIX + idb.name,
         needs: [],
+        entry: true,
         text: `${UPD_PREFIX}${idb.name}(${pair}) :- ${SEED_UPD_PREFIX}${idb.name}(${pair}).`,
       })
     }
@@ -197,6 +204,7 @@ export function compileShadow(
       rules.push({
         headRel: INS_PREFIX + idb.name,
         needs: [],
+        entry: true,
         text: `${INS_PREFIX}${idb.name}(${vars}) :- ${SEED_INS_PREFIX}${idb.name}(${vars}).`,
       })
     }
@@ -427,7 +435,7 @@ export function compileShadow(
     })
   }
 
-  const live = prune(rules)
+  const live = prune(rules, edbNames)
   const liveHeads = new Set(live.map((r) => r.headRel))
   // Only report a column whose update channel actually survived: a view that
   // was scoped out, or whose Upd_ channel was switched off, is not writable
@@ -892,11 +900,42 @@ function varsOf(rhs: readonly Predicate[]): Set<string> {
 /** Drop shadow rules whose body needs a shadow relation nothing produces —
  *  e.g. rules hanging off a view that couldn't be seeded. Iterated, because
  *  dropping a rule can remove the last producer of something else. */
-function prune(rules: readonly ShadowRule[]): ShadowRule[] {
+/** Drop rules that cannot fire and rules nothing reads, to a fixpoint.
+ *
+ *  Forwards is the obvious half: a rule whose channel was never seeded can
+ *  never fire. Backwards is the half that was missing, and `views: []` is what
+ *  exposed it — the aggregate helpers `spread` generates read only EDBs, so
+ *  they need nothing, so the forward pass kept them however thoroughly the
+ *  view they belonged to had been scoped out. Two rules is not much; a claim of
+ *  "nothing is compiled unless you ask" that quietly isn't true is worse than
+ *  the two rules.
+ *
+ *  The roots for the backward pass are the channels on *source* relations,
+ *  because those are the answer — a `Del_MdTask` is read by nobody here and is
+ *  the whole point. Everything else earns its place by being needed. */
+function prune(rules: readonly ShadowRule[], edbNames: ReadonlySet<string>): ShadowRule[] {
+  const isAnswer = (headRel: string): boolean => {
+    const at = headRel.indexOf('_')
+    return at > 0 && edbNames.has(headRel.slice(at + 1))
+  }
+
   let live = [...rules]
   for (;;) {
     const producers = new Set(live.map((r) => r.headRel))
-    const next = live.filter((r) => r.needs.every((n) => producers.has(n)))
+    let next = live.filter((r) => r.needs.every((n) => producers.has(n)))
+
+    const wanted = new Set<string>()
+    for (const r of next) if (r.entry || isAnswer(r.headRel)) wanted.add(r.headRel)
+    for (;;) {
+      const before = wanted.size
+      for (const r of next) {
+        if (!wanted.has(r.headRel)) continue
+        for (const n of r.needs) wanted.add(n)
+      }
+      if (wanted.size === before) break
+    }
+    next = next.filter((r) => wanted.has(r.headRel))
+
     if (next.length === live.length) return live
     live = next
   }

@@ -18,11 +18,16 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 
-async function gotoVault(page: Page) {
-  await page.goto('/vault')
+async function gotoVault(page: Page, sub = '') {
+  await page.goto(`/vault${sub}`)
   await expect(page.locator('body[data-hydrated="true"]')).toBeVisible()
   await expect(page.getByTestId('vault-demo')).toBeVisible()
 }
+
+/** The tables are split across three pages; the notes, the program panel and
+ *  the status line are shared by all of them. */
+const gotoShapes = (page: Page) => gotoVault(page, '/shapes')
+const gotoOptIn = (page: Page) => gotoVault(page, '/opt-in')
 
 const work = (page: Page) => page.getByTestId('note-work.md')
 const home = (page: Page) => page.getByTestId('note-home.md')
@@ -297,7 +302,7 @@ test.describe('spreading an aggregate', () => {
   const work = (page: Page) => page.getByTestId('note-work.md')
 
   test('a total is derived from the estimates on the lines', async ({ page }) => {
-    await gotoVault(page)
+    await gotoShapes(page)
     // work.md: 3 + 1 + 2
     await expect(page.getByTestId('effort-input-work.md')).toHaveValue('6')
     // home.md: 1 + 1
@@ -305,7 +310,7 @@ test.describe('spreading an aggregate', () => {
   })
 
   test('an evenly divisible change moves every task by the same amount', async ({ page }) => {
-    await gotoVault(page)
+    await gotoShapes(page)
     const input = page.getByTestId('effort-input-work.md')
     await input.fill('9')
     await input.blur()
@@ -318,7 +323,7 @@ test.describe('spreading an aggregate', () => {
   })
 
   test('a remainder lands on the earliest line, as the annotation says', async ({ page }) => {
-    await gotoVault(page)
+    await gotoShapes(page)
     const input = page.getByTestId('effort-input-work.md')
     await input.fill('8')
     await input.blur()
@@ -333,7 +338,7 @@ test.describe('spreading an aggregate', () => {
   })
 
   test('it works downwards too, and only touches the note edited', async ({ page }) => {
-    await gotoVault(page)
+    await gotoShapes(page)
     const input = page.getByTestId('effort-input-work.md')
     await input.fill('3')
     await input.blur()
@@ -343,13 +348,13 @@ test.describe('spreading an aggregate', () => {
   })
 
   test('editing an estimate in the markdown flows back to the total', async ({ page }) => {
-    await gotoVault(page)
+    await gotoShapes(page)
     await work(page).fill('# Work\n\n## This week\n- [ ] write the design doc (10h)\n')
     await expect(page.getByTestId('effort-input-work.md')).toHaveValue('10')
   })
 
   test('without the annotation the total is not editable at all', async ({ page }) => {
-    await gotoVault(page)
+    await gotoShapes(page)
     await page.getByTestId('vault-program-panel').getByText('Datalog program').click()
     const source = page.getByTestId('vault-program-source')
     await source.fill((await source.inputValue()).replace('.put spread(min)', ''))
@@ -429,7 +434,7 @@ test.describe('naming the side of a join a write lands on', () => {
 // program until one is written down.
 test.describe('choosing which rule an insert satisfies', () => {
   test('the view unions both rules', async ({ page }) => {
-    await gotoVault(page)
+    await gotoShapes(page)
     // A task…
     await expect(page.getByTestId('line-reply to sam')).toBeVisible()
     // …and a heading, in the same view.
@@ -437,7 +442,7 @@ test.describe('choosing which rule an insert satisfies', () => {
   })
 
   test('inserting goes to the rule the annotation names', async ({ page }) => {
-    await gotoVault(page)
+    await gotoShapes(page)
     await expect(page.getByTestId('line-insert-status')).toContainText('insert via MdTask')
     await page.getByTestId('line-new-text').fill('buy stamps')
     await page.getByTestId('line-new-note').selectOption('home.md')
@@ -450,7 +455,7 @@ test.describe('choosing which rule an insert satisfies', () => {
   })
 
   test('without it the engine refuses, and says the head has several rules', async ({ page }) => {
-    await gotoVault(page)
+    await gotoShapes(page)
     await page.getByTestId('vault-program-panel').getByText('Datalog program').click()
     const source = page.getByTestId('vault-program-source')
     await source.fill(
@@ -476,13 +481,13 @@ test.describe('choosing which rule an insert satisfies', () => {
 // read-only" is a different answer from one that says "I could not work it out".
 test.describe('a view that is read-only on purpose', () => {
   test('is opted in by the host and still not writable', async ({ page }) => {
-    await gotoVault(page)
+    await gotoOptIn(page)
     await expect(page.getByTestId('load-count-work.md')).toHaveText('2')
     await expect(page.getByTestId('load-writable')).toHaveText('editable: none')
   })
 
   test('refuses by naming the annotation', async ({ page }) => {
-    await gotoVault(page)
+    await gotoOptIn(page)
     await page.getByTestId('load-try-work.md').click()
     await expect(page.getByTestId('load-refusal')).toHaveText(
       'Load is declared read-only with `.put none`',
@@ -490,7 +495,7 @@ test.describe('a view that is read-only on purpose', () => {
   })
 
   test('and without it the refusal is about what could not be worked out', async ({ page }) => {
-    await gotoVault(page)
+    await gotoOptIn(page)
     await page.getByTestId('vault-program-panel').getByText('Datalog program').click()
     const source = page.getByTestId('vault-program-source')
     await source.fill((await source.inputValue()).replace('\n.put none', ''))
@@ -504,6 +509,7 @@ test.describe('a view that is read-only on purpose', () => {
   test('the count still derives, and follows the tasks', async ({ page }) => {
     await gotoVault(page)
     await page.getByTestId('task-check-reply to sam').click()
+    await page.getByTestId('vault-subnav').getByText('Opt-in').click()
     await expect(page.getByTestId('load-count-work.md')).toHaveText('1')
   })
 })
@@ -515,13 +521,13 @@ test.describe('a view that is read-only on purpose', () => {
 // protocol applies, re-runs, compares and rolls back the one that missed.
 test.describe('inverting arithmetic in the head', () => {
   test('the column is computed, and derives from the estimate', async ({ page }) => {
-    await gotoVault(page)
+    await gotoShapes(page)
     await expect(page.getByTestId('minutes-input-write the design doc')).toHaveValue('180')
     await expect(page.getByTestId('minutes-input-reply to sam')).toHaveValue('120')
   })
 
   test('a divisible rewrite runs the computation backwards', async ({ page }) => {
-    await gotoVault(page)
+    await gotoShapes(page)
     const input = page.getByTestId('minutes-input-write the design doc')
     await input.fill('240')
     await input.blur()
@@ -536,7 +542,7 @@ test.describe('inverting arithmetic in the head', () => {
   })
 
   test('one that does not round-trip is caught and rolled back', async ({ page }) => {
-    await gotoVault(page)
+    await gotoShapes(page)
     const input = page.getByTestId('minutes-input-write the design doc')
     await input.fill('150')
     await input.blur()
@@ -555,7 +561,7 @@ test.describe('inverting arithmetic in the head', () => {
   })
 
   test('the other column of the same view is an ordinary copy', async ({ page }) => {
-    await gotoVault(page)
+    await gotoShapes(page)
     // `text` traces to one position in MdTask; only the computed column needed
     // an inverse, and the rest of the row is unaffected by that.
     await expect(page.getByTestId('minutes-reply to sam')).toBeVisible()
@@ -570,14 +576,14 @@ test.describe('inverting arithmetic in the head', () => {
 // both, which is why it is the right control.
 test.describe('a negated view runs backwards', () => {
   test('reflects the tags already on the notes', async ({ page }) => {
-    await gotoVault(page)
+    await gotoShapes(page)
     await expect(page.getByTestId('tag-work.md-urgent')).toBeChecked()
     await expect(page.getByTestId('tag-work.md-errand')).not.toBeChecked()
     await expect(page.getByTestId('tag-home.md-urgent')).not.toBeChecked()
   })
 
   test('removing a row from the view inserts a fact', async ({ page }) => {
-    await gotoVault(page)
+    await gotoShapes(page)
     await page.getByTestId('tag-home.md-errand').check()
 
     // The request was a *delete* on `Missing`; the change is an *insert*.
@@ -587,7 +593,7 @@ test.describe('a negated view runs backwards', () => {
   })
 
   test('and adding one deletes a fact', async ({ page }) => {
-    await gotoVault(page)
+    await gotoShapes(page)
     await page.getByTestId('tag-work.md-urgent').uncheck()
 
     await expect(page.getByTestId('vault-status')).toContainText('del MdTag(work.md:urgent)')
@@ -597,7 +603,7 @@ test.describe('a negated view runs backwards', () => {
   })
 
   test('the two directions compose back to where they started', async ({ page }) => {
-    await gotoVault(page)
+    await gotoShapes(page)
     const before = await page.getByTestId('note-work.md').inputValue()
     await page.getByTestId('tag-work.md-waiting').check()
     await expect(page.getByTestId('note-work.md')).toContainText('#waiting')
@@ -606,26 +612,32 @@ test.describe('a negated view runs backwards', () => {
   })
 
   test('a tag written by hand flows forward into the grid', async ({ page }) => {
-    await gotoVault(page)
+    await gotoShapes(page)
     const note = page.getByTestId('note-home.md')
     await note.fill((await note.inputValue()).replace('# Home', '# Home #waiting'))
     await expect(page.getByTestId('tag-home.md-waiting')).toBeChecked()
   })
 
   test('tags are facts about the note, not part of its title', async ({ page }) => {
+    // Agenda is on the Tracing page and the grid is here, so this one crosses
+    // between them — which is worth doing anyway: the notes and the program are
+    // owned by the layout, so they survive the navigation.
     await gotoVault(page)
     // The title in every other view is the heading without its tags…
-    await expect(page.getByTestId('agenda-input-0-reply to sam')).toHaveValue('Work')
-    // …and renaming it through those views leaves the tags alone.
     const title = page.getByTestId('agenda-input-0-reply to sam')
+    await expect(title).toHaveValue('Work')
+    // …and renaming it through those views leaves the tags alone.
     await title.fill('Job')
     await title.blur()
+    await expect(page.getByTestId('note-work.md')).toContainText('# Job #urgent')
+
+    await page.getByTestId('vault-subnav').getByText('Shapes').click()
     await expect(page.getByTestId('note-work.md')).toContainText('# Job #urgent')
     await expect(page.getByTestId('tag-work.md-urgent')).toBeChecked()
   })
 
   test('the annotation is what collapses it to one answer', async ({ page }) => {
-    await gotoVault(page)
+    await gotoShapes(page)
     await page.getByTestId('vault-program-panel').getByText('Datalog program').click()
     const source = page.getByTestId('vault-program-source')
     await source.fill((await source.inputValue()).replace('.put into MdTag', ''))
@@ -638,5 +650,147 @@ test.describe('a negated view runs backwards', () => {
     await page.getByTestId('tag-home.md-errand').click()
     await expect(page.getByTestId('vault-status')).toContainText('ambiguous')
     await expect(page.getByTestId('note-home.md')).not.toContainText('#errand')
+  })
+})
+
+// The vault is three pages over one state. The notes, the program and the
+// status line belong to the layout; only the tables change. That is worth a
+// test of its own, because the thing that would break silently is exactly the
+// shared part — an edit made on one page has to still be there on the next.
+test.describe('three pages, one vault', () => {
+  test('each page shows its own tables and none of the others', async ({ page }) => {
+    await gotoVault(page)
+    await expect(page.getByTestId('task-list')).toBeVisible()
+    await expect(page.getByTestId('effort-list')).toHaveCount(0)
+
+    await page.getByTestId('vault-subnav').getByText('Shapes').click()
+    await expect(page.getByTestId('effort-list')).toBeVisible()
+    await expect(page.getByTestId('task-list')).toHaveCount(0)
+
+    await page.getByTestId('vault-subnav').getByText('Opt-in').click()
+    await expect(page.getByTestId('load-list')).toBeVisible()
+    await expect(page.getByTestId('effort-list')).toHaveCount(0)
+  })
+
+  test('the notes and the program are shared, and edits survive the move', async ({ page }) => {
+    await gotoVault(page)
+    await page.getByTestId('task-check-reply to sam').click()
+    await expect(page.getByTestId('note-work.md')).toContainText('- [x] reply to sam')
+
+    await page.getByTestId('vault-subnav').getByText('Shapes').click()
+    await expect(page.getByTestId('note-work.md')).toContainText('- [x] reply to sam')
+    // And the views on this page agree: a closed task is no longer open.
+    await expect(page.getByTestId('minutes-reply to sam')).toBeVisible()
+  })
+
+  test('a program edit made on one page holds on the others', async ({ page }) => {
+    await gotoShapes(page)
+    await page.getByTestId('vault-program-panel').getByText('Datalog program').click()
+    const source = page.getByTestId('vault-program-source')
+    await source.fill((await source.inputValue()).replace('.put spread(min)', ''))
+    await page.getByTestId('vault-program-rebuild').click()
+    await expect(page.getByTestId('effort-input-work.md')).toHaveAttribute('readonly', '')
+
+    await page.getByTestId('vault-subnav').getByText('Opt-in').click()
+    await page.getByTestId('vault-program-panel').getByText('Datalog program').click()
+    await expect(page.getByTestId('vault-program-source')).not.toHaveValue(/spread/)
+  })
+})
+
+// The backward direction is more Datalog. This panel prints it, which is both
+// the claim and the cost: every view opted into and every channel left on is
+// rules on that list, maintained continuously for an edit that may never come.
+test.describe('what gets compiled', () => {
+  test('shows the rules generated for the current selection', async ({ page }) => {
+    await gotoOptIn(page)
+    // Agenda × upd, the default.
+    await expect(page.getByTestId('compiled-count')).toHaveText(/for 1 view × 1 channel/)
+    await expect(page.getByTestId('compiled-source')).toContainText('Upd_Agenda')
+    await expect(page.getByTestId('compiled-source')).not.toContainText('Del_Agenda')
+  })
+
+  test('adding a channel adds rules; removing one takes them away', async ({ page }) => {
+    await gotoOptIn(page)
+    const count = async () =>
+      Number((await page.getByTestId('compiled-count').textContent())!.match(/^(\d+)/)![1])
+    const before = await count()
+
+    await page.getByTestId('compiled-channel-del').check()
+    await expect(page.getByTestId('compiled-source')).toContainText('Del_Agenda')
+    expect(await count()).toBeGreaterThan(before)
+
+    await page.getByTestId('compiled-channel-upd').uncheck()
+    await expect(page.getByTestId('compiled-source')).not.toContainText('Upd_Agenda')
+  })
+
+  test('a second view is a second set of rules, not a shared one', async ({ page }) => {
+    await gotoOptIn(page)
+    const before = Number(
+      (await page.getByTestId('compiled-count').textContent())!.match(/^(\d+)/)![1],
+    )
+    await page.getByTestId('compiled-view-Outline').check()
+    await expect(page.getByTestId('compiled-count')).toHaveText(/for 2 views/)
+    expect(
+      Number((await page.getByTestId('compiled-count').textContent())!.match(/^(\d+)/)![1]),
+    ).toBeGreaterThan(before)
+  })
+
+  test('with nothing selected there is nothing to compile', async ({ page }) => {
+    await gotoOptIn(page)
+    await page.getByTestId('compiled-view-Agenda').uncheck()
+    await expect(page.getByTestId('compiled-count')).toHaveText(/^0 shadow rules/)
+    await expect(page.getByTestId('compiled-source')).toContainText('nothing')
+  })
+
+  test('it compiles the live program, so a rule edit shows up here', async ({ page }) => {
+    await gotoOptIn(page)
+    await page.getByTestId('compiled-view-Agenda').uncheck()
+    await page.getByTestId('compiled-view-Effort').check()
+    await expect(page.getByTestId('compiled-source')).not.toContainText('nothing')
+
+    // `spread` is what makes the aggregate invertible at all; take it away and
+    // the compiler has nothing to emit for that column.
+    await page.getByTestId('vault-program-panel').getByText('Datalog program').click()
+    const source = page.getByTestId('vault-program-source')
+    await source.fill((await source.inputValue()).replace('.put spread(min)', ''))
+    await page.getByTestId('vault-program-rebuild').click()
+    await expect(page.getByTestId('compiled-source')).not.toContainText('Upd_MdEstimate')
+  })
+})
+
+// One graph held open across a burst of edits, against one graph per edit. The
+// assertion that matters is that they agree — a cheaper wrong answer would be
+// no use — and the count is emissions, meaning work done, so it doesn't move
+// when the machine is busy.
+test.describe('resolving vs maintaining', () => {
+  test('runs a burst both ways and gets the same answer', async ({ page }) => {
+    await gotoOptIn(page)
+    await page.getByTestId('session-run').click()
+    await expect(page.getByTestId('session-result')).toBeVisible()
+
+    // Four open tasks in the seed notes, each renamed once.
+    await expect(page.getByTestId('session-edits')).toHaveText('4')
+    await expect(page.getByTestId('session-oneshot')).toHaveText('4')
+    await expect(page.getByTestId('session-agree')).toHaveText('same answer')
+  })
+
+  test('the session is built once, not per edit', async ({ page }) => {
+    await gotoOptIn(page)
+    await page.getByTestId('session-run').click()
+    // Emissions are work actually done, so this is a real number rather than a
+    // placeholder — the claim is only that a request costs the delta.
+    const emitted = Number(await page.getByTestId('session-emissions').textContent())
+    expect(emitted).toBeGreaterThan(0)
+  })
+
+  test('it follows the current facts, so closing a task shortens the burst', async ({
+    page,
+  }) => {
+    await gotoVault(page)
+    await page.getByTestId('task-check-reply to sam').click()
+    await page.getByTestId('vault-subnav').getByText('Opt-in').click()
+    await page.getByTestId('session-run').click()
+    await expect(page.getByTestId('session-edits')).toHaveText('3')
+    await expect(page.getByTestId('session-agree')).toHaveText('same answer')
   })
 })

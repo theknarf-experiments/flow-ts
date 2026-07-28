@@ -104,12 +104,16 @@ on the relation's declaration:
   replayed, so they constrain which tuples qualify, but nothing proposes a
   change to them. Turns `ambiguous` into `ok` for the request that reaches both
   sides, and a request reaching *only* the held side into `refused`.
+- **`.put insert via R`** — which rule an *insertion* satisfies, named by a
+  relation its body mentions. Deleting through a multi-rule head is mechanical,
+  since killing a disjunction kills every disjunct; satisfying one is a choice
+  nothing in the program makes.
 - **`.put none`** — read-only on purpose, so a refusal reads as a decision
   rather than an omission.
 
-Still refused, not yet annotatable: head arithmetic, the insert branch of a
-multi-rule head, insert templates for existentials, and a minimal cut under
-recursion.
+Still refused: head arithmetic, and insertion into a rule whose body carries a
+variable the head doesn't (there is no value to insert, so a template would have
+to supply one).
 
 ## Findings that changed the design
 
@@ -244,9 +248,35 @@ precisely; not-currently-derived is a legitimate answer about the data and keeps
 its own wording. `resolve` reports it as `refused`; `propose`, the raw
 primitive, throws, since a malformed request there is a caller bug.
 
-## Not done
+## Insertion
 
-- Insert requests other than the negation flip; no templates for existentials.
+The mirror of deletion, and the asymmetry is the whole of it:
+
+|  | rules | atoms within a rule |
+| --- | --- | --- |
+| delete | fans out over **all** — killing a disjunction kills every disjunct | picks **one** |
+| insert | picks **one** — satisfying a disjunction needs one disjunct | fans out over **all** — a conjunction needs its whole body |
+
+So deletion's ambiguity is which atom and insertion's is which rule, and only
+the second is unavoidable — hence `.put insert via R`. Negated atoms flip to
+retractions, so "make this visible" adds the item *and* clears what hid it.
+Comparisons are replayed into the insert rules, so a request violating a filter
+proposes nothing rather than something doomed.
+
+## Minimal cuts
+
+The shadow fixpoint of a recursive rule computes *support*: every tuple
+participating in any derivation. Deleting all of it is correct but wildly
+over-aggressive — removing one arc from a path is usually enough.
+
+`minimize` drops changes one at a time and keeps each drop that still achieves
+the request. The result is **irreducible**, not minimum: no single member can be
+removed, though a smaller set may exist that this order never reaches. The
+distinction is worth stating, because one is checkable in linear time and the
+other is a combinatorial problem — and the property tests check exactly the
+claim made, putting each change back and requiring the target to return.
+
+## Not done
 - Head arithmetic, join write-side, and recursion cuts are refused rather than
   annotatable.
 - The generator is numeric-only and non-recursive by default.

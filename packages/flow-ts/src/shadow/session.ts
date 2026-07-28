@@ -28,13 +28,14 @@ import type { Program } from '../ast/index.js'
 import { type ProgramSession, openSession } from '../executing/dataflow.js'
 import type { Row } from '../reading/row.js'
 import { inferRelationTypes } from '../typing/index.js'
-import { SEED_PREFIX, SEED_UPD_PREFIX, compileShadow } from './compile.js'
+import { SEED_INS_PREFIX, SEED_PREFIX, SEED_UPD_PREFIX, compileShadow } from './compile.js'
 import { validateRequest } from './validate.js'
 import {
   type BackwardRequest,
   type Change,
   type Resolution,
   type ResolveOptions,
+  shrink,
 } from './resolve.js'
 
 const keyOf = (row: Row): string => row.map((v) => `${typeof v}:${v}`).join('')
@@ -142,7 +143,9 @@ export function openBackwardSession(
   const seedRel = (request: BackwardRequest): string =>
     request.newRow !== undefined
       ? `${SEED_UPD_PREFIX}${request.rel}`
-      : `${SEED_PREFIX}${request.rel}`
+      : request.insert
+        ? `${SEED_INS_PREFIX}${request.rel}`
+        : `${SEED_PREFIX}${request.rel}`
 
   const seedRow = (request: BackwardRequest): Row =>
     request.newRow !== undefined ? [...request.row, ...request.newRow] : request.row
@@ -186,14 +189,23 @@ export function openBackwardSession(
   const resolve = (request: BackwardRequest): Resolution => {
     const malformed = validateRequest(program, inferred, shadow.seeds, request)
     if (malformed) return { status: 'refused', reason: malformed }
-    if (!isLive(request.rel, request.row)) {
+
+    const isUpdate = request.newRow !== undefined
+    const isInsert = request.insert === true
+    const live = isLive(request.rel, request.row)
+    if (isInsert && live) {
+      return {
+        status: 'refused',
+        reason: `${request.rel}(${request.row.join(', ')}) is already derived`,
+      }
+    }
+    if (!isInsert && !live) {
       return {
         status: 'refused',
         reason: `${request.rel}(${request.row.join(', ')}) is not derived from the current facts (stale?)`,
       }
     }
 
-    const isUpdate = request.newRow !== undefined
     const maxRounds = options.maxRounds ?? 12
     const applied: Change[] = []
 
@@ -228,19 +240,43 @@ export function openBackwardSession(
 
       const achieved = isUpdate
         ? isLive(request.rel, request.newRow!)
-        : !isLive(request.rel, request.row)
-      if (achieved) return { status: 'ok', changes: applied, rounds }
+        : isInsert
+          ? isLive(request.rel, request.row)
+          : !isLive(request.rel, request.row)
+      if (achieved) {
+        if (!options.minimize) return { status: 'ok', changes: applied, rounds }
+        // Roll back to where we started, then rebuild the smallest set that
+        // still works. Each trial is an apply/advance/rollback on the live
+        // graph, which is what makes trying n of them affordable.
+        applyChanges(applied, -1)
+        const kept = shrink(applied, (subset) => {
+          applyChanges(subset)
+          const stillWorks = isUpdate
+            ? isLive(request.rel, request.newRow!)
+            : isInsert
+              ? isLive(request.rel, request.row)
+              : !isLive(request.rel, request.row)
+          applyChanges(subset, -1)
+          return stillWorks
+        })
+        applyChanges(kept)
+        return { status: 'ok', changes: kept, rounds }
+      }
 
-      // An update gets one shot: re-requesting would chase a row that no longer
-      // exists. A delete iterates, since negation genuinely needs another pass.
-      if (isUpdate) {
+      // An update or insert gets one shot: re-requesting would chase a row that
+      // no longer exists, or already does. A delete iterates, since negation
+      // genuinely needs another pass.
+      if (isUpdate || isInsert) {
         applyChanges(applied, -1)
         return {
           status: 'unsatisfied',
           attempted: applied,
           reason:
-            `the rewrite did not produce ${request.rel}(${request.newRow!.join(', ')}) — ` +
-            'a source tuple it changed is also relied on elsewhere in the rule',
+            isInsert
+            ? `the insert did not produce ${request.rel}(${request.row.join(', ')}) — ` +
+              'the rule cannot be satisfied by adding facts alone'
+            : `the rewrite did not produce ${request.rel}(${request.newRow!.join(', ')}) — ` +
+              'a source tuple it changed is also relied on elsewhere in the rule',
         }
       }
     }

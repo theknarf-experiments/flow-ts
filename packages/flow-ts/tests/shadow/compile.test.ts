@@ -187,7 +187,10 @@ S(x + 1) :- R(x).
 S(x) :- R(x, y), y < 10.
 `),
     )
-    expect(shadow.refusals).toEqual([])
+    // Deletion is fully determined here. Insertion is not — `y` is in the body
+    // but not the head, so there is no value to insert — and that refusal is
+    // about the insert channel, not this one.
+    expect(shadow.refusals.filter((r) => !/insert/i.test(r.reason))).toEqual([])
     expect(ruleLines(shadow.source)).toContain('Del_R(x, y) :- Del_S(x), R(x, y), y < 10.')
   })
 

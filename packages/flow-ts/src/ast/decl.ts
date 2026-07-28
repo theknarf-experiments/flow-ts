@@ -59,6 +59,11 @@ export type PutPolicy =
    *  Bancilhon & Spyratos' constant complement, named directly: the side you
    *  don't write is the invariant that makes the update well-defined. */
   | { kind: 'into'; rel: string }
+  /** Which rule an *insertion* satisfies, named by a relation its body
+   *  mentions. Deletion through a multi-rule head is mechanical — killing a
+   *  disjunction kills every disjunct — but satisfying one is a choice, and
+   *  nothing in the program makes it. */
+  | { kind: 'insertVia'; rel: string }
 
 export function putPolicyToString(p: PutPolicy): string {
   switch (p.kind) {
@@ -68,6 +73,8 @@ export function putPolicyToString(p: PutPolicy): string {
       return `.put spread(${p.residual})`
     case 'into':
       return `.put into ${p.rel}`
+    case 'insertVia':
+      return `.put insert via ${p.rel}`
   }
 }
 

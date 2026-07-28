@@ -1,0 +1,189 @@
+// Cutting less than the whole support set.
+//
+// The shadow fixpoint of a recursive rule computes *support*: every source
+// tuple participating in any derivation of the target. Deleting all of it
+// certainly severs the target, and that is what made the completeness property
+// hold — but it is wildly over-aggressive. Removing one arc from a path is
+// usually enough; removing every arc on every path is not what anyone meant by
+// "delete this row".
+//
+// A globally *minimum* cut is a combinatorial problem. What is cheap, and what
+// this does, is an **irreducible** cut: start from a set known to work and drop
+// changes one at a time, keeping each drop that still achieves the request. The
+// result has no redundant member — removing any single change brings the target
+// back — which is a property you can actually check, and this file checks it.
+//
+// It is not recursion-specific. A union or a join can over-collect the same way.
+
+import fc from 'fast-check'
+import { describe, expect, it } from 'vitest'
+import { parseProgram } from '@flow-ts/parsing'
+import type { Row } from '../../src/reading/index.js'
+import { openBackwardSession, resolveBackward } from '../../src/shadow/index.js'
+import { type Facts, key, liveRows } from './_harness.js'
+
+const PARSE = { parse: (src: string) => parseProgram(src, { grammarSource: 's.dl' }) }
+
+const PATH_SRC = `\
+.in
+.decl Arc(x: number, y: number)
+.input Arc.csv
+
+.printsize
+.decl Path(x: number, y: number)
+
+.rule
+Path(x, y) :- Arc(x, y).
+Path(x, z) :- Path(x, y), Arc(y, z).
+`
+const PATH = parseProgram(PATH_SRC, { grammarSource: 'p.dl' })
+
+/** A single chain 0→1→2→3: every arc is load-bearing. */
+const CHAIN: Facts = { Arc: [[0, 1], [1, 2], [2, 3]] }
+/** Two disjoint routes from 0 to 3, so a cut needs one arc from each. */
+const DIAMOND: Facts = {
+  Arc: [[0, 1], [1, 3], [0, 2], [2, 3]],
+}
+
+const applyDeletes = (facts: Facts, changes: ReadonlyArray<{ rel: string; row: Row }>): Facts => {
+  const drop = new Set(changes.map((c) => `${c.rel}|${key(c.row)}`))
+  const out: Facts = {}
+  for (const [rel, rows] of Object.entries(facts)) {
+    out[rel] = rows.filter((r) => !drop.has(`${rel}|${key(r)}`))
+  }
+  return out
+}
+
+describe('without minimisation', () => {
+  it('takes the whole support set', () => {
+    const r = resolveBackward(PATH, DIAMOND, { rel: 'Path', row: [0, 3] }, PARSE)
+    expect(r.status).toBe('ok')
+    if (r.status !== 'ok') return
+    // All four arcs support Path(0,3) one way or another.
+    expect(r.changes).toHaveLength(4)
+  })
+})
+
+describe('with minimisation', () => {
+  it('a chain needs exactly one arc removed', () => {
+    const r = resolveBackward(PATH, CHAIN, { rel: 'Path', row: [0, 3] }, {
+      ...PARSE,
+      minimize: true,
+    })
+    expect(r.status).toBe('ok')
+    if (r.status !== 'ok') return
+    expect(r.changes).toHaveLength(1)
+    expect(!liveRows(PATH_SRC, applyDeletes(CHAIN, r.changes), 'Path').has(key([0, 3]))).toBe(true)
+  })
+
+  it('a diamond needs one arc from each route', () => {
+    const r = resolveBackward(PATH, DIAMOND, { rel: 'Path', row: [0, 3] }, {
+      ...PARSE,
+      minimize: true,
+    })
+    expect(r.status).toBe('ok')
+    if (r.status !== 'ok') return
+    expect(r.changes).toHaveLength(2)
+  })
+
+  it('leaves collateral rows alone that the full support set would have taken', () => {
+    const r = resolveBackward(PATH, CHAIN, { rel: 'Path', row: [0, 3] }, {
+      ...PARSE,
+      minimize: true,
+    })
+    if (r.status !== 'ok') return
+    const after = liveRows(PATH_SRC, applyDeletes(CHAIN, r.changes), 'Path')
+    // Cutting one arc leaves the paths on the other side of it standing.
+    expect(after.size).toBeGreaterThan(0)
+  })
+
+  it('is a no-op when the support set was already irreducible', () => {
+    const PROJECTION = parseProgram(
+      `\
+.in
+.decl Task(p: string, s: string, t: string)
+.input Task.csv
+
+.printsize
+.decl Open(p: string, t: string)
+
+.rule
+Open(p, t) :- Task(p, "open", t).
+`,
+      { grammarSource: 'x.dl' },
+    )
+    const facts: Facts = { Task: [['a.md', 'open', 'milk']] }
+    const plain = resolveBackward(PROJECTION, facts, { rel: 'Open', row: ['a.md', 'milk'] }, PARSE)
+    const min = resolveBackward(PROJECTION, facts, { rel: 'Open', row: ['a.md', 'milk'] }, {
+      ...PARSE,
+      minimize: true,
+    })
+    expect(plain.status).toBe('ok')
+    expect(min.status).toBe('ok')
+    if (plain.status !== 'ok' || min.status !== 'ok') return
+    expect(min.changes).toEqual(plain.changes)
+  })
+})
+
+describe('sessions minimise too', () => {
+  it('and leave the graph reflecting only the changes kept', () => {
+    const s = openBackwardSession(PATH, { ...PARSE, minimize: true })
+    for (const row of CHAIN.Arc!) s.update('Arc', row, 1)
+    s.advance()
+
+    const r = s.resolve({ rel: 'Path', row: [0, 3] })
+    expect(r.status).toBe('ok')
+    if (r.status !== 'ok') return
+    expect(r.changes).toHaveLength(1)
+    // The session's own Arc mirror lost exactly one row, not three.
+    expect(s.rows('Arc')).toHaveLength(2)
+    expect(s.rows('Path').some((p) => p[0] === 0 && p[1] === 3)).toBe(false)
+    s.close()
+  })
+})
+
+describe('properties', () => {
+  const graphs = fc
+    .uniqueArray(
+      fc.tuple(fc.integer({ min: 0, max: 4 }), fc.integer({ min: 0, max: 4 })),
+      { minLength: 1, maxLength: 10, selector: (e) => e.join(',') },
+    )
+    .map((edges) => ({ Arc: edges.map((e) => [...e] as Row) }) as Facts)
+
+  it('the result achieves the request and has no redundant member', () => {
+    let exercised = 0
+    let shrunk = 0
+    fc.assert(
+      fc.property(graphs, fc.nat(), (facts, pick) => {
+        const view = [...liveRows(PATH_SRC, facts, 'Path').values()]
+        if (view.length === 0) return true
+        const target = view[pick % view.length]!
+
+        const full = resolveBackward(PATH, facts, { rel: 'Path', row: target }, PARSE)
+        const min = resolveBackward(PATH, facts, { rel: 'Path', row: target }, {
+          ...PARSE,
+          minimize: true,
+        })
+        if (full.status !== 'ok' || min.status !== 'ok') return true
+        exercised++
+        if (min.changes.length < full.changes.length) shrunk++
+
+        // Still achieves the request.
+        const after = liveRows(PATH_SRC, applyDeletes(facts, min.changes), 'Path')
+        if (after.has(key(target))) return false
+
+        // Irreducible: putting any single change back brings the target back.
+        for (const c of min.changes) {
+          const without = min.changes.filter((x) => x !== c)
+          const partial = liveRows(PATH_SRC, applyDeletes(facts, without), 'Path')
+          if (!partial.has(key(target))) return false
+        }
+        return true
+      }),
+      { numRuns: 150 },
+    )
+    expect(exercised).toBeGreaterThan(40)
+    // Non-vacuity: minimisation must actually be doing something.
+    expect(shrunk).toBeGreaterThan(5)
+  })
+})

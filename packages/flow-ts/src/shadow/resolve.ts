@@ -27,6 +27,7 @@ import type { Row } from '../reading/row.js'
 import { inferRelationTypes } from '../typing/index.js'
 import { validateRequest } from './validate.js'
 import {
+  SEED_INS_PREFIX,
   SEED_PREFIX,
   SEED_UPD_PREFIX,
   type ShadowOptions,
@@ -51,6 +52,9 @@ export interface BackwardRequest {
   row: Row
   /** Present for a cell edit: what the row should become. */
   newRow?: Row
+  /** Ask for the row to *exist* rather than to go away. Mutually exclusive
+   *  with `newRow`. */
+  insert?: boolean
 }
 
 export type Resolution =
@@ -74,6 +78,16 @@ export interface ResolveOptions extends ShadowOptions {
   requireUnambiguous?: boolean
   /** Cap on delete rounds. Reached only by pathological programs. */
   maxRounds?: number
+  /** Shrink the result to an *irreducible* set: one where putting any single
+   *  change back brings the target back.
+   *
+   *  The shadow fixpoint of a recursive rule computes support — every tuple
+   *  participating in any derivation — and deleting all of it is correct but
+   *  wildly over-aggressive: removing one arc from a path is usually enough.
+   *  A globally minimum cut is a combinatorial problem; dropping changes one at
+   *  a time and keeping each drop that still works costs one verification per
+   *  candidate and yields a set with no redundant member. */
+  minimize?: boolean
 }
 
 const keyOf = (row: Row): string => row.map((v) => `${typeof v}:${v}`).join('')
@@ -88,6 +102,7 @@ export function resolveBackward(
 ): Resolution {
   const maxRounds = options.maxRounds ?? 12
   const isUpdate = request.newRow !== undefined
+  const isInsert = request.insert === true
 
   const shadow = compileShadow(program, options)
   // Shape first. A mistyped row would otherwise just fail to join, and get
@@ -100,7 +115,14 @@ export function resolveBackward(
   )
   if (malformed) return { status: 'refused', reason: malformed }
 
-  if (!liveRows(program, facts, request.rel).has(keyOf(request.row))) {
+  const live = liveRows(program, facts, request.rel).has(keyOf(request.row))
+  if (isInsert && live) {
+    return {
+      status: 'refused',
+      reason: `${request.rel}(${request.row.join(', ')}) is already derived`,
+    }
+  }
+  if (!isInsert && !live) {
     return {
       status: 'refused',
       reason: `${request.rel}(${request.row.join(', ')}) is not derived from the current facts (stale?)`,
@@ -116,8 +138,29 @@ export function resolveBackward(
   }
   const edbNames = new Set(program.edbs.map((d) => d.name))
 
+  if (isInsert) {
+    const changes = propose(shadowProgram, edbNames, facts, request)
+    if (changes.length === 0) {
+      return { status: 'refused', reason: noCandidateReason(shadow.refusals, request) }
+    }
+    const ambiguity = checkAmbiguous(changes, options)
+    if (ambiguity) return ambiguity
+
+    const after = apply(facts, changes)
+    if (!liveRows(program, after, request.rel).has(keyOf(request.row))) {
+      return {
+        status: 'unsatisfied',
+        attempted: changes,
+        reason:
+          `the insert did not produce ${request.rel}(${request.row.join(', ')}) — ` +
+          'the rule cannot be satisfied by adding facts alone',
+      }
+    }
+    return { status: 'ok', changes, rounds: 1 }
+  }
+
   if (isUpdate) {
-    const changes = propose(shadowProgram, edbNames, facts, request, true)
+    const changes = propose(shadowProgram, edbNames, facts, request)
     if (changes.length === 0) {
       return { status: 'refused', reason: noCandidateReason(shadow.refusals, request) }
     }
@@ -141,7 +184,7 @@ export function resolveBackward(
   const all: Change[] = []
   let current = facts
   for (let rounds = 1; rounds <= maxRounds; rounds++) {
-    const changes = propose(shadowProgram, edbNames, current, request, false)
+    const changes = propose(shadowProgram, edbNames, current, request)
     if (changes.length === 0) {
       return {
         status: 'refused',
@@ -155,7 +198,12 @@ export function resolveBackward(
     all.push(...changes)
     current = apply(current, changes)
     if (!liveRows(program, current, request.rel).has(keyOf(request.row))) {
-      return { status: 'ok', changes: all, rounds }
+      const kept = options.minimize
+        ? shrink(all, (subset) =>
+            !liveRows(program, apply(facts, subset), request.rel).has(keyOf(request.row)),
+          )
+        : all
+      return { status: 'ok', changes: kept, rounds }
     }
   }
   return {
@@ -166,6 +214,33 @@ export function resolveBackward(
 }
 
 // --- internals --------------------------------------------------------------
+
+/** Which channel a request enters on, and the row it carries. */
+export function seedFor(request: BackwardRequest): [string, Row[]] {
+  if (request.newRow !== undefined) {
+    return [`${SEED_UPD_PREFIX}${request.rel}`, [[...request.row, ...request.newRow]]]
+  }
+  if (request.insert) return [`${SEED_INS_PREFIX}${request.rel}`, [request.row]]
+  return [`${SEED_PREFIX}${request.rel}`, [request.row]]
+}
+
+/** Drop changes one at a time, keeping each drop that still satisfies `holds`.
+ *
+ *  The result is irreducible rather than minimum: no single member can be
+ *  removed, though a smaller set might exist that this order never reaches.
+ *  Being clear about which of the two it is matters — one is checkable in
+ *  linear time and the other is not. */
+export function shrink(
+  changes: readonly Change[],
+  holds: (subset: Change[]) => boolean,
+): Change[] {
+  let kept = [...changes]
+  for (const c of changes) {
+    const without = kept.filter((x) => x !== c)
+    if (without.length !== kept.length && holds(without)) kept = without
+  }
+  return kept
+}
 
 function noCandidateReason(
   refusals: ReadonlyArray<{ subject: string; reason: string }>,
@@ -200,14 +275,10 @@ function propose(
   edbNames: ReadonlySet<string>,
   facts: Facts,
   request: BackwardRequest,
-  isUpdate: boolean,
 ): Change[] {
   const edbFacts = new Map<string, Row[]>(Object.entries(facts))
-  if (isUpdate) {
-    edbFacts.set(`${SEED_UPD_PREFIX}${request.rel}`, [[...request.row, ...request.newRow!]])
-  } else {
-    edbFacts.set(`${SEED_PREFIX}${request.rel}`, [request.row])
-  }
+  const [rel, row] = seedFor(request)
+  edbFacts.set(rel, row)
 
   const counts = new Map<string, Map<string, { row: Row; n: number }>>()
   executeProgram(shadowProgram, edbFacts, {}, (rel, row, diff) => {

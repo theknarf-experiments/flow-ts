@@ -51,6 +51,7 @@ import {
 
 export const SEED_PREFIX = 'Seed_'
 export const SEED_UPD_PREFIX = 'SeedUpd_'
+export const SEED_INS_PREFIX = 'SeedIns_'
 export const DEL_PREFIX = 'Del_'
 export const INS_PREFIX = 'Ins_'
 export const UPD_PREFIX = 'Upd_'
@@ -145,6 +146,28 @@ export function compileShadow(
       needs: [],
       text: `${UPD_PREFIX}${idb.name}(${pair}) :- ${SEED_UPD_PREFIX}${idb.name}(${pair}).`,
     })
+    rules.push({
+      headRel: INS_PREFIX + idb.name,
+      needs: [],
+      text: `${INS_PREFIX}${idb.name}(${vars}) :- ${SEED_INS_PREFIX}${idb.name}(${vars}).`,
+    })
+  }
+
+  const ruleCountByHead = new Map<string, number>()
+  for (const rule of program.rules) {
+    ruleCountByHead.set(rule.head.name, (ruleCountByHead.get(rule.head.name) ?? 0) + 1)
+  }
+
+  // How many of a head's rules mention the relation an `insert via` names. One
+  // is a choice; zero or several is not a choice at all, and says so.
+  const insertViaRuleCount = new Map<string, number>()
+  for (const rule of program.rules) {
+    const p = policies[rule.head.name]
+    if (p?.kind !== 'insertVia') continue
+    const mentions = rule.rhs.some((x) => x.kind !== 'Compare' && x.atom.name === p.rel)
+    if (mentions) {
+      insertViaRuleCount.set(rule.head.name, (insertViaRuleCount.get(rule.head.name) ?? 0) + 1)
+    }
   }
 
   for (const rule of program.rules) {
@@ -211,6 +234,25 @@ export function compileShadow(
       taken.add(name)
       return name
     }
+
+    // --- insert channel --------------------------------------------------
+    //
+    // The mirror of deletion, and the asymmetry is the point. Killing a
+    // disjunction kills every disjunct, so a delete fans out over *rules* and
+    // picks one atom within each. Satisfying a disjunction needs only one
+    // disjunct, so an insert picks one *rule* and fans out over its whole body,
+    // because a conjunction needs all of it. Deletion's ambiguity is which atom;
+    // insertion's is which rule, and only the second is unavoidable.
+    emitInsertRules(
+      rule,
+      headArgs,
+      ruleCountByHead.get(rule.head.name) ?? 1,
+      only,
+      policy?.kind === 'insertVia' ? policy.rel : null,
+      insertViaRuleCount,
+      rules,
+      refusals,
+    )
 
     // --- update channel ------------------------------------------------
     //
@@ -315,6 +357,102 @@ export function compileShadow(
     ),
     seeds,
     refusals,
+  }
+}
+
+/** Insert rules for one forward rule: what has to become true for its head to
+ *  hold. Every body atom is required (a conjunction), and a negated atom flips
+ *  to a retraction.
+ *
+ *  Two things stop it, and both are refusals with a reason rather than a guess:
+ *  a head defined by several rules, where satisfying one is a choice nothing in
+ *  the program makes; and a body variable the head doesn't carry, where there
+ *  is simply no value to insert. Comparisons are replayed, so a request that
+ *  violates a filter proposes nothing instead of proposing something doomed. */
+function emitInsertRules(
+  rule: FLRule,
+  headArgs: readonly string[],
+  ruleCount: number,
+  only: string | null,
+  insertVia: string | null,
+  insertViaRuleCount: ReadonlyMap<string, number>,
+  out: ShadowRule[],
+  refusals: ShadowRefusal[],
+): void {
+  const subject = rule.toString()
+  const headVars = new Set(
+    rule.head.headArguments.flatMap((ha) => (ha.kind === 'Var' ? [ha.name] : [])),
+  )
+
+  if (insertVia !== null) {
+    const matches = insertViaRuleCount.get(rule.head.name) ?? 0
+    if (matches === 0) {
+      refusals.push({
+        subject,
+        reason: `"${rule.head.name}" declares .put insert via ${insertVia}, but no rule for it mentions ${insertVia}`,
+      })
+      return
+    }
+    if (matches > 1) {
+      refusals.push({
+        subject,
+        reason:
+          `"${rule.head.name}" declares .put insert via ${insertVia}, but several rules mention ` +
+          `${insertVia}, so it still doesn't say which one to satisfy`,
+      })
+      return
+    }
+    // Only the rule that mentions it contributes; the others are alternatives
+    // this annotation has declined.
+    if (!rule.rhs.some((p) => p.kind !== 'Compare' && p.atom.name === insertVia)) return
+  } else if (ruleCount > 1) {
+    refusals.push({
+      subject,
+      reason:
+        `"${rule.head.name}" is defined by several rules, so inserting a row means choosing ` +
+        'which rule to satisfy — annotate with `.put insert via <relation>` to say which',
+    })
+    return
+  }
+
+  for (const p of rule.rhs) {
+    if (p.kind === 'Compare') continue
+    for (const arg of p.atom.args) {
+      if (arg.kind === 'Const') continue
+      if (arg.kind === 'Placeholder') {
+        refusals.push({
+          subject,
+          reason: `inserting into "${rule.head.name}" would need a value for a placeholder in ${p.atom.name}`,
+        })
+        return
+      }
+      if (!headVars.has(arg.name)) {
+        refusals.push({
+          subject,
+          reason:
+            `inserting into "${rule.head.name}" would need a value for "${arg.name}", which ` +
+            `appears in ${p.atom.name} but not in the head`,
+        })
+        return
+      }
+    }
+  }
+
+  const request = `${INS_PREFIX}${rule.head.name}(${headArgs.join(', ')})`
+  const filters = rule.rhs
+    .filter((p) => p.kind === 'Compare')
+    .map((p) => predicateToString(p))
+  const body = [request, ...filters].join(', ')
+
+  for (const p of rule.rhs) {
+    if (p.kind === 'Compare') continue
+    if (only !== null && p.atom.name !== only) continue
+    const prefix = p.kind === 'Atom' ? INS_PREFIX : DEL_PREFIX
+    out.push({
+      headRel: prefix + p.atom.name,
+      needs: [INS_PREFIX + rule.head.name],
+      text: `${prefix}${renderAtom(p.atom)} :- ${body}.`,
+    })
   }
 }
 
@@ -598,6 +736,7 @@ function render(
     const idb = declOf.get(decl.name) ?? decl
     lines.push(`.decl ${SEED_PREFIX}${idb.name}(${attrsOf(idb)})`)
     lines.push(`.decl ${SEED_UPD_PREFIX}${idb.name}(${pairAttrsOf(idb)})`)
+    lines.push(`.decl ${SEED_INS_PREFIX}${idb.name}(${attrsOf(idb)})`)
   }
 
   lines.push('.printsize')

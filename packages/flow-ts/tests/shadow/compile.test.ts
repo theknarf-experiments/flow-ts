@@ -168,24 +168,27 @@ S(x + 1) :- R(x).
     expect(shadow.refusals[0]!.reason).toMatch(/arithmetic/i)
   })
 
-  it('but arithmetic in the *body* needs no inversion — replay handles it', () => {
-    // `y = x + 1` is a filter once the request binds `y`, so the ordinary body
-    // replay solves for `x`. Only head position needs an inverse.
+  it('but a body *filter* needs no inversion — replay re-checks it', () => {
+    // Comparisons in flow-ts are filters over already-bound variables, not
+    // bindings (`S(y) :- R(x), y = x + 1.` is rejected by the planner — see
+    // tests/executing/comparisons.test.ts). A filter needs no inverse at all:
+    // the shadow rule replays it, so candidates are drawn only from the rows
+    // that actually satisfied it.
     const shadow = compileShadow(
       parseProgram(`\
 .in
-.decl R(x: number)
+.decl R(x: number, y: number)
 .input R.csv
 
 .printsize
-.decl S(y: number)
+.decl S(x: number)
 
 .rule
-S(y) :- R(x), y = x + 1.
+S(x) :- R(x, y), y < 10.
 `),
     )
     expect(shadow.refusals).toEqual([])
-    expect(ruleLines(shadow.source)).toContain('Del_R(x) :- Del_S(y), R(x), y == x + 1.')
+    expect(ruleLines(shadow.source)).toContain('Del_R(x, y) :- Del_S(x), R(x, y), y < 10.')
   })
 
   it('refuses to seed an untyped IDB decl (no attributes to build an EDB from)', () => {

@@ -18,6 +18,35 @@
 import { useSyncExternalStore } from 'react'
 import { openSession, type Program, type ProgramSession } from 'flow-ts'
 import { encodeRow, type Row } from 'flow-ts'
+import {
+  type BackwardRequest,
+  type Resolution,
+  resolveBackward,
+} from 'flow-ts'
+import { parseProgram } from '@flow-ts/parsing'
+
+export interface StoreOptions {
+  /** Views an edit can be written back through. Opt-in, and deliberately so.
+   *
+   *  Shadow rules replay their rule's body, which forces joins — and the
+   *  indexes behind them — on relations the forward program never needed
+   *  indexed that way; carrying them for every view roughly doubles ordinary
+   *  forward maintenance (`pnpm bench`). A UI reads constantly and writes
+   *  occasionally, so paying that continuously would be the wrong way round.
+   *
+   *  Nothing is compiled until an edit is actually made. Listing a view here
+   *  costs nothing on its own. */
+  writable?: readonly string[]
+}
+
+/** Knobs for one edit, passed straight through to `resolveBackward`. */
+export interface WriteOptions {
+  /** Report `ambiguous` rather than applying every candidate when the request
+   *  reaches more than one source relation. */
+  requireUnambiguous?: boolean
+  /** Shrink the result to a set with no redundant member. */
+  minimize?: boolean
+}
 
 type Listener = () => void
 
@@ -60,8 +89,11 @@ export class Store {
   /** Subscribers notified whenever `replaceProgram` swaps the rules. */
   #programListeners = new Set<Listener>()
 
-  constructor(program: Program) {
+  readonly #writable: ReadonlySet<string>
+
+  constructor(program: Program, options: StoreOptions = {}) {
     this.#program = program
+    this.#writable = new Set(options.writable ?? [])
     // The sink only fires for IDB heads — the executor doesn't echo EDB
     // writes back through it. EDB live state is mirrored directly by
     // `update()` below so `useLiveQuery` on an EDB still works.
@@ -226,6 +258,71 @@ export class Store {
     this.#flushNow()
   }
 
+  // --- writing back ----------------------------------------------------
+  //
+  // Each edit resolves against a freshly compiled shadow program and throws it
+  // away, rather than holding a maintained backward session. That costs more
+  // per write and nothing per read, which is the right way round for a UI; it
+  // scopes itself to the relation being edited; and it works on recursive
+  // programs, which a maintained session refuses outright because incremental
+  // retraction is unsound there.
+
+  /** True if edits to this view were opted into. */
+  canWrite(relation: string): boolean {
+    return this.#writable.has(relation)
+  }
+
+  /** Rewrite one derived row. */
+  updateRow(relation: string, row: Row, newRow: Row, options: WriteOptions = {}): Resolution {
+    return this.#write(relation, { rel: relation, row, newRow }, options)
+  }
+
+  /** Remove a derived row, by removing what supports it. */
+  removeRow(relation: string, row: Row, options: WriteOptions = {}): Resolution {
+    return this.#write(relation, { rel: relation, row }, options)
+  }
+
+  /** Add a derived row, by adding what would derive it. */
+  insertRow(relation: string, row: Row, options: WriteOptions = {}): Resolution {
+    return this.#write(relation, { rel: relation, row, insert: true }, options)
+  }
+
+  #write(relation: string, request: BackwardRequest, options: WriteOptions): Resolution {
+    if (!this.#writable.has(relation)) {
+      return {
+        status: 'refused',
+        reason:
+          `"${relation}" is not writable — pass it in the store's \`writable\` option to ` +
+          'opt in. Shadow rules are only compiled for views that ask for them.',
+      }
+    }
+    // Resolve against the authoritative EDB rows, which is what the session was
+    // built from and what a write has to land on.
+    const facts: Record<string, Row[]> = {}
+    for (const edb of this.#program.edbs) {
+      facts[edb.name] = [...(this.#edbRows.get(edb.name)?.values() ?? [])]
+    }
+
+    const resolution = resolveBackward(this.#program, facts, request, {
+      ...options,
+      parse: (src) => parseProgram(src, { grammarSource: 'shadow.dl' }),
+    })
+    if (resolution.status !== 'ok') return resolution
+
+    // Apply through the ordinary update path, so the EDB mirror, the live
+    // queries and the batching all behave exactly as they do for a direct
+    // collection write.
+    for (const change of resolution.changes) {
+      if (change.kind === 'del') this.update(change.rel, change.row, -1)
+      else if (change.kind === 'ins') this.update(change.rel, change.row, +1)
+      else {
+        this.update(change.rel, change.row, -1)
+        this.update(change.rel, change.newRow!, +1)
+      }
+    }
+    return resolution
+  }
+
   // -------------------------------------------------------------------
 
   #getState(rel: string): RelationState {
@@ -314,6 +411,38 @@ export function useLiveQuery<T extends Row>(
     () => store.snapshot(relation),
     () => store.snapshot(relation),
   ) as ReadonlyArray<T>
+}
+
+/** A live view you can write through. */
+export interface WritableQuery<T extends Row> {
+  rows: ReadonlyArray<T>
+  /** Whether the store opted this view in. When false, the operations below
+   *  all return `refused` — so a UI can grey out the controls instead of
+   *  finding out on click. */
+  canWrite: boolean
+  update(row: T, next: T, options?: WriteOptions): Resolution
+  remove(row: T, options?: WriteOptions): Resolution
+  insert(row: T, options?: WriteOptions): Resolution
+}
+
+/**
+ * React hook: an IDB relation's live rows, plus the operations that write back
+ * through it. The operations return a `Resolution` rather than throwing, since
+ * "this edit is ambiguous" and "that row is stale" are things a UI should show
+ * rather than crash on.
+ */
+export function useWritableQuery<T extends Row>(
+  store: Store,
+  relation: string,
+): WritableQuery<T> {
+  const rows = useLiveQuery<T>(store, relation)
+  return {
+    rows,
+    canWrite: store.canWrite(relation),
+    update: (row, next, options) => store.updateRow(relation, row, next, options),
+    remove: (row, options) => store.removeRow(relation, row, options),
+    insert: (row, options) => store.insertRow(relation, row, options),
+  }
 }
 
 /**

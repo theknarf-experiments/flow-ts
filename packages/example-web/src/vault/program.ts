@@ -21,6 +21,14 @@
 // (A real vault would want "the *first* level-1 heading". Datalog has no
 // notion of first, and the demo's notes have one apiece, so this takes them
 // all and leaves the ordering problem where it belongs — out of scope.)
+//
+// `Task` carries the one annotation in the program, and it earns it. Deleting
+// or rewriting a task works with no help: the row exists, so replaying the body
+// finds the line it came from. *Adding* one has no row to replay, so `line` has
+// no value and nothing in the rules suggests one — the compiler refuses and
+// says so. `.put insert defaults(l = 0)` supplies it, and the writer reads 0 as
+// "append", which is exactly flow-md's convention for locator columns it can't
+// know until the file is re-parsed.
 
 import { parseProgram } from '@flow-ts/parsing'
 
@@ -32,6 +40,7 @@ export const SOURCE = `\
 .out
 .decl Doc(path: string, title: string)
 .decl Task(path: string, status: string, text: string)
+.put insert defaults(l = 0)
 .decl Open(path: string, text: string)
 .decl Agenda(title: string, text: string)
 .decl Outline(title: string, depth: number, text: string)

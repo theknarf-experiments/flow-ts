@@ -227,3 +227,46 @@ describe('resolving without applying', () => {
     expect(store.snapshot('Person')).toContainEqual([2, 'ann'])
   })
 })
+
+describe('policies for what the rules do not determine', () => {
+  const SRC = `\
+.in
+.decl MdTask(path: string, line: number, text: string)
+
+.out
+.decl Task(path: string, text: string)
+
+Task(p, t) :- MdTask(p, l, t).
+`
+  it('an insert is refused when nothing supplies the missing value', () => {
+    const store = new Store(parseProgram(SRC, { grammarSource: 'a.dl' }), {
+      writable: ['Task'],
+    })
+    const r = store.insertRow('Task', ['a.md', 'milk'])
+    expect(r.status).toBe('refused')
+    if (r.status === 'refused') expect(r.reason).toMatch(/value for "l"/)
+  })
+
+  it('and works once a policy supplies it', () => {
+    // Better stated in the program with `.put insert defaults(l = 0)`; this is
+    // the same thing for a program you don't own.
+    const store = new Store(parseProgram(SRC, { grammarSource: 'a.dl' }), {
+      writable: ['Task'],
+      put: { Task: { kind: 'insert', via: null, defaults: [['l', { kind: 'Integer', value: 0 }]] } },
+    })
+    const r = store.insertRow('Task', ['a.md', 'milk'])
+    expect(r.status).toBe('ok')
+    if (r.status !== 'ok') return
+    expect(r.changes).toEqual([{ kind: 'ins', rel: 'MdTask', row: ['a.md', 0, 'milk'] }])
+  })
+
+  it('a `.put` directive in the program needs no options at all', () => {
+    const store = new Store(
+      parseProgram(SRC.replace('.decl Task(path: string, text: string)',
+        '.decl Task(path: string, text: string)\n.put insert defaults(l = 0)'),
+        { grammarSource: 'a.dl' }),
+      { writable: ['Task'] },
+    )
+    expect(store.insertRow('Task', ['a.md', 'milk']).status).toBe('ok')
+  })
+})

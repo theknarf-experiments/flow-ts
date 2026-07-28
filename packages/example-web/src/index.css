@@ -557,3 +557,5 @@ ul.nodes button:hover {
 .agenda td { padding: 0.15rem 0.3rem 0.15rem 0; }
 .agenda input { width: 100%; font: inherit; padding: 0.2rem 0.35rem; }
 .agenda input[readonly] { opacity: 0.6; cursor: not-allowed; }
+.task-add { display: flex; gap: 0.4rem; margin-top: 0.6rem; }
+.task-add input { flex: 1; font: inherit; padding: 0.25rem 0.4rem; }

@@ -138,6 +138,53 @@ test.describe('markdown vault', () => {
     )
   })
 
+  // Adding is the one operation the rules cannot work out on their own, and the
+  // only annotation in the program exists for it. Deleting and rewriting a task
+  // replay the body against a row that exists, and recover its line that way;
+  // an insert has no such row, so `line` has no value and nothing suggests one.
+  test('adding a task needs an annotation, and works because there is one', async ({ page }) => {
+    await gotoVault(page)
+    await expect(page.getByTestId('task-buy stamps')).toHaveCount(0)
+
+    await page.getByTestId('task-new-text').fill('buy stamps')
+    await page.getByTestId('task-new-note').selectOption('home.md')
+    await page.getByTestId('task-add').click()
+
+    // Appended to the markdown, unchecked, as a real task line.
+    await expect(home(page)).toContainText('- [ ] buy stamps')
+    // And derived straight back out again, with a real line number this time.
+    await expect(page.getByTestId('task-buy stamps')).toBeVisible()
+    await expect(page.getByTestId('agenda-buy stamps')).toBeVisible()
+  })
+
+  test('and the new task behaves like any other once it exists', async ({ page }) => {
+    await gotoVault(page)
+    await page.getByTestId('task-new-text').fill('buy stamps')
+    await page.getByTestId('task-new-note').selectOption('home.md')
+    await page.getByTestId('task-add').click()
+
+    // Ticking it rewrites the line that was just appended — the insert's
+    // placeholder line number never leaks out; the re-parse supplied the real one.
+    await page.getByTestId('task-check-buy stamps').check()
+    await expect(home(page)).toContainText('- [x] buy stamps')
+    await expect(home(page)).not.toContainText('- [ ] buy stamps')
+  })
+
+  test('removing the annotation removes the capability', async ({ page }) => {
+    await gotoVault(page)
+    await page.getByTestId('vault-program-panel').getByText('Datalog program').click()
+    const source = page.getByTestId('vault-program-source')
+    await source.fill((await source.inputValue()).replace('.put insert defaults(l = 0)', ''))
+    await page.getByTestId('vault-program-rebuild').click()
+
+    await page.getByTestId('task-new-text').fill('buy stamps')
+    await page.getByTestId('task-add').click()
+
+    // Refused, with the compiler's own explanation, rather than guessing a line.
+    await expect(page.getByTestId('vault-status')).toContainText('insert defaults')
+    await expect(page.getByTestId('task-buy stamps')).toHaveCount(0)
+  })
+
   test('editing the markdown directly flows the other way', async ({ page }) => {
     await gotoVault(page)
     await expect(page.getByTestId('task-buy milk')).toHaveCount(0)

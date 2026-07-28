@@ -214,16 +214,28 @@ const reasonOf = (r: Resolution): string =>
  *  A projection: `line` is gone, and a write has to recover it. */
 function TaskTable({ write }: { write: Write }) {
   const view = useWritableQuery<readonly [string, string, string]>(store, 'Task')
+  const [adding, setAdding] = useState('')
   const rows = useMemo(
     () => [...view.rows].sort((a, b) => a[0].localeCompare(b[0]) || a[2].localeCompare(b[2])),
     [view.rows],
   )
+  const notes = useMemo(() => [...new Set(rows.map((r) => r[0]))].sort(), [rows])
+  const [target, setTarget] = useState('work.md')
+
+  const add = () => {
+    const text = adding.trim()
+    if (!text) return
+    write(`added "${text}"`, () => view.insert([target, 'open', text], { dryRun: true }))
+    setAdding('')
+  }
+
   return (
     <section className="card">
       <h2>Tasks</h2>
       <p className="muted">
         <code>Task(path, status, text) :- MdTask(path, line, status, text).</code> The line
-        number is projected away, so a write has to find it again.
+        number is projected away, so a write has to find it again — and an <em>insert</em>{' '}
+        has no row to find it from, which is the one thing here that needs an annotation.
       </p>
       <ul className="tasks" data-testid="task-list">
         {rows.map((row) => (
@@ -247,6 +259,39 @@ function TaskTable({ write }: { write: Write }) {
           </li>
         ))}
       </ul>
+      <div className="task-add">
+        <input
+          aria-label="new task"
+          data-testid="task-new-text"
+          placeholder="add a task…"
+          value={adding}
+          onChange={(e) => setAdding(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') add()
+          }}
+        />
+        <select
+          aria-label="note"
+          data-testid="task-new-note"
+          value={target}
+          onChange={(e) => setTarget(e.target.value)}
+        >
+          {notes.map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
+        <button type="button" data-testid="task-add" onClick={add} disabled={!adding.trim()}>
+          add
+        </button>
+      </div>
+      <p className="muted">
+        Adding needs <code>.put insert defaults(l = 0)</code> in the program: there is no
+        row to replay, so nothing determines the line. The convention — 0 means append, the
+        real number comes back from the re-parse — is the schema's to state, not the
+        engine's to guess. Delete it from the program below and this control stops working.
+      </p>
     </section>
   )
 }

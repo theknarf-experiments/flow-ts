@@ -56,6 +56,26 @@ export function applyToVault(
 ): Record<string, string> | WriteFailure {
   const { rel, row, newRow, kind } = change
 
+  if (rel === 'MdTask' && kind === 'ins') {
+    // Line 0 is the convention the `.put insert defaults(l = 0)` annotation
+    // feeds in: the caller cannot know a line number for a task that does not
+    // exist yet, so 0 means "append" and the real number comes back from the
+    // re-parse. Anything else inserts before that line.
+    const path = String(row[0])
+    const source = notes[path]
+    if (source === undefined) return { reason: `no note "${path}"` }
+    const lines = source.split('\n')
+    const rendered = `- [${String(row[2]) === 'closed' ? 'x' : ' '}] ${String(row[3])}`
+    const at = Number(row[1])
+    if (at > 0 && at <= lines.length) lines.splice(at - 1, 0, rendered)
+    else {
+      // Append before a trailing blank line, so the note keeps its shape.
+      const end = lines[lines.length - 1] === '' ? lines.length - 1 : lines.length
+      lines.splice(end, 0, rendered)
+    }
+    return { ...notes, [path]: lines.join('\n') }
+  }
+
   if (rel === 'MdTask') {
     const [path, line] = [String(row[0]), Number(row[1])]
     const source = notes[path]

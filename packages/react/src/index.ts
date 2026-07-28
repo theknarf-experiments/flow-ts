@@ -20,6 +20,7 @@ import { openSession, type Program, type ProgramSession } from 'flow-ts'
 import { encodeRow, type Row } from 'flow-ts'
 import {
   type BackwardRequest,
+  type PutPolicy,
   type Resolution,
   compileShadow,
   resolveBackward,
@@ -38,6 +39,15 @@ export interface StoreOptions {
    *  Nothing is compiled until an edit is actually made. Listing a view here
    *  costs nothing on its own. */
   writable?: readonly string[]
+  /** Backward-direction policies for the cases the rules don't determine — how
+   *  to spread an aggregate, which side of a join to write, what to supply for
+   *  a value an insert has no row to recover.
+   *
+   *  Usually better stated in the program itself, with `.put`, since it is a
+   *  property of the schema rather than of one consumer. This is here for
+   *  trying a policy against a program you don't own, and overrides the
+   *  directive when both are present. */
+  put?: Record<string, PutPolicy>
 }
 
 /** Knobs for one edit, passed straight through to `resolveBackward`. */
@@ -99,12 +109,14 @@ export class Store {
   #programListeners = new Set<Listener>()
 
   readonly #writable: ReadonlySet<string>
+  readonly #put: Record<string, PutPolicy>
   /** Per-view writable columns, computed once per program. */
   #writableColumns: Record<string, number[]> | null = null
 
   constructor(program: Program, options: StoreOptions = {}) {
     this.#program = program
     this.#writable = new Set(options.writable ?? [])
+    this.#put = options.put ?? {}
     // The sink only fires for IDB heads — the executor doesn't echo EDB
     // writes back through it. EDB live state is mirrored directly by
     // `update()` below so `useLiveQuery` on an EDB still works.
@@ -298,6 +310,7 @@ export class Store {
     if (this.#writableColumns === null) {
       this.#writableColumns = compileShadow(this.#program, {
         views: [...this.#writable],
+        put: this.#put,
       }).writableColumns
     }
     return this.#writableColumns[relation] ?? []
@@ -336,6 +349,7 @@ export class Store {
 
     const resolution = resolveBackward(this.#program, facts, request, {
       ...options,
+      put: this.#put,
       parse: (src) => parseProgram(src, { grammarSource: 'shadow.dl' }),
     })
     if (resolution.status !== 'ok' || options.dryRun) return resolution

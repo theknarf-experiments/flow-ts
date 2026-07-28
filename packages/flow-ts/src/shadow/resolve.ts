@@ -180,8 +180,8 @@ export function resolveBackward(
         status: 'unsatisfied',
         attempted: changes,
         reason:
-          `the rewrite did not produce ${request.rel}(${request.newRow!.join(', ')}) — ` +
-          'a source tuple it changed is also relied on elsewhere in the rule',
+          `the rewrite did not produce ${request.rel}(${request.newRow!.join(', ')})` +
+          collateral(program, facts, after, request.rel),
       }
     }
     return { status: 'ok', changes, rounds: 1 }
@@ -221,6 +221,57 @@ export function resolveBackward(
 }
 
 // --- internals --------------------------------------------------------------
+
+/** Every derived relation's live rows, in one pass. Rows are kept, not just
+ *  keys, so a message can show values rather than an encoding. */
+function allLiveRows(program: Program, facts: Facts): Map<string, Map<string, Row>> {
+  const counts = new Map<string, Map<string, number>>()
+  const rows = new Map<string, Map<string, Row>>()
+  executeProgram(program, new Map(Object.entries(facts)), {}, (rel, row, diff) => {
+    const m = counts.get(rel) ?? new Map<string, number>()
+    const k = keyOf(row)
+    m.set(k, (m.get(k) ?? 0) + diff)
+    counts.set(rel, m)
+    const r = rows.get(rel) ?? new Map<string, Row>()
+    r.set(k, [...row])
+    rows.set(rel, r)
+  })
+  const out = new Map<string, Map<string, Row>>()
+  for (const [rel, m] of counts) {
+    const live = new Map<string, Row>()
+    for (const [k, n] of m) if (n > 0) live.set(k, rows.get(rel)!.get(k)!)
+    out.set(rel, live)
+  }
+  return out
+}
+
+/** Name what the change knocked out on its way past.
+ *
+ *  "It didn't work" is true but unhelpful, and the useful part is usually one
+ *  step removed: the tuple that was rewritten was also holding up something
+ *  else, and that something else is what the row needed. Finding it costs two
+ *  evaluations, paid only on the failure path. */
+function collateral(
+  program: Program,
+  before: Facts,
+  after: Facts,
+  target: string,
+): string {
+  const was = allLiveRows(program, before)
+  const now = allLiveRows(program, after)
+  for (const [rel, rows] of was) {
+    if (rel === target) continue
+    const remaining = now.get(rel) ?? new Map<string, Row>()
+    for (const [k, row] of rows) {
+      if (remaining.has(k)) continue
+      return (
+        ` — it also removed ${rel}(${row.join(', ')}), which that row depends on. ` +
+        'The tuple it rewrote was holding up more than one thing.'
+      )
+    }
+  }
+  return ' — a source tuple it changed is also relied on elsewhere in the rule'
+}
 
 /** Which channel a request enters on, and the row it carries. */
 export function seedFor(request: BackwardRequest): [string, Row[]] {

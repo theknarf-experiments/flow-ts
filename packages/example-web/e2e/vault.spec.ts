@@ -99,6 +99,45 @@ test.describe('markdown vault', () => {
     await expect(page.getByTestId('outline-depth-This week')).toHaveText('###')
   })
 
+  test('but not a heading that is also the document title', async ({ page }) => {
+    await gotoVault(page)
+    // `Doc(p, title) :- MdHeading(p, l, 1, title).` — demoting `# Home` would
+    // destroy the title that this very row is filed under, so the row could
+    // not exist afterwards. Whether that is true depends on the data, so the
+    // control is disabled by a dry run rather than by a static rule.
+    await expect(page.getByTestId('outline-deeper-Home')).toBeDisabled()
+    await expect(page.getByTestId('outline-why-Home')).toContainText("document's title")
+    // …and the one whose title comes from another line is fine.
+    await expect(page.getByTestId('outline-deeper-This week')).toBeEnabled()
+  })
+
+  test('the program is on screen, and the rules drive everything above', async ({ page }) => {
+    await gotoVault(page)
+    const panel = page.getByTestId('vault-program-panel')
+    await expect(panel).toBeVisible()
+    await panel.getByText('Datalog program').click()
+    await expect(page.getByTestId('vault-program-source')).toContainText(
+      'Agenda(title, t) :- Open(p, t), Doc(p, title).',
+    )
+
+    // Break the trace: mention `t` twice, so it no longer occurs in exactly
+    // one position, and the agenda's task column stops being editable.
+    const source = page.getByTestId('vault-program-source')
+    await source.fill(
+      (await source.inputValue()).replace(
+        'Agenda(title, t) :- Open(p, t), Doc(p, title).',
+        'Agenda(title, t) :- Open(p, t), Open(p, t), Doc(p, title).',
+      ),
+    )
+    await page.getByTestId('vault-program-rebuild').click()
+
+    await expect(page.getByTestId('agenda-writable')).toHaveText('[0]')
+    await expect(page.getByTestId('agenda-input-1-water the plants')).toHaveAttribute(
+      'readonly',
+      '',
+    )
+  })
+
   test('editing the markdown directly flows the other way', async ({ page }) => {
     await gotoVault(page)
     await expect(page.getByTestId('task-buy milk')).toHaveCount(0)

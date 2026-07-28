@@ -24,7 +24,8 @@
 import { useCallback, useMemo, useState } from 'react'
 import { Store, useProgram, useWritableQuery } from '@flow-ts/react'
 import type { Resolution } from 'flow-ts'
-import { SEED_NOTES, program } from './vault/program.js'
+import { SEED_NOTES, SOURCE, program } from './vault/program.js'
+import { parseProgram } from '@flow-ts/parsing'
 import { type Row, type VaultFacts, applyToVault, parseVault } from './vault/markdown.js'
 
 // Only these views are writable. The others are just as derived; they simply
@@ -105,6 +106,8 @@ export function VaultDemo() {
         </p>
       </header>
 
+      <VaultProgramPanel />
+
       <div className="vault-grid">
         <section className="card">
           <h2>Notes</h2>
@@ -136,7 +139,76 @@ export function VaultDemo() {
   )
 }
 
+/** The rules, editable. Everything above is derived from these — including
+ *  which cells are editable at all — so changing them here changes the whole
+ *  demo, write-back included. */
+function VaultProgramPanel() {
+  const [draft, setDraft] = useState<string>(SOURCE.trim())
+  const [error, setError] = useState<string | null>(null)
+  const [dirty, setDirty] = useState(false)
+
+  const rebuild = () => {
+    try {
+      store.replaceProgram(parseProgram(draft, { grammarSource: 'live.dl' }))
+      setError(null)
+      setDirty(false)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  return (
+    <section className="program">
+      <details data-testid="vault-program-panel">
+        <summary>Datalog program</summary>
+        <p className="muted">
+          The tables above are these rules. Editing them changes what is derived <em>and</em>{' '}
+          what can be written back — a column stops being editable the moment it no longer
+          traces to a single source position.
+        </p>
+        <textarea
+          className="program-editor"
+          data-testid="vault-program-source"
+          value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value)
+            setError(null)
+            setDirty(e.target.value.trim() !== SOURCE.trim())
+          }}
+          spellCheck={false}
+          rows={Math.min(24, draft.split('\n').length + 1)}
+        />
+        <div className="program-actions">
+          <button data-testid="vault-program-rebuild" onClick={rebuild} disabled={!dirty}>
+            rebuild
+          </button>
+          <button
+            data-testid="vault-program-reset"
+            onClick={() => {
+              setDraft(SOURCE.trim())
+              setError(null)
+              setDirty(false)
+              store.replaceProgram(parseProgram(SOURCE, { grammarSource: 'vault.dl' }))
+            }}
+            disabled={draft.trim() === SOURCE.trim()}
+          >
+            reset
+          </button>
+          <span className="program-status" data-testid="vault-program-status">
+            {error ? <span className="program-error">{error}</span> : null}
+          </span>
+        </div>
+      </details>
+    </section>
+  )
+}
+
 type Write = (what: string, resolve: () => Resolution) => void
+
+const reasonOf = (r: Resolution): string =>
+  r.status === 'ambiguous' || r.status === 'refused' || r.status === 'unsatisfied'
+    ? r.reason
+    : ''
 
 /** `Task(path, status, text) :- MdTask(path, line, status, text).`
  *  A projection: `line` is gone, and a write has to recover it. */
@@ -243,9 +315,22 @@ function AgendaTable({ write }: { write: Write }) {
  *  `depth` is a number the writer turns back into a run of `#`. */
 function OutlineTable({ write }: { write: Write }) {
   const view = useWritableQuery<readonly [string, number, string]>(store, 'Outline')
+  // `writableColumns` says the depth column is editable in general. Whether it
+  // is editable for *this* row is a question about the data, and the only way
+  // to answer it is to try: a dry run resolves and verifies without applying.
+  // `# Home` fails, because the heading that would be demoted is also the one
+  // deriving the document's title — so the row would lose the title it is
+  // filed under. `## This week` succeeds, because its title comes from a
+  // different line.
   const rows = useMemo(
-    () => [...view.rows].sort((a, b) => a[0].localeCompare(b[0]) || a[2].localeCompare(b[2])),
-    [view.rows],
+    () =>
+      [...view.rows]
+        .sort((a, b) => a[0].localeCompare(b[0]) || a[2].localeCompare(b[2]))
+        .map((row) => {
+          const probe = view.update(row, [row[0], row[1] + 1, row[2]], { dryRun: true })
+          return { row, ok: probe.status === 'ok', why: probe.status === 'ok' ? '' : reasonOf(probe) }
+        }),
+    [view],
   )
   return (
     <section className="card">
@@ -256,12 +341,13 @@ function OutlineTable({ write }: { write: Write }) {
         syntax is not.
       </p>
       <ul className="outline" data-testid="outline-list">
-        {rows.map((row) => (
+        {rows.map(({ row, ok, why }) => (
           <li key={`${row[0]}/${row[2]}`} data-testid={`outline-${row[2]}`}>
             <button
               type="button"
               data-testid={`outline-deeper-${row[2]}`}
-              disabled={!view.canWriteColumn(1) || row[1] >= 6}
+              disabled={!ok || row[1] >= 6}
+              title={ok ? 'rewrites the run of # on that line' : why}
               onClick={() =>
                 write(`indented "${row[2]}"`, () =>
                   view.update(row, [row[0], row[1] + 1, row[2]], { dryRun: true }),
@@ -271,6 +357,11 @@ function OutlineTable({ write }: { write: Write }) {
               ›
             </button>
             <span data-testid={`outline-depth-${row[2]}`}>{'#'.repeat(row[1])}</span> {row[2]}
+            {!ok && (
+              <span className="muted" data-testid={`outline-why-${row[2]}`}>
+                can't deepen — it is this document's title
+              </span>
+            )}
           </li>
         ))}
       </ul>

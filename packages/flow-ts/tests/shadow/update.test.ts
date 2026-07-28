@@ -22,9 +22,14 @@
 import { describe, expect, it } from 'vitest'
 import fc from 'fast-check'
 import { parseProgram } from '@flow-ts/parsing'
-import { compileShadow } from '../../src/shadow/index.js'
+import { compileShadow, resolveBackward } from '../../src/shadow/index.js'
 import type { Row } from '../../src/reading/index.js'
 import { type Facts, applyUpdates, backward, key, liveRows } from './_harness.js'
+
+const PARSE = {
+  parse: (src: string) => parseProgram(src, { grammarSource: 's.dl' }),
+  views: 'all' as const,
+}
 
 function ruleLines(source: string): string[] {
   const at = source.indexOf('.rule')
@@ -226,5 +231,52 @@ describe('properties', () => {
       }),
       { numRuns: 150 },
     )
+  })
+})
+
+describe('an unsatisfied rewrite says what it knocked out', () => {
+  // "It didn't work" is true and unhelpful. The useful part is a step removed:
+  // the tuple that was rewritten was holding up something *else*, and that
+  // something else is what the row needed. Found by using the vault demo,
+  // where demoting a `#` heading destroys the document title the row is filed
+  // under — the message named neither the title nor the heading.
+  const SOURCE = `\
+.in
+.decl H(path: string, depth: number, text: string)
+.input H.csv
+
+.printsize
+.decl Doc(path: string, title: string)
+.decl Outline(title: string, depth: number, text: string)
+
+.rule
+Doc(p, title) :- H(p, 1, title).
+Outline(title, d, t) :- H(p, d, t), Doc(p, title).
+`
+  const PROGRAM = parseProgram(SOURCE, { grammarSource: 'o.dl' })
+  const FACTS: Facts = { H: [['home.md', 1, 'Home'], ['home.md', 2, 'Chores']] }
+
+  it('names the collateral row, not just the failure', () => {
+    // Demoting the level-1 heading removes the only thing deriving `Doc`.
+    const r = resolveBackward(
+      PROGRAM,
+      FACTS,
+      { rel: 'Outline', row: ['Home', 1, 'Home'], newRow: ['Home', 2, 'Home'] },
+      PARSE,
+    )
+    expect(r.status).toBe('unsatisfied')
+    if (r.status !== 'unsatisfied') return
+    expect(r.reason).toContain('Doc(home.md, Home)')
+    expect(r.reason).toMatch(/holding up more than one thing/)
+  })
+
+  it('and the same edit on a heading that is not the title works', () => {
+    const r = resolveBackward(
+      PROGRAM,
+      FACTS,
+      { rel: 'Outline', row: ['Home', 2, 'Chores'], newRow: ['Home', 3, 'Chores'] },
+      PARSE,
+    )
+    expect(r.status).toBe('ok')
   })
 })

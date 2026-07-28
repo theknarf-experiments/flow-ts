@@ -605,6 +605,16 @@ function applyUnary(
       maps.kvMap.set(outName, stream.pipe(filterMap(fn)))
       return
     }
+    case 'RowToUnit': {
+      // Projection onto no columns: every surviving row becomes the empty
+      // tuple. Dedupe is not an optimisation here but the semantics — without
+      // it a relation of N rows would carry multiplicity N into the cartesian
+      // join and multiply its partner N-fold.
+      const stream = requireRow(maps, inputName, t.kind)
+      const fn = makeRowToRowFn(t.flow)
+      maps.rowMap.set(outName, dedupeEncodedRows(stream.pipe(filterMap(fn))))
+      return
+    }
     case 'KvToKv': {
       const stream = requireKv(maps, inputName, t.kind)
       const fn = makeKvToKvFn(t.flow)
@@ -666,8 +676,11 @@ function applyBinary(
       rightKv = keyOnlyToKv(requireK(maps, rightName, binary.kind))
       break
     }
-    case 'Cartesian': {
-      // Cartesian: re-key everything under a single sentinel and join.
+    case 'Cartesian':
+    case 'NjCartesian': {
+      // No key to join on: re-key everything under a single sentinel. For the
+      // negated form the antijoin below then drops the left exactly when the
+      // unit is present, i.e. when the negated atom matched something.
       const leftRow = requireRow(maps, leftName, binary.kind)
       const rightRow = requireRow(maps, rightName, binary.kind)
       leftKv = leftRow.pipe(map((r) => ['', r] as EncodedKv))
@@ -682,7 +695,7 @@ function applyBinary(
     }
   }
 
-  if (binary.kind === 'NjKvK' || binary.kind === 'NjKK') {
+  if (binary.kind === 'NjKvK' || binary.kind === 'NjKK' || binary.kind === 'NjCartesian') {
     const joined = leftKv.pipe(antiJoin(rightKv))
     // antiJoin gives [K, [V, null]] — only left rows survive. Project to output.
     const fn = makeAntijoinOutFn(binary.flow, ok, ov)

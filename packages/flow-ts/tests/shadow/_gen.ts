@@ -14,6 +14,8 @@
 // Invariants the builder maintains, so every program it emits is legal:
 //   • Safety — every head variable, and every variable under negation,
 //     appears in a positive body atom.
+//   • Existence tests are emitted on purpose — an atom sharing no variable with
+//     the rest of the body, whose own variables never reach the head.
 //   • Stratification — a rule body only references EDBs and *earlier* IDBs,
 //     and negation only ever applies to an EDB. No cycles, so no recursion.
 //     (Recursion is covered by a dedicated test; here it would just make
@@ -81,15 +83,14 @@ function buildAtom(
     else if (roll === 1) args.push(String(d.pick(DOMAIN)))
     else args.push(d.pick(VARS))
   }
-  // An atom that shares no variable with the rest of the body, and whose own
-  // variables don't reach the head, is a cartesian factor the planner cannot
-  // represent — see tests/executing/planner-gaps.test.ts. Tie every atom to
-  // one already in scope so bodies stay connected.
+  // Bodies are usually tied together, but not always: an atom sharing nothing
+  // with the rest is an existence test, and those are supported now, so the
+  // generator emits them deliberately rather than avoiding them.
   const isVar = (s: string): boolean => (VARS as readonly string[]).includes(s)
-  if (bound && bound.length > 0) {
+  if (bound && bound.length > 0 && d.chance(80)) {
     const shared = d.pick(bound)
     if (!args.includes(shared)) args[d.next(rel.arity)] = shared
-  } else if (!args.some(isVar)) {
+  } else if (!bound && !args.some(isVar)) {
     args[0] = d.pick(VARS)
   }
   // Derive the bound set from the *final* arguments. Deriving it as we go was
@@ -151,9 +152,6 @@ export function buildProgram(pool: readonly number[], recursive = false): GenPro
         const args = Array.from({ length: rel.arity }, () =>
           d.next(5) === 0 ? String(d.pick(DOMAIN)) : d.pick(positive),
         )
-        // At least one variable: an all-ground negated atom contributes no
-        // columns, which is the cartesian gap that is still open.
-        if (!args.some((a) => positive.includes(a))) args[d.next(rel.arity)] = d.pick(positive)
         parts.push(`!${rel.name}(${args.join(', ')})`)
       }
 

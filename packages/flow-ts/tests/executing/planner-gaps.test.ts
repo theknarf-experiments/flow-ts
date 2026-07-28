@@ -1,11 +1,9 @@
-// Known planner gaps, found by the shadow-rule program fuzzer
-// (`tests/shadow/_gen.ts`). Both are legal Datalog that the forward engine
-// refuses to plan, and neither involves shadow rules — the fuzzer just reaches
-// rule shapes the hand-written suites never did.
-//
-// These are `it.fails`, so they document the bug *and* flip loudly the moment
-// someone fixes it. When that happens, drop the `.fails` and keep the
-// assertion — the expected results below are what the rules actually mean.
+// Rule shapes the shadow-rule program fuzzer (`tests/shadow/_gen.ts`) reached
+// and the hand-written suites never did. All were legal Datalog the forward
+// engine refused to plan; all are now fixed, and these are the regression
+// tests. They were written first as `it.fails` carrying the results the rules
+// actually mean, so each one flipped loudly the moment its bug was fixed —
+// which is how the fixes were confirmed to be right rather than merely quiet.
 
 import { describe, expect, it } from 'vitest'
 import { parseProgram } from '@flow-ts/parsing'
@@ -36,47 +34,36 @@ const E0 = (arity: number, head: string) => `\
 .rule
 `
 
-// GAP 1 — a body atom that shares no variable with the rest of the body (a
-// cartesian factor) *and* contributes no column to the head.
+// An existence test: a body atom that shares no variable with the rest of the
+// body (a cartesian factor) *and* contributes no column to the head. All that
+// matters is whether it holds at all.
 //
 // The boundary is sharp, and both halves matter:
 //   ok     I0(a, b) :- E0(a), E0(b).      cartesian, but `b` reaches the head
 //   ok     I0(a)    :- E0(a, b), E0(b, c). shares `b`, so not cartesian
 //   CRASH  I0(a)    :- E0(a), E0(b).      cartesian *and* `b` is dropped
 //
-// Diagnosis, for whoever picks this up. In `recursiveSemijoins`
-// (`planning/rule.ts`), `subatomVarSigs` drops constants, var-equalities and
-// placeholders; when nothing survives it is empty, so `buildKvToKv` is asked
-// for an output with neither key nor value columns and has no name for that
-// shape. The semijoin it feeds joins on that empty key, which means "the left
-// side passes through iff the right relation is non-empty" — data-dependent,
-// so a static plan cannot decide it.
-//
-// Cross products themselves are fine (the first control below is one). What's
-// missing is the *nullary* case: a unit/boolean collection, a join kind whose
-// right side is a guard rather than a key, and a db-ivm operator that gates one
-// stream on another's non-emptiness. That is a feature across planning,
-// transformations and execution, not a repair — which is why it is still here
-// while the other two gaps found alongside it are fixed.
-//
-// It does not block backward propagation: the shadow compiler never generates
-// this shape, it only inherits it from a source program that already cannot run
-// forward.
-describe('planner gap: cartesian body atom with no surviving column', () => {
-  it.fails('existence test via an unrelated atom', () => {
+// `buildKvToKv` used to throw for an output with neither key nor value columns,
+// treating a legal shape as an internal invariant violation. It now builds a
+// *unit* collection — the empty tuple, present iff the input is non-empty — and
+// the cartesian join that already existed gates its partner on that. The dedupe
+// is semantics rather than optimisation: without it a relation of N rows would
+// carry multiplicity N into the join and multiply its partner N-fold.
+describe('existence tests: a cartesian atom with no surviving column', () => {
+  it('existence test via an unrelated atom', () => {
     const rows = run(`${E0(1, 'h0: number')}I0(a) :- E0(a), E0(b).`, { E0: [[1], [2]] })
     // E0 is non-empty, so every E0(a) qualifies.
     expect(rows).toEqual(new Set(['I0(1)', 'I0(2)']))
   })
 
-  it.fails('degenerate case: an atom with no variables at all', () => {
+  it('degenerate case: an atom with no variables at all', () => {
     const rows = run(`${E0(2, 'h0: number')}I0(a) :- E0(a, a), E0(0, 0).`, {
       E0: [[1, 1], [0, 0]],
     })
     expect(rows).toEqual(new Set(['I0(1)', 'I0(0)']))
   })
 
-  it.fails('degenerate case: an all-placeholder atom', () => {
+  it('degenerate case: an all-placeholder atom', () => {
     const rows = run(`${E0(2, 'h0: number')}I0(a) :- E0(a, a), E0(_, _).`, { E0: [[1, 1]] })
     expect(rows).toEqual(new Set(['I0(1)']))
   })
@@ -89,6 +76,65 @@ describe('planner gap: cartesian body atom with no surviving column', () => {
   it('control: a shared variable makes it a join, not a cartesian factor', () => {
     expect(run(`${E0(2, 'h0: number')}I0(a) :- E0(a, b), E0(b, c).`, { E0: [[1, 2], [2, 3]] }))
       .toEqual(new Set(['I0(1)']))
+  })
+})
+
+// The negated form: `!E(0)` shares no variable with the rest of the body either,
+// so the antijoin has no key to work on. Both sides are re-keyed under one
+// sentinel and the left survives exactly when the unit is *absent* — i.e. when
+// the negated atom matched nothing. Fixing the positive case is what made this
+// reachable at all; before that, the plan died earlier.
+describe('negated existence tests', () => {
+  it('passes when the negated atom matches nothing', () => {
+    expect(run(`${E0(1, 'h0: number')}I0(a) :- E0(a), !E0(0).`, { E0: [[1], [2]] })).toEqual(
+      new Set(['I0(1)', 'I0(2)']),
+    )
+  })
+
+  it('blocks everything when it matches', () => {
+    expect(run(`${E0(1, 'h0: number')}I0(a) :- E0(a), !E0(0).`, { E0: [[0], [1]] })).toEqual(
+      new Set(),
+    )
+  })
+
+  it('an all-placeholder negated atom is "the relation is empty"', () => {
+    // E0 is non-empty whenever E0(a) holds, so this derives nothing, ever.
+    expect(run(`${E0(1, 'h0: number')}I0(a) :- E0(a), !E0(_).`, { E0: [[1]] })).toEqual(new Set())
+  })
+
+  it('reacts to the negated fact appearing and disappearing', () => {
+    const source = `${E0(1, 'h0: number')}I0(a) :- E0(a), !E0(0).`
+    expect(run(source, { E0: [[1]] })).toEqual(new Set(['I0(1)']))
+    expect(run(source, { E0: [[1], [0]] })).toEqual(new Set())
+  })
+})
+
+// The unit is deduplicated, which is semantics rather than optimisation: a
+// relation of N rows must not multiply its cartesian partner N-fold. Sets hide
+// that, so this counts multiplicities directly.
+describe('existence tests do not multiply multiplicities', () => {
+  function counts(source: string, facts: Record<string, Row[]>): Map<string, number> {
+    const out = new Map<string, number>()
+    executeProgram(
+      parseProgram(source, { grammarSource: 'mult.dl' }),
+      new Map(Object.entries(facts)),
+      {},
+      (rel, row, diff) => {
+        const k = `${rel}(${row.join(', ')})`
+        out.set(k, (out.get(k) ?? 0) + diff)
+      },
+    )
+    return out
+  }
+
+  it('one row per derivation, however large the witness relation', () => {
+    for (const n of [1, 3, 8]) {
+      const facts = { E0: [[0] as Row, ...Array.from({ length: n }, (_, i) => [i + 1] as Row)] }
+      const got = counts(`${E0(1, 'h0: number')}I0(a) :- E0(a), E0(b).`, facts)
+      // Every E0 row qualifies exactly once — not once per witness.
+      expect([...got.values()].every((v) => v === 1)).toBe(true)
+      expect(got.size).toBe(n + 1)
+    }
   })
 })
 

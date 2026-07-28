@@ -19,6 +19,12 @@ export type UnaryTransformation =
   | { kind: 'RowToKv'; input: Collection; output: Collection; flow: TransformationFlow }
   | { kind: 'KvToKv'; input: Collection; output: Collection; flow: TransformationFlow }
   | { kind: 'KvToK'; input: Collection; output: Collection; flow: TransformationFlow }
+  /** Projection onto *no* columns: a unit collection, holding the empty tuple
+   *  iff the input is non-empty. This is what an existence test compiles to —
+   *  a body atom sharing no variable with the rest of the body and contributing
+   *  no head column. It must be deduplicated, or a relation of N rows would
+   *  multiply its cartesian partner N-fold. */
+  | { kind: 'RowToUnit'; input: Collection; output: Collection; flow: TransformationFlow }
 
 export type BinaryTransformation =
   | { kind: 'JnKK'; left: Collection; right: Collection; output: Collection; flow: TransformationFlow }
@@ -28,15 +34,34 @@ export type BinaryTransformation =
   | { kind: 'Cartesian'; left: Collection; right: Collection; output: Collection; flow: TransformationFlow }
   | { kind: 'NjKvK'; left: Collection; right: Collection; output: Collection; flow: TransformationFlow }
   | { kind: 'NjKK'; left: Collection; right: Collection; output: Collection; flow: TransformationFlow }
+  /** Antijoin against a unit: a *negated* existence test, `!E(0)`. There is no
+   *  key to join on, so both sides are re-keyed under one sentinel and the left
+   *  survives exactly when the unit is absent — i.e. when the negated atom
+   *  matches nothing. */
+  | { kind: 'NjCartesian'; left: Collection; right: Collection; output: Collection; flow: TransformationFlow }
 
-const UNARY_KINDS = new Set<Transformation['kind']>(['RowToRow', 'RowToK', 'RowToKv', 'KvToKv', 'KvToK'])
+const UNARY_KINDS = new Set<Transformation['kind']>([
+  'RowToRow',
+  'RowToK',
+  'RowToKv',
+  'KvToKv',
+  'KvToK',
+  'RowToUnit',
+])
 
 export function isUnary(t: Transformation): t is UnaryTransformation {
   return UNARY_KINDS.has(t.kind)
 }
 
 export function unaryInput(t: Transformation): Collection {
-  if (t.kind === 'RowToRow' || t.kind === 'RowToK' || t.kind === 'RowToKv') return t.input
+  if (
+    t.kind === 'RowToRow' ||
+    t.kind === 'RowToK' ||
+    t.kind === 'RowToKv' ||
+    t.kind === 'RowToUnit'
+  ) {
+    return t.input
+  }
   throw new Error(`unaryInput: not a Row-input transformation (${t.kind})`)
 }
 
@@ -48,7 +73,8 @@ export function binaryInputs(t: Transformation): [Collection, Collection] {
     t.kind === 'JnKvKv' ||
     t.kind === 'Cartesian' ||
     t.kind === 'NjKvK' ||
-    t.kind === 'NjKK'
+    t.kind === 'NjKK' ||
+    t.kind === 'NjCartesian'
   ) {
     return [t.left, t.right]
   }
@@ -111,11 +137,17 @@ export function buildKvToKv(
   if (isRowOut && !isKeyOnlyOut) outputName = `Row(${inputName})${transformationFlowToString(flow)}`
   else if (!isRowOut && isKeyOnlyOut) outputName = `K(${inputName})${transformationFlowToString(flow)}`
   else if (!isRowOut && !isKeyOnlyOut) outputName = `Kv(${inputName})${transformationFlowToString(flow)}`
-  else throw new Error('buildKvToKv: null signatures')
+  // Neither key nor value columns survive. That is not a malformed plan — it is
+  // an existence test: the atom shares no variable with the rest of the body and
+  // contributes nothing to the head, so all that matters is whether it holds at
+  // all. The output is a unit collection, and the cartesian join downstream
+  // gates its partner on the unit being present.
+  else outputName = `Unit(${inputName})${transformationFlowToString(flow)}`
 
   const outputSig: CollectionSignature = { kind: 'UnaryTransformationOutput', name: outputName }
   const output = new Collection(outputSig, [...outputKeySignatures], [...outputValueSignatures])
 
+  if (isRowOut && isKeyOnlyOut) return { kind: 'RowToUnit', input, output, flow }
   if (isRowIn && isRowOut) return { kind: 'RowToRow', input, output, flow, isNoOp }
   if (isRowIn && !isRowOut && isKeyOnlyOut) return { kind: 'RowToK', input, output, flow, isNoOp }
   if (isRowIn && !isRowOut && !isKeyOnlyOut) return { kind: 'RowToKv', input, output, flow }
@@ -188,14 +220,20 @@ export function buildAntijoin(
   )
 
   const isKeyOnlyLeft = left.valueArgumentSignatures.length === 0
+  // No key on either side: the negated atom shares no variable with the rest of
+  // the body, so this is a negated existence test rather than a keyed antijoin.
+  const isCartesian = left.keyArgumentSignatures.length === 0
   const flowStr = transformationFlowToString(flow)
-  const name = isKeyOnlyLeft
-    ? `NjKK(${left.signature.name}, ${right.signature.name})${flowStr}`
-    : `NjKvK(${left.signature.name}, ${right.signature.name})${flowStr}`
+  const name = isCartesian
+    ? `NjCartesian(${left.signature.name}, ${right.signature.name})${flowStr}`
+    : isKeyOnlyLeft
+      ? `NjKK(${left.signature.name}, ${right.signature.name})${flowStr}`
+      : `NjKvK(${left.signature.name}, ${right.signature.name})${flowStr}`
 
   const outputSig: CollectionSignature = { kind: 'NegJnOutput', name }
   const output = new Collection(outputSig, [...outputKeySignatures], [...outputValueSignatures])
 
+  if (isCartesian) return { kind: 'NjCartesian', left, right, output, flow }
   return isKeyOnlyLeft
     ? { kind: 'NjKK', left, right, output, flow }
     : { kind: 'NjKvK', left, right, output, flow }
@@ -211,6 +249,8 @@ export function transformationToString(t: Transformation): string {
     case 'KvToKv':
     case 'KvToK':
       return `⟶ ${t.output.pprint()}`
+    case 'RowToUnit':
+      return `∃ ${t.output.pprint()}`
     case 'JnKK':
     case 'JnKKv':
     case 'JnKvK':
@@ -220,6 +260,7 @@ export function transformationToString(t: Transformation): string {
       return `⨯ ${t.output.pprint()}`
     case 'NjKvK':
     case 'NjKK':
+    case 'NjCartesian':
       return `¬ ${t.output.pprint()}`
   }
 }

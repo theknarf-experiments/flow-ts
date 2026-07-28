@@ -165,14 +165,20 @@ multi-step expressions thread through helper relations, one operation per rule.
   constant has no variable name, so it has none — and can never match a trace
   argument anyway. Either ingredient alone always planned, which is why it went
   unnoticed.
-- **Cartesian body atom** (open, `tests/executing/planner-gaps.test.ts`). An atom
-  sharing no variable with the rest of the body and contributing no head column
-  leaves a zero-column intermediate. Cross products themselves work; the nullary
-  case doesn't, and it needs a unit collection, a guard-shaped join, and a
-  db-ivm operator gating one stream on another's non-emptiness — a feature
-  across planning and execution, not a repair. It doesn't block this work: the
-  shadow compiler never generates the shape, only inherits it from a program
-  that already can't run forward.
+- **Existence tests** (fixed). An atom sharing no variable with the rest of the
+  body and contributing no head column left a zero-column intermediate the
+  planner refused to name. It now builds a *unit* collection — the empty tuple,
+  present iff the input is non-empty — and the cartesian join that already
+  existed gates its partner on it. The dedupe on the unit is semantics, not
+  optimisation: without it a relation of N rows multiplies its partner N-fold.
+  Fixing the positive case made the negated form (`!E0(0)`) reachable for the
+  first time, and `buildAntijoin` needed the cartesian branch its positive
+  counterpart already had.
+
+All three were found by the fuzzer, and all three were written first as
+`it.fails` carrying the results the rules actually mean — so each flipped
+loudly when fixed, which is how the fixes are known to be right rather than
+merely quiet.
 
 ## Cost
 

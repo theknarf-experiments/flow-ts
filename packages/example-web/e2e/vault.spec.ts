@@ -131,7 +131,7 @@ test.describe('markdown vault', () => {
     )
     await page.getByTestId('vault-program-rebuild').click()
 
-    await expect(page.getByTestId('agenda-writable')).toHaveText('[0]')
+    await expect(page.getByTestId('agenda-writable')).toHaveText('editable: title')
     await expect(page.getByTestId('agenda-input-1-water the plants')).toHaveAttribute(
       'readonly',
       '',
@@ -195,11 +195,35 @@ test.describe('markdown vault', () => {
     await expect(page.getByTestId('agenda-buy milk')).toBeVisible()
   })
 
+  test('renaming a title renames it for every task in that document', async ({ page }) => {
+    await gotoVault(page)
+    // home.md has two tasks, both filed under the same title, because `Doc` is
+    // derived from the note's one heading. Renaming via either row rewrites
+    // that heading, so both rows follow — and neither is left showing a title
+    // the facts disagree with.
+    await gotoVault(page)
+    const input = page.getByTestId('agenda-input-0-book the dentist')
+    await input.fill('Errands')
+    await input.blur()
+
+    await expect(page.getByTestId('agenda-input-0-book the dentist')).toHaveValue('Errands')
+    await expect(page.getByTestId('agenda-input-0-water the plants')).toHaveValue('Errands')
+    await expect(home(page)).toContainText('# Errands')
+
+    // And a second rename from the *other* row still works, rather than
+    // committing a value left over from the first.
+    const other = page.getByTestId('agenda-input-0-water the plants')
+    await other.fill('Chores')
+    await other.blur()
+    await expect(page.getByTestId('agenda-input-0-book the dentist')).toHaveValue('Chores')
+    await expect(home(page)).toContainText('# Chores')
+  })
+
   test('writability is reported per column, from the rules', async ({ page }) => {
     await gotoVault(page)
     // Both agenda columns trace to a single source position, so both are
     // editable — and the panel says which, rather than the component deciding.
-    await expect(page.getByTestId('agenda-writable')).toHaveText('[0, 1]')
+    await expect(page.getByTestId('agenda-writable')).toHaveText('editable: title, text')
   })
 
   test('an edit that goes stale is refused, not guessed at', async ({ page }) => {

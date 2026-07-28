@@ -21,7 +21,7 @@
 // text to find its line. Byte offsets would have gone stale the moment anything
 // above them moved.
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Store, useProgram, useWritableQuery } from '@flow-ts/react'
 import type { Resolution } from 'flow-ts'
 import { SEED_NOTES, SOURCE, program } from './vault/program.js'
@@ -48,20 +48,25 @@ function syncFacts(prev: VaultFacts, next: VaultFacts): void {
   store.flush()
 }
 
-let currentFacts: VaultFacts = { MdTask: [], MdHeading: [] }
+const EMPTY: VaultFacts = { MdTask: [], MdHeading: [] }
 
 export function VaultDemo() {
   const [notes, setNotes] = useState<Record<string, string>>(SEED_NOTES)
   const [status, setStatus] = useState<string | null>(null)
   useProgram(store)
 
-  // Keep the engine's facts in step with the text. Doing this during render is
-  // fine here because it is idempotent — the diff is empty once they agree.
+  // Keep the engine's facts in step with the text — in an effect, not during
+  // render. `syncFacts` flushes the store, which notifies subscribers, and
+  // notifying a subscriber mid-render updates a sibling component while this
+  // one is still rendering. React warns about it, and the reason it warns is
+  // that the sibling can read a half-applied snapshot: a row would show a
+  // title the facts no longer agreed with.
   const facts = useMemo(() => parseVault(notes), [notes])
-  if (facts !== currentFacts) {
-    syncFacts(currentFacts, facts)
-    currentFacts = facts
-  }
+  const applied = useRef<VaultFacts>(EMPTY)
+  useEffect(() => {
+    syncFacts(applied.current, facts)
+    applied.current = facts
+  }, [facts])
 
   /** Trace an edit to the facts behind it, then rewrite the markdown. */
   const write = useCallback(
@@ -205,6 +210,13 @@ function VaultProgramPanel() {
 
 type Write = (what: string, resolve: () => Resolution) => void
 
+/** Column names for a relation, so writability can be reported in the reader's
+ *  terms rather than as indices. */
+function columnNames(relation: string): string[] {
+  const decl = store.program.idbs.find((d) => d.name === relation)
+  return decl?.attributes.map((a) => a.name) ?? []
+}
+
 const reasonOf = (r: Resolution): string =>
   r.status === 'ambiguous' || r.status === 'refused' || r.status === 'unsatisfied'
     ? r.reason
@@ -300,26 +312,35 @@ function TaskTable({ write }: { write: Write }) {
  *  columns write into two different source relations, three rules apart. */
 function AgendaTable({ write }: { write: Write }) {
   const view = useWritableQuery<readonly [string, string]>(store, 'Agenda')
-  const [draft, setDraft] = useState<Record<string, string>>({})
+  // One cell at a time. Keying drafts by the row's *values* meant an entry
+  // outlived the row it belonged to the moment a rename changed those values,
+  // and a later row with the same values would inherit it.
+  const [editing, setEditing] = useState<{ key: string; value: string } | null>(null)
   const rows = useMemo(
     () => [...view.rows].sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1])),
     [view.rows],
   )
+  const cellKey = (row: readonly [string, string], col: 0 | 1) => `${col}/${row[0]}/${row[1]}`
   const commit = (row: readonly [string, string], col: 0 | 1) => {
-    const k = `${col}/${row[0]}/${row[1]}`
-    const next = (draft[k] ?? row[col]).trim()
+    const k = cellKey(row, col)
+    if (!editing || editing.key !== k) return
+    const next = editing.value.trim()
+    setEditing(null)
     if (!next || next === row[col]) return
     const target: [string, string] = col === 0 ? [next, row[1]] : [row[0], next]
     write(`renamed "${row[col]}" → "${next}"`, () => view.update(row, target, { dryRun: true }))
-    setDraft((d) => ({ ...d, [k]: '' }))
   }
   return (
     <section className="card">
       <h2>Agenda</h2>
       <p className="muted">
         <code>Agenda(title, text) :- Open(p, t), Doc(p, title).</code> Two columns, two
-        destinations: the title is a heading, the text is a task line. Writable columns:{' '}
-        <span data-testid="agenda-writable">[{view.writableColumns.join(', ')}]</span>
+        destinations: editing the title rewrites a heading, editing the text rewrites a task
+        line. Both are editable here — a document's title is shared by every task in it, so
+        renaming one row renames the others too.{' '}
+        <span data-testid="agenda-writable">
+          editable: {view.writableColumns.map((i) => columnNames('Agenda')[i] ?? i).join(', ') || 'none'}
+        </span>
       </p>
       <table className="agenda" data-testid="agenda-table">
         <thead>
@@ -336,10 +357,12 @@ function AgendaTable({ write }: { write: Write }) {
                   <input
                     aria-label={`edit ${row[col]}`}
                     data-testid={`agenda-input-${col}-${row[1]}`}
-                    value={draft[`${col}/${row[0]}/${row[1]}`] ?? row[col]}
+                    value={
+                      editing?.key === cellKey(row, col) ? editing.value : row[col]
+                    }
                     readOnly={!view.canWriteColumn(col)}
                     onChange={(e) =>
-                      setDraft((d) => ({ ...d, [`${col}/${row[0]}/${row[1]}`]: e.target.value }))
+                      setEditing({ key: cellKey(row, col), value: e.target.value })
                     }
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') commit(row, col)

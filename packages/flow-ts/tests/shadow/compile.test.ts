@@ -150,7 +150,7 @@ Total(p, sum(h)) :- Hours(p, w, h).
     expect(shadow.refusals[0]!.reason).toMatch(/aggregation/i)
   })
 
-  it('refuses arithmetic in the head, with a reason', () => {
+  it('inverts arithmetic in the head where it can — see head-arith.test.ts', () => {
     const shadow = compileShadow(
       parseProgram(`\
 .in
@@ -164,8 +164,13 @@ Total(p, sum(h)) :- Hours(p, w, h).
 S(x + 1) :- R(x).
 `),
     )
-    expect(shadow.refusals.length).toBeGreaterThan(0)
-    expect(shadow.refusals[0]!.reason).toMatch(/arithmetic/i)
+    const lines = ruleLines(shadow.source)
+    // Deletion binds the computed position and replays the computation…
+    expect(lines.some((l) => l.startsWith('Del_R(') && l.includes('== x + 1'))).toBe(true)
+    // …and the update channel undoes the arithmetic.
+    expect(lines.some((l) => l.startsWith('Upd_R(') && l.includes('- 1'))).toBe(true)
+    // The only refusal left is insertion, which would need a value for `x`.
+    expect(shadow.refusals.every((r) => /insert/i.test(r.reason))).toBe(true)
   })
 
   it('but a body *filter* needs no inversion — replay re-checks it', () => {

@@ -111,9 +111,9 @@ on the relation's declaration:
 - **`.put none`** — read-only on purpose, so a refusal reads as a decision
   rather than an omission.
 
-Still refused: head arithmetic, and insertion into a rule whose body carries a
-variable the head doesn't (there is no value to insert, so a template would have
-to supply one).
+Still refused: insertion into a rule whose body carries a variable the head
+doesn't — there is no value to insert, and a template annotation would have to
+supply one.
 
 ## Findings that changed the design
 
@@ -262,6 +262,28 @@ the second is unavoidable — hence `.put insert via R`. Negated atoms flip to
 retractions, so "make this visible" adds the item *and* clears what hid it.
 Comparisons are replayed into the insert rules, so a request violating a filter
 proposes nothing rather than something doomed.
+
+## Computed head columns
+
+`S(x + 1) :- R(x).` used to refuse the whole rule, deletion included — though
+deletion never needed an inverse. It only asks which source tuple produced the
+row, which is answerable by binding the computed position and replaying the
+computation as a filter:
+
+```datalog
+Del_R(x) :- Del_S(h0), R(x), h0 == x + 1.
+```
+
+That works for arithmetic with no inverse at all, `%` included. Updating the
+computed column is the part that needs one, and only some exists: `+`, `-` and
+`*` invert; `/` and `%` are not injective, so many inputs share an output and
+nothing says which to write back. Flat left-to-right arithmetic means a
+multi-step expression would need helper relations to undo one operation at a
+time, so it is refused rather than half-supported.
+
+Multiplication is exact only when the request divides evenly, and is *not*
+refused for that: the verify step is what the protocol has instead of trusting a
+proposal, so an indivisible request comes back `unsatisfied`.
 
 ## Minimal cuts
 

@@ -42,8 +42,10 @@ import {
   type Program,
   type PutPolicy,
   type RelDecl,
+  type Arithmetic,
   atomArgToString,
   constToString,
+  factorToString,
   dataTypeToString,
   predicateToString,
   putPolicyToString,
@@ -212,20 +214,6 @@ export function compileShadow(
       continue
     }
 
-    const headArgs: string[] = []
-    let headOk = true
-    for (const ha of rule.head.headArguments) {
-      const rendered = headArgAsAtomArg(ha)
-      if (rendered === null) {
-        refusals.push({ subject, reason: refusalFor(ha) })
-        headOk = false
-        break
-      }
-      headArgs.push(rendered)
-    }
-    if (!headOk) continue
-
-    const request = `${rule.head.name}(${headArgs.join(', ')})`
     const taken = varsOf(rule.rhs)
     let fresh = 0
     const nextVar = (): string => {
@@ -234,6 +222,33 @@ export function compileShadow(
       taken.add(name)
       return name
     }
+
+    // A computed head position has no variable to name it, so bind one and
+    // replay the computation as a filter. That is all deletion ever needed —
+    // it only asks which source tuple produced the row. Refusing the whole rule
+    // for a computed column, as this used to, also refused the deletions that
+    // never depended on inverting anything.
+    const headArgs: string[] = []
+    const headFilters: string[] = []
+    let headOk = true
+    for (const ha of rule.head.headArguments) {
+      const rendered = headArgAsAtomArg(ha)
+      if (rendered !== null) {
+        headArgs.push(rendered)
+        continue
+      }
+      if (ha.kind !== 'Arith') {
+        refusals.push({ subject, reason: refusalFor(ha) })
+        headOk = false
+        break
+      }
+      const bound = nextVar()
+      headArgs.push(bound)
+      headFilters.push(`${bound} == ${ha.arithmetic.toString()}`)
+    }
+    if (!headOk) continue
+
+    const request = `${rule.head.name}(${headArgs.join(', ')})`
 
     // --- insert channel --------------------------------------------------
     //
@@ -265,6 +280,14 @@ export function compileShadow(
     // would have to change every occurrence at once — the join ambiguity,
     // which is a policy rather than an inference. Skipped for now.
     rule.head.headArguments.forEach((ha, k) => {
+      // A computed column needs its arithmetic undone before the source
+      // position can be rewritten. Only some of it can be: `+`, `-` and `*`
+      // invert, `/` and `%` are not injective, and a multi-step expression
+      // would need helper relations because arithmetic here is flat.
+      if (ha.kind === 'Arith') {
+        emitComputedUpdate(rule, ha.arithmetic, headArgs, k, headFilters, only, rules, refusals)
+        return
+      }
       if (ha.kind !== 'Var') return
       const sites = occurrencesOf(ha.name, rule.rhs)
       if (sites.length !== 1) return
@@ -286,9 +309,10 @@ export function compileShadow(
       })
       const before = atom.args.map((a, j) => subst.get(j) ?? atomArgToString(a))
       const after = before.map((a, j) => (j === argIndex ? fresh : a))
-      const body = rule.rhs
-        .map((p, j) => (j === atomIndex ? renderAtom(atom, subst) : predicateToString(p)))
-        .join(', ')
+      const body = [
+        ...rule.rhs.map((p, j) => (j === atomIndex ? renderAtom(atom, subst) : predicateToString(p))),
+        ...headFilters,
+      ].join(', ')
 
       rules.push({
         headRel: UPD_PREFIX + atom.name,
@@ -315,9 +339,10 @@ export function compileShadow(
         atom.args.forEach((a, j) => {
           if (a.kind === 'Placeholder') subst.set(j, nextVar())
         })
-        const body = rule.rhs
-          .map((p, j) => (j === i ? renderAtom(atom, subst) : predicateToString(p)))
-          .join(', ')
+        const body = [
+          ...rule.rhs.map((p, j) => (j === i ? renderAtom(atom, subst) : predicateToString(p))),
+          ...headFilters,
+        ].join(', ')
         rules.push({
           headRel: DEL_PREFIX + atom.name,
           needs: [DEL_PREFIX + rule.head.name],
@@ -336,7 +361,7 @@ export function compileShadow(
         })
         return
       }
-      const body = rule.rhs.map((p) => predicateToString(p)).join(', ')
+      const body = [...rule.rhs.map((p) => predicateToString(p)), ...headFilters].join(', ')
       rules.push({
         headRel: INS_PREFIX + atom.name,
         needs: [DEL_PREFIX + rule.head.name],
@@ -358,6 +383,105 @@ export function compileShadow(
     seeds,
     refusals,
   }
+}
+
+/** Update rules for a head column that is computed rather than copied.
+ *
+ *  The forward direction is `y = f(x)`; the backward one needs `x = f⁻¹(y)`,
+ *  and that only exists for some `f`. Addition, subtraction and multiplication
+ *  invert; division truncates and modulo collapses, so many inputs share an
+ *  output and there is no principled choice of which to write back. Flat
+ *  left-to-right arithmetic means a multi-step expression would need helper
+ *  relations to undo one operation at a time, so it is refused for now rather
+ *  than half-supported.
+ *
+ *  Multiplication is exact only when the request divides evenly. It isn't
+ *  refused for that, because the verify step is what the protocol has instead
+ *  of trusting a proposal — an indivisible request comes back `unsatisfied`. */
+function emitComputedUpdate(
+  rule: FLRule,
+  arith: Arithmetic,
+  headArgs: readonly string[],
+  k: number,
+  headFilters: readonly string[],
+  only: string | null,
+  out: ShadowRule[],
+  refusals: ShadowRefusal[],
+): void {
+  const subject = rule.toString()
+  const vars = arith.vars()
+  if (vars.length === 0) return // a bare constant: nothing to write back to
+  if (new Set(vars).size > 1 || vars.length > 1) {
+    refusals.push({
+      subject,
+      reason:
+        `the computed column of "${rule.head.name}" depends on more than one variable ` +
+        `(${[...new Set(vars)].join(', ')}), so a new value does not determine a new input`,
+    })
+    return
+  }
+  if (arith.rest.length !== 1) {
+    refusals.push({
+      subject,
+      reason:
+        `the computed column of "${rule.head.name}" is not a single operation, and flat ` +
+        'arithmetic cannot express its inverse without helper relations',
+    })
+    return
+  }
+
+  const v = vars[0]!
+  const [op, operand] = arith.rest[0]!
+  const varIsInit = arith.init.kind === 'Var'
+  const other = varIsInit ? factorToString(operand) : factorToString(arith.init)
+  if (!varIsInit && operand.kind !== 'Var') return
+
+  // `y = x op c` undoes as `x = y op⁻¹ c`; `y = c op x` needs the operation
+  // rearranged instead, which only works when it can be.
+  let inverse: string | null = null
+  if (varIsInit) {
+    if (op === 'Plus') inverse = `%s - ${other}`
+    else if (op === 'Minus') inverse = `%s + ${other}`
+    else if (op === 'Multiply') inverse = `%s / ${other}`
+  } else {
+    if (op === 'Plus') inverse = `%s - ${other}`
+    else if (op === 'Minus') inverse = `${other} - %s`
+    else if (op === 'Multiply') inverse = `%s / ${other}`
+  }
+  if (!inverse) {
+    refusals.push({
+      subject,
+      reason:
+        `the computed column of "${rule.head.name}" uses ${op}, which is not injective — ` +
+        'many inputs give the same output, so nothing says which to write back',
+    })
+    return
+  }
+
+  const sites = occurrencesOf(v, rule.rhs)
+  if (sites.length !== 1) return
+  const { atomIndex, argIndex } = sites[0]!
+  const pred = rule.rhs[atomIndex]!
+  if (pred.kind !== 'Atom') return
+  const atom = pred.atom
+  if (only !== null && atom.name !== only) return
+
+  const fresh = `${headArgs[k]}_n`
+  const request = headArgs.map((a, j) => (j === k ? [a, fresh] : [a, a]))
+  const before = atom.args.map(atomArgToString)
+  const after = before.map((a, j) => (j === argIndex ? inverse.replace('%s', fresh) : a))
+  const body = [...rule.rhs.map((p) => predicateToString(p)), ...headFilters].join(', ')
+
+  out.push({
+    headRel: UPD_PREFIX + atom.name,
+    needs: [UPD_PREFIX + rule.head.name],
+    text:
+      `${UPD_PREFIX}${atom.name}(${[...before, ...after].join(', ')}) :- ` +
+      `${UPD_PREFIX}${rule.head.name}(${[
+        ...request.map((r) => r[0]),
+        ...request.map((r) => r[1]),
+      ].join(', ')}), ${body}.`,
+  })
 }
 
 /** Insert rules for one forward rule: what has to become true for its head to

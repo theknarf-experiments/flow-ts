@@ -47,6 +47,14 @@ export interface WriteOptions {
   requireUnambiguous?: boolean
   /** Shrink the result to a set with no redundant member. */
   minimize?: boolean
+  /** Work out the changes but don't apply them.
+   *
+   *  For a consumer whose source of truth isn't the EDB — a file, a CRDT, a
+   *  server — the engine's answer is an instruction to carry out elsewhere,
+   *  and applying it here as well would double-count. `resolution.changes`
+   *  names facts, so the caller can rewrite whatever those facts came from
+   *  and feed the result back through the ordinary read path. */
+  dryRun?: boolean
 }
 
 type Listener = () => void
@@ -330,7 +338,7 @@ export class Store {
       ...options,
       parse: (src) => parseProgram(src, { grammarSource: 'shadow.dl' }),
     })
-    if (resolution.status !== 'ok') return resolution
+    if (resolution.status !== 'ok' || options.dryRun) return resolution
 
     // Apply through the ordinary update path, so the EDB mirror, the live
     // queries and the batching all behave exactly as they do for a direct

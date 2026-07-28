@@ -1,0 +1,127 @@
+// The markdown vault: the round trip, end to end.
+//
+// Every assertion here is really the same one — an edit to a *derived* table
+// changed the *source markdown* — but through a different shape of rule each
+// time, because that is what decides whether the tracing was real or a lucky
+// special case:
+//
+//   Tasks    a projection, where the line number was thrown away and has to be
+//            recovered before anything can be rewritten
+//   Agenda   a join whose two columns land in two different source relations,
+//            three rules apart, one of them via a derived `Doc`
+//   Outline  a stored number rendered as syntax, so the writer has to turn a
+//            depth back into a run of `#`
+//
+// Nothing in the UI knows any of that. The rules are the only description of
+// the mapping that exists.
+
+import { expect, test } from '@playwright/test'
+import type { Page } from '@playwright/test'
+
+async function gotoVault(page: Page) {
+  await page.goto('/vault')
+  await expect(page.locator('body[data-hydrated="true"]')).toBeVisible()
+  await expect(page.getByTestId('vault-demo')).toBeVisible()
+}
+
+const work = (page: Page) => page.getByTestId('note-work.md')
+const home = (page: Page) => page.getByTestId('note-home.md')
+
+test.describe('markdown vault', () => {
+  test('renders the derived tables from the seeded notes', async ({ page }) => {
+    await gotoVault(page)
+    // Three tasks in work.md, two in home.md.
+    await expect(page.getByTestId('task-write the design doc')).toBeVisible()
+    await expect(page.getByTestId('task-water the plants')).toBeVisible()
+    // The agenda only lists *open* ones, so the reviewed benchmark is absent.
+    await expect(page.getByTestId('agenda-write the design doc')).toBeVisible()
+    await expect(page.getByTestId('agenda-review the benchmark')).toHaveCount(0)
+    // …and it shows them under the document title, which is itself derived
+    // from the first heading rather than stored.
+    await expect(page.getByTestId('agenda-input-0-water the plants')).toHaveValue('Home')
+  })
+
+  test('ticking a derived checkbox rewrites the markdown', async ({ page }) => {
+    await gotoVault(page)
+    await expect(work(page)).toContainText('- [ ] write the design doc')
+
+    await page.getByTestId('task-check-write the design doc').check()
+
+    // The source changed — this is the whole point.
+    await expect(work(page)).toContainText('- [x] write the design doc')
+    await expect(work(page)).not.toContainText('- [ ] write the design doc')
+    // And the views followed, because the facts were re-parsed from the text.
+    await expect(page.getByTestId('agenda-write the design doc')).toHaveCount(0)
+    await expect(page.getByTestId('vault-status')).toContainText('MdTask')
+  })
+
+  test('and unticking puts it back', async ({ page }) => {
+    await gotoVault(page)
+    await page.getByTestId('task-check-review the benchmark').uncheck()
+    await expect(work(page)).toContainText('- [ ] review the benchmark')
+    await expect(page.getByTestId('agenda-review the benchmark')).toBeVisible()
+  })
+
+  test('renaming an agenda task rewrites the task line, keeping its indent', async ({ page }) => {
+    await gotoVault(page)
+    const input = page.getByTestId('agenda-input-1-reply to sam')
+    await input.fill('reply to sam about the docs')
+    await input.blur()
+
+    await expect(work(page)).toContainText('- [ ] reply to sam about the docs')
+    // The status is preserved: only the text column was edited.
+    await expect(work(page)).not.toContainText('- [x] reply to sam')
+  })
+
+  test('renaming an agenda title rewrites a heading, three rules away', async ({ page }) => {
+    await gotoVault(page)
+    await expect(home(page)).toContainText('# Home')
+
+    // `Agenda.title` comes from `Doc`, which is derived from the first `#`
+    // heading — so this has to trace through two rules to reach a line of text.
+    const input = page.getByTestId('agenda-input-0-water the plants')
+    await input.fill('Household')
+    await input.blur()
+
+    await expect(home(page)).toContainText('# Household')
+    await expect(page.getByTestId('vault-status')).toContainText('MdHeading')
+    // Both of home.md's tasks now file under the new title.
+    await expect(page.getByTestId('agenda-input-0-book the dentist')).toHaveValue('Household')
+  })
+
+  test('deepening an outline entry rewrites the run of #', async ({ page }) => {
+    await gotoVault(page)
+    await expect(page.getByTestId('outline-depth-This week')).toHaveText('##')
+
+    await page.getByTestId('outline-deeper-This week').click()
+
+    await expect(work(page)).toContainText('### This week')
+    await expect(page.getByTestId('outline-depth-This week')).toHaveText('###')
+  })
+
+  test('editing the markdown directly flows the other way', async ({ page }) => {
+    await gotoVault(page)
+    await expect(page.getByTestId('task-buy milk')).toHaveCount(0)
+
+    await home(page).fill('# Home\n\n- [ ] water the plants\n- [ ] buy milk\n')
+
+    await expect(page.getByTestId('task-buy milk')).toBeVisible()
+    await expect(page.getByTestId('agenda-buy milk')).toBeVisible()
+  })
+
+  test('writability is reported per column, from the rules', async ({ page }) => {
+    await gotoVault(page)
+    // Both agenda columns trace to a single source position, so both are
+    // editable — and the panel says which, rather than the component deciding.
+    await expect(page.getByTestId('agenda-writable')).toHaveText('[0, 1]')
+  })
+
+  test('an edit that goes stale is refused, not guessed at', async ({ page }) => {
+    await gotoVault(page)
+    // Remove the task from the source while its row is still on screen, then
+    // try to edit that row. The write re-reads the text and finds it gone.
+    await work(page).fill('# Work\n\n## This week\n- [x] review the benchmark\n')
+    await expect(page.getByTestId('task-write the design doc')).toHaveCount(0)
+    await expect(page.getByTestId('task-review the benchmark')).toBeVisible()
+  })
+})

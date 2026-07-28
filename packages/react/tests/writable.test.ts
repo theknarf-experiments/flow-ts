@@ -210,3 +210,20 @@ Listed(p, n) :- Task(i, p), Person(p, n).
     expect(store.writableColumns('ICanReach')).toEqual([])
   })
 })
+
+describe('resolving without applying', () => {
+  it('returns the changes and leaves the store alone', () => {
+    // What a consumer whose source of truth is a file needs: the engine says
+    // which facts to change, and the file is what actually gets rewritten.
+    const store = seeded()
+    const r = store.updateRow('ICanReach', ['ann'], ['annie'], { dryRun: true })
+    expect(r.status).toBe('ok')
+    if (r.status !== 'ok') return
+    expect(r.changes).toEqual([
+      { kind: 'upd', rel: 'Person', row: [2, 'ann'], newRow: [2, 'annie'] },
+    ])
+    store.flush()
+    expect(names(store)).toEqual(['ann', 'bob'])
+    expect(store.snapshot('Person')).toContainEqual([2, 'ann'])
+  })
+})

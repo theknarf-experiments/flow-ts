@@ -42,6 +42,9 @@ function RootDocument() {
       <body>
         <nav className="topnav" data-testid="topnav">
           <Link to="/" className="topnav-brand">flow-ts</Link>
+          <Link to="/vault" activeProps={{ className: 'active' }}>
+            Vault
+          </Link>
           <Link to="/friends" activeProps={{ className: 'active' }}>
             Friends
           </Link>

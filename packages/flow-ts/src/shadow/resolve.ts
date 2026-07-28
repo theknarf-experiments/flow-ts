@@ -104,7 +104,14 @@ export function resolveBackward(
   const isUpdate = request.newRow !== undefined
   const isInsert = request.insert === true
 
-  const shadow = compileShadow(program, options)
+  // Only the relation being asked about needs a channel. Building them for
+  // every view would compile rules — and force the indexes behind them — that
+  // this request can never reach, and a one-shot resolve pays that in full.
+  // The caller can still widen it, but there is no reason to by default.
+  const shadow = compileShadow(program, {
+    ...options,
+    views: options.views ?? [request.rel],
+  })
   // Shape first. A mistyped row would otherwise just fail to join, and get
   // reported as stale data rather than as the malformed request it is.
   const malformed = validateRequest(

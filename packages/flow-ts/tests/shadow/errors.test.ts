@@ -16,7 +16,7 @@ import { parseProgram } from '@flow-ts/parsing'
 import type { Row } from '../../src/reading/index.js'
 import { openBackwardSession, resolveBackward } from '../../src/shadow/index.js'
 
-const PARSE = { parse: (src: string) => parseProgram(src, { grammarSource: 's.dl' }) }
+const PARSE = { parse: (src: string) => parseProgram(src, { grammarSource: 's.dl' }), views: 'all' as const }
 
 const PROGRAM = parseProgram(
   `\

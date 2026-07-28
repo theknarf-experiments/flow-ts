@@ -26,7 +26,7 @@ import {
 } from './_harness.js'
 import { type GenProgram, recursiveProgramGen } from './_gen.js'
 
-const PARSE = { parse: (src: string) => parseProgram(src, { grammarSource: 'shadow.dl' }) }
+const PARSE = { parse: (src: string) => parseProgram(src, { grammarSource: 'shadow.dl' }), views: 'all' as const }
 
 const withRequest = recursiveProgramGen.map((p) => {
   const facts = dedupe(p.facts)

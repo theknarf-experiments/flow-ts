@@ -27,7 +27,7 @@ import {
 import { type GenProgram, programGen } from './_gen.js'
 import type { Row } from '../../src/reading/index.js'
 
-const PARSE = { parse: (src: string) => parseProgram(src, { grammarSource: 'shadow.dl' }) }
+const PARSE = { parse: (src: string) => parseProgram(src, { grammarSource: 'shadow.dl' }), views: 'all' as const }
 
 /** Apply resolved changes, independently of the resolver's own helper. */
 function applyChanges(facts: Record<string, Row[]>, changes: readonly Change[]) {

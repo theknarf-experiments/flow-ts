@@ -23,7 +23,7 @@ import type { Row } from '../../src/reading/index.js'
 import { compileShadow, openBackwardSession, resolveBackward } from '../../src/shadow/index.js'
 import { type Facts, key, liveRows } from './_harness.js'
 
-const PARSE = { parse: (src: string) => parseProgram(src, { grammarSource: 's.dl' }) }
+const PARSE = { parse: (src: string) => parseProgram(src, { grammarSource: 's.dl' }), views: 'all' as const }
 
 function ruleLines(source: string): string[] {
   const at = source.indexOf('.rule')

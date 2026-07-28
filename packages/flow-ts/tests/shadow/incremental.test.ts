@@ -23,7 +23,7 @@ import { programGen } from './_gen.js'
 
 type Facts = Record<string, Row[]>
 
-const PARSE = { parse: (src: string) => parseProgram(src, { grammarSource: 'shadow.dl' }) }
+const PARSE = { parse: (src: string) => parseProgram(src, { grammarSource: 'shadow.dl' }), views: 'all' as const }
 
 const PROJECTION_SRC = `\
 .in

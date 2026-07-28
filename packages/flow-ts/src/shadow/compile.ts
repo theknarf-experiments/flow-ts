@@ -80,7 +80,7 @@ export interface ShadowOptions {
    *  roughly doubles the cost of ordinary forward maintenance, which is paid
    *  continuously and by readers who never write. A vault with fifty views and
    *  one editable table should say so. */
-  views?: readonly string[]
+  views?: readonly string[] | 'all'
   /** Which request channels to build. Omitted means all three. Deletion is the
    *  dearest, so a consumer that only rewrites cells can skip it. */
   channels?: readonly ShadowChannel[]
@@ -135,7 +135,8 @@ export function compileShadow(
   // A request enters on a view, so every IDB gets a seed. It has to become an
   // EDB of the shadow program, which means real attributes: `.decl H()` (arity
   // inferred from the rules) carries nothing to build a fact channel from.
-  const wantView = (name: string): boolean => !options.views || options.views.includes(name)
+  const wantView = (name: string): boolean =>
+    options.views === undefined || options.views === 'all' || options.views.includes(name)
   const wantChannel = (c: ShadowChannel): boolean =>
     !options.channels || options.channels.includes(c)
 

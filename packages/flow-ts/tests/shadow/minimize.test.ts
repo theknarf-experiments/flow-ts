@@ -22,7 +22,7 @@ import type { Row } from '../../src/reading/index.js'
 import { openBackwardSession, resolveBackward } from '../../src/shadow/index.js'
 import { type Facts, key, liveRows } from './_harness.js'
 
-const PARSE = { parse: (src: string) => parseProgram(src, { grammarSource: 's.dl' }) }
+const PARSE = { parse: (src: string) => parseProgram(src, { grammarSource: 's.dl' }), views: 'all' as const }
 
 const PATH_SRC = `\
 .in

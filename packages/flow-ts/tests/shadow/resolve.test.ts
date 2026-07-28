@@ -25,7 +25,7 @@ type Facts = Record<string, Row[]>
 
 const prog = (src: string) => parseProgram(src, { grammarSource: 'r.dl' })
 /** flow-ts has no parser dependency, so the reader is injected. */
-const P = { parse: (src: string) => parseProgram(src, { grammarSource: 'shadow.dl' }) }
+const P = { parse: (src: string) => parseProgram(src, { grammarSource: 'shadow.dl' }), views: 'all' as const }
 
 const PROJECTION = prog(`\
 .in

@@ -217,11 +217,21 @@ continuously and by readers who never write:
 | one view, every channel | 32 | 71ms | 1.3x |
 | one view, rewrites only | 27 | 66ms | 1.2x |
 
-So it is opt-in: `views` limits which relations get channels, `channels` limits
-which of Del/Ins/Upd get built, and everything unreferenced prunes away. A vault
-with fifty views and one editable table pays 1.2x rather than 2.5x. Request cost
-is flat in data but linear in *program* size, which is the other reason to keep
-the shadow program small.
+So it is opt-in, and the two entry points want different things:
+
+- **`resolveBackward` scopes itself.** It compiles per request and throws the
+  graph away, and it already knows which relation was asked about — so it builds
+  channels for that one and nothing else. No configuration, and the cheapest
+  correct answer by default.
+- **`openBackwardSession` refuses to guess.** It carries its graph for as long
+  as it is open, so scope is a standing cost and a real decision. Without
+  `views` it throws, naming the tradeoff and the escape (`views: 'all'`).
+
+`channels` narrows further — a consumer that only rewrites cells builds no
+delete channel, which is the dearest one. Everything left unreferenced prunes
+away on its own. A vault with twenty views and one editable table pays 1.2x
+rather than 2.5x. Request cost is flat in data but linear in *program* size,
+which is the other reason to keep the shadow program small.
 
 Sink emissions for one request, batch versus a loaded session:
 

@@ -27,7 +27,7 @@ import { Strata } from '../../src/strata/index.js'
 import { dedupe, key } from './_harness.js'
 import { type GenProgram, programGen, recursiveProgramGen } from './_gen.js'
 
-const PARSE = { parse: (src: string) => parseProgram(src, { grammarSource: 's.dl' }) }
+const PARSE = { parse: (src: string) => parseProgram(src, { grammarSource: 's.dl' }), views: 'all' as const }
 
 type Op =
   | { kind: 'addFact'; rel: number; row: number }

@@ -20,7 +20,7 @@ import type { Row } from '../src/reading/index.js'
 import { compileShadow, openBackwardSession, resolveBackward } from '../src/shadow/index.js'
 import { fmt, ratio, table, time } from './_harness.js'
 
-const PARSE = { parse: (src: string) => parseProgram(src, { grammarSource: 'shadow.dl' }) }
+const PARSE = { parse: (src: string) => parseProgram(src, { grammarSource: 'shadow.dl' }), views: 'all' as const }
 
 // A flow-md-shaped program: a parsed markdown tree, a view over it, and however
 // many further views the caller wants stacked on top.

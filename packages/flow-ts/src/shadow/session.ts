@@ -85,6 +85,21 @@ export function openBackwardSession(
   program: Program,
   options: BackwardSessionOptions,
 ): BackwardSession {
+  // A session carries its graph for as long as it is open, so the scope of the
+  // shadow rules is a standing cost rather than a per-request one — measured at
+  // roughly 2x on ordinary forward maintenance with every view enabled, paid
+  // continuously and by readers who never write. That is a decision the caller
+  // has to make, so there is no default: say which views are writable, or say
+  // 'all' and mean it.
+  if (options.views === undefined) {
+    throw new Error(
+      'openBackwardSession: pass `views` to say which relations are writable. ' +
+        'Every view carries shadow rules that force joins on their sources, which ' +
+        'roughly doubles forward maintenance whether or not anyone writes — see ' +
+        "`pnpm -F flow-ts run bench`. Pass `views: 'all'` to opt out of narrowing.",
+    )
+  }
+
   // Refuse rather than answer wrongly. A recursive program is exactly where
   // this session's un-seed-and-roll-back design breaks: the retractions it
   // depends on don't fully propagate through a recursive stratum.

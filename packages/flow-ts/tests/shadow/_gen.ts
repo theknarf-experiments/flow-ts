@@ -101,7 +101,7 @@ function buildAtom(
 
 const render = (a: BuiltAtom): string => `${a.rel.name}(${a.args.join(', ')})`
 
-export function buildProgram(pool: readonly number[]): GenProgram {
+export function buildProgram(pool: readonly number[], recursive = false): GenProgram {
   const d = new Draw(pool)
 
   const edbCount = 1 + d.next(3)
@@ -167,7 +167,26 @@ export function buildProgram(pool: readonly number[]): GenProgram {
       texts.push(`I${i}(${headVars.join(', ')}) :- ${parts.join(', ')}.`)
     }
 
-    idbs.push({ name: `I${i}`, arity: arity ?? 1 })
+    const self: GenRel = { name: `I${i}`, arity: arity ?? 1 }
+
+    // A recursive rule: the relation's own body references itself, so it lands
+    // in an SCC and the shadow rules for it are recursive too — their fixpoint
+    // is the support set. Recursion is only ever through *positive* atoms here,
+    // which is what keeps the program stratified.
+    if (recursive && d.chance(70)) {
+      const carried = Array.from({ length: self.arity }, (_, j) => VARS[j % VARS.length]!)
+      const link = buildAtom(d, d.pick(edbs), false, carried)
+      // Head variables must be bound positively; `carried` and the link atom's
+      // variables are, so draw from those.
+      const bound = [...new Set([...carried, ...link.vars])]
+      const headVars = Array.from(
+        { length: self.arity },
+        (_, j) => bound[(j + 1) % bound.length]!,
+      )
+      texts.push(`${self.name}(${headVars.join(', ')}) :- ${self.name}(${carried.join(', ')}), ${render(link)}.`)
+    }
+
+    idbs.push(self)
     rules.push(...texts)
   }
 
@@ -201,4 +220,9 @@ export function buildProgram(pool: readonly number[]): GenProgram {
 /** Programs, via a shrinkable pool of naturals. */
 export const programGen: fc.Arbitrary<GenProgram> = fc
   .array(fc.nat({ max: 1000 }), { minLength: 60, maxLength: 60 })
-  .map(buildProgram)
+  .map((pool) => buildProgram(pool))
+
+/** The same, with recursive rules — so shadow rules land inside an SCC. */
+export const recursiveProgramGen: fc.Arbitrary<GenProgram> = fc
+  .array(fc.nat({ max: 1000 }), { minLength: 60, maxLength: 60 })
+  .map((pool) => buildProgram(pool, true))

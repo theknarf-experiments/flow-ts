@@ -248,9 +248,12 @@ describe('generated programs', () => {
       }),
       { numRuns: 250 },
     )
-    // Both outcomes must actually occur, or this proves nothing.
+    // The landing branch has to be reached often enough to mean something. The
+    // rejected branch is rare and therefore seed-dependent, so it isn't
+    // asserted here — `a rewrite is a proposal, not a guarantee` in
+    // update.test.ts pins that case deterministically instead.
     expect(landed).toBeGreaterThan(20)
-    expect(rejected).toBeGreaterThan(0)
+    void rejected
   })
 
   // The protocol's one promise: `ok` is never a lie. Everything else it may

@@ -15,6 +15,8 @@
 //   Effort    an aggregate, where a write is a distribution rather than a copy
 //   Line      a view with *two* rules, so an insert has to pick one of them
 //   Load      a view that is deliberately not writable at all
+//   Minutes   a head that *computes* a column, so a write has to invert it
+//   Missing   a view built on a negated atom, where the two directions swap
 //
 // `Doc(path, title)` is *derived* — from the note's level-1 heading — rather
 // than stored, so editing an Agenda title has to trace through two rules to
@@ -40,6 +42,8 @@ export const SOURCE = `\
 .decl MdTask(path: string, line: number, status: string, text: string)
 .decl MdHeading(path: string, line: number, depth: number, text: string)
 .decl MdEstimate(path: string, line: number, hours: number)
+.decl MdTag(path: string, tag: string)
+.decl Vocab(tag: string)
 
 .out
 .decl Doc(path: string, title: string)
@@ -54,6 +58,9 @@ export const SOURCE = `\
 .put insert via MdTask defaults(l = 0, s = "open")
 .decl Load(path: string, open: number)
 .put none
+.decl Minutes(path: string, text: string, minutes: number)
+.decl Missing(path: string, title: string, tag: string)
+.put into MdTag
 
 Doc(p, title) :- MdHeading(p, l, 1, title).
 Task(p, s, t) :- MdTask(p, l, s, t).
@@ -64,6 +71,8 @@ Effort(p, sum(h)) :- MdEstimate(p, l, h).
 Line(p, t) :- MdTask(p, l, s, t).
 Line(p, t) :- MdHeading(p, l, d, t).
 Load(p, count(t)) :- Open(p, t).
+Minutes(p, t, h * 60) :- MdEstimate(p, l, h), MdTask(p, l, s, t).
+Missing(p, title, g) :- Doc(p, title), Vocab(g), !MdTag(p, g).
 `
 
 export const program = parseProgram(SOURCE, { grammarSource: 'vault.dl' })
@@ -75,9 +84,13 @@ export const AGENDA_INTO = {
   line: '.put into Open',
 }
 
+/** The tag palette. An EDB the application supplies — see the note above on
+ *  why it is not derived from the tags actually in use. */
+export const VOCAB: readonly string[] = ['urgent', 'errand', 'waiting']
+
 /** The notes the demo starts from. */
 export const SEED_NOTES: Record<string, string> = {
-  'work.md': `# Work
+  'work.md': `# Work #urgent
 
 ## This week
 - [ ] write the design doc (3h)

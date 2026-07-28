@@ -263,8 +263,30 @@ function collateral(
 ): string {
   const was = allLiveRows(program, before)
   const now = allLiveRows(program, after)
+
+  // Landing somewhere else is its own failure, and a different one. An inverse
+  // that doesn't round-trip — `h * 60` inverted by a division that truncates —
+  // produces a perfectly good row that simply isn't the one asked for, and
+  // saying "a tuple it changed is relied on elsewhere" sends the reader looking
+  // for a conflict that isn't there. Check the target relation first, because
+  // when this is what happened it is the whole explanation.
+  const wasT = was.get(target) ?? new Map<string, Row>()
+  const appeared = [...(now.get(target) ?? new Map<string, Row>())].filter(([k]) => !wasT.has(k))
+  if (appeared.length === 1) {
+    return (
+      ` — it produced ${target}(${appeared[0]![1].join(', ')}) instead, so the inverse ` +
+      'it applied does not round-trip'
+    )
+  }
+
+  // Otherwise something the row rests on was knocked out. Only relations the
+  // target actually reads can be that, so "which that row depends on" is a
+  // claim worth checking rather than asserting: an unrelated view that happens
+  // to read the same source relation changes too, and naming it would be a
+  // coincidence dressed up as a cause.
+  const upstream = dependencies(program, target)
   for (const [rel, rows] of was) {
-    if (rel === target) continue
+    if (rel === target || !upstream.has(rel)) continue
     const remaining = now.get(rel) ?? new Map<string, Row>()
     for (const [k, row] of rows) {
       if (remaining.has(k)) continue
@@ -275,6 +297,25 @@ function collateral(
     }
   }
   return ' — a source tuple it changed is also relied on elsewhere in the rule'
+}
+
+/** Every relation `target` reads, transitively. */
+function dependencies(program: Program, target: string): Set<string> {
+  const bodies = new Map<string, string[]>()
+  for (const rule of program.rules) {
+    const names = rule.rhs.flatMap((p) => (p.kind === 'Compare' ? [] : [p.atom.name]))
+    bodies.set(rule.head.name, [...(bodies.get(rule.head.name) ?? []), ...names])
+  }
+  const seen = new Set<string>()
+  const queue = [target]
+  while (queue.length > 0) {
+    for (const next of bodies.get(queue.pop()!) ?? []) {
+      if (seen.has(next)) continue
+      seen.add(next)
+      queue.push(next)
+    }
+  }
+  return seen
 }
 
 /** Which channel a request enters on, and the row it carries. */

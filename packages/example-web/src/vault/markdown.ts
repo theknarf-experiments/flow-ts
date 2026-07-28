@@ -18,6 +18,7 @@ export interface VaultFacts {
   MdTask: Row[]
   MdHeading: Row[]
   MdEstimate: Row[]
+  MdTag: Row[]
 }
 
 const TASK = /^(\s*)- \[( |x)\] (.*)$/
@@ -26,6 +27,10 @@ const HEADING = /^(#{1,6}) (.*)$/
  *  text and editing the estimate are separate facts about the same line —
  *  which is what lets one view rewrite each without disturbing the other. */
 const ESTIMATE = /\s*\((\d+)h\)\s*$/
+/** `#tag` on a heading line. A note's tags live on its headings here — the
+ *  Obsidian idiom — which keeps them out of task text and gives an insert one
+ *  obvious line to write to. */
+const TAG = /#([a-z][\w-]*)/g
 
 interface ParsedTask {
   indent: string
@@ -51,10 +56,19 @@ const renderTask = (t: ParsedTask): string =>
   `${t.indent}- [${t.status === 'closed' ? 'x' : ' '}] ${t.text}` +
   (t.hours === null ? '' : ` (${t.hours}h)`)
 
+/** Split a heading's text from its tags. */
+function splitHeading(text: string): { text: string; tags: string[] } {
+  const tags = [...text.matchAll(TAG)].map((m) => m[1]!)
+  return { text: text.replace(TAG, '').replace(/\s+/g, ' ').trim(), tags }
+}
+
 /** Lower a set of notes into facts. Line numbers are 1-based. */
 export function parseVault(notes: Record<string, string>): VaultFacts {
-  const facts: VaultFacts = { MdTask: [], MdHeading: [], MdEstimate: [] }
+  const facts: VaultFacts = { MdTask: [], MdHeading: [], MdEstimate: [], MdTag: [] }
   for (const [path, source] of Object.entries(notes)) {
+    // A tag belongs to the note, not the line it is written on, so the same tag
+    // on two headings is one fact.
+    const tags = new Set<string>()
     source.split('\n').forEach((line, i) => {
       const no = i + 1
       const task = splitTask(line)
@@ -64,8 +78,13 @@ export function parseVault(notes: Record<string, string>): VaultFacts {
         return
       }
       const heading = HEADING.exec(line)
-      if (heading) facts.MdHeading.push([path, no, heading[1]!.length, heading[2]!])
+      if (heading) {
+        const { text, tags: found } = splitHeading(heading[2]!)
+        facts.MdHeading.push([path, no, heading[1]!.length, text])
+        for (const t of found) tags.add(t)
+      }
     })
+    for (const t of [...tags].sort()) facts.MdTag.push([path, t])
   }
   return facts
 }
@@ -155,6 +174,34 @@ export function applyToVault(
     return { ...notes, [path]: lines.join('\n') }
   }
 
+  if (rel === 'MdTag' && (kind === 'ins' || kind === 'del')) {
+    const [path, tag] = [String(row[0]), String(row[1])]
+    const source = notes[path]
+    if (source === undefined) return { reason: `no note "${path}"` }
+    const lines = source.split('\n')
+
+    if (kind === 'del') {
+      // A tag is a fact about the note, so removing it means removing every
+      // written occurrence, not the first one found.
+      let hit = false
+      const out = lines.map((line) => {
+        const h = HEADING.exec(line)
+        if (!h || !splitHeading(h[2]!).tags.includes(tag)) return line
+        hit = true
+        const kept = h[2]!.replace(new RegExp(`\\s*#${tag}\\b`, 'g'), '')
+        return `${h[1]!} ${kept.replace(/\s+/g, ' ').trim()}`
+      })
+      if (!hit) return { reason: `no #${tag} on any heading in ${path}` }
+      return { ...notes, [path]: out.join('\n') }
+    }
+
+    // Added tags go on the note's title, which is the one line every note has.
+    const at = lines.findIndex((line) => /^# /.test(line))
+    if (at < 0) return { reason: `${path} has no title to hang #${tag} on` }
+    lines[at] = `${lines[at]} #${tag}`
+    return { ...notes, [path]: lines.join('\n') }
+  }
+
   if (rel === 'MdHeading' && (kind === 'upd' || kind === 'del')) {
     const [path, line] = [String(row[0]), Number(row[1])]
     const source = notes[path]
@@ -162,9 +209,15 @@ export function applyToVault(
     const lines = source.split('\n')
     const parsed = HEADING.exec(lines[line - 1] ?? '')
     if (!parsed) return { reason: `${path}:${line} is no longer a heading` }
-    if (parsed[2] !== row[3]) return { reason: `${path}:${line} changed underneath this edit` }
+    const { text, tags } = splitHeading(parsed[2]!)
+    if (text !== row[3]) return { reason: `${path}:${line} changed underneath this edit` }
     if (kind === 'del') lines.splice(line - 1, 1)
-    else lines[line - 1] = `${'#'.repeat(Number(newRow![2]))} ${String(newRow![3])}`
+    else {
+      // The tags on this line are separate facts about the note; a rename of
+      // the heading is not a statement about them.
+      const suffix = tags.map((t) => ` #${t}`).join('')
+      lines[line - 1] = `${'#'.repeat(Number(newRow![2]))} ${String(newRow![3])}${suffix}`
+    }
     return { ...notes, [path]: lines.join('\n') }
   }
 

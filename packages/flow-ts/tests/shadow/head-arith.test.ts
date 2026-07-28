@@ -53,6 +53,40 @@ ${rule}
 
 const FACTS: Facts = { R: [[1], [5]] }
 
+describe('an inverse that does not round-trip says so', () => {
+  // `* 60` inverts by dividing, and division truncates. 150 / 60 is 2, and
+  // 2 * 60 is 120 — a perfectly good row, just not the one asked for. The
+  // failure is real and the protocol catches it; the question is whether the
+  // message helps. It used to say "a source tuple it changed is also relied on
+  // elsewhere in the rule", which is the *aliasing* explanation and describes a
+  // conflict that isn't there.
+  it('names the row it landed on instead', () => {
+    const r = resolveBackward(
+      prog('S(x * 60) :- R(x).'),
+      { R: [[3]] },
+      { rel: 'S', row: [180], newRow: [150] },
+      PARSE,
+    )
+    expect(r.status).toBe('unsatisfied')
+    if (r.status !== 'unsatisfied') return
+    expect(r.reason).toContain('it produced S(120) instead')
+    expect(r.reason).toContain('does not round-trip')
+    expect(r.reason).not.toMatch(/relied on elsewhere/)
+  })
+
+  it('and a divisible request goes through', () => {
+    const r = resolveBackward(
+      prog('S(x * 60) :- R(x).'),
+      { R: [[3]] },
+      { rel: 'S', row: [180], newRow: [240] },
+      PARSE,
+    )
+    expect(r.status).toBe('ok')
+    if (r.status !== 'ok') return
+    expect(r.changes).toEqual([{ kind: 'upd', rel: 'R', row: [3], newRow: [4] }])
+  })
+})
+
 describe('deletion needs no inverse', () => {
   it('binds the computed column and replays the computation', () => {
     const lines = ruleLines(compileShadow(prog('S(x + 1) :- R(x).')).source)

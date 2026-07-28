@@ -507,3 +507,136 @@ test.describe('a view that is read-only on purpose', () => {
     await expect(page.getByTestId('load-count-work.md')).toHaveText('1')
   })
 })
+
+// A head that computes. Deleting a derived row never needed an inverse — it
+// only asks which tuple produced the value. Rewriting the computed column does,
+// and `* 60` has one only up to truncation. The two requests are
+// indistinguishable in the rule text; the difference is the value, so the
+// protocol applies, re-runs, compares and rolls back the one that missed.
+test.describe('inverting arithmetic in the head', () => {
+  test('the column is computed, and derives from the estimate', async ({ page }) => {
+    await gotoVault(page)
+    await expect(page.getByTestId('minutes-input-write the design doc')).toHaveValue('180')
+    await expect(page.getByTestId('minutes-input-reply to sam')).toHaveValue('120')
+  })
+
+  test('a divisible rewrite runs the computation backwards', async ({ page }) => {
+    await gotoVault(page)
+    const input = page.getByTestId('minutes-input-write the design doc')
+    await input.fill('240')
+    await input.blur()
+
+    // 240 / 60 = 4, written to the estimate on that line.
+    await expect(page.getByTestId('note-work.md')).toContainText(
+      '- [ ] write the design doc (4h)',
+    )
+    await expect(input).toHaveValue('240')
+    // And the aggregate over the same estimates follows: 4 + 1 + 2.
+    await expect(page.getByTestId('effort-input-work.md')).toHaveValue('7')
+  })
+
+  test('one that does not round-trip is caught and rolled back', async ({ page }) => {
+    await gotoVault(page)
+    const input = page.getByTestId('minutes-input-write the design doc')
+    await input.fill('150')
+    await input.blur()
+
+    // 150 / 60 truncates to 2, and 2 * 60 is 120 — a good row, not the one
+    // asked for. Nothing static sees this; re-running does.
+    await expect(page.getByTestId('vault-status')).toContainText(
+      'it produced Minutes(work.md, write the design doc, 120) instead',
+    )
+    await expect(page.getByTestId('vault-status')).toContainText('does not round-trip')
+    // Nothing was written.
+    await expect(page.getByTestId('note-work.md')).toContainText(
+      '- [ ] write the design doc (3h)',
+    )
+    await expect(input).toHaveValue('180')
+  })
+
+  test('the other column of the same view is an ordinary copy', async ({ page }) => {
+    await gotoVault(page)
+    // `text` traces to one position in MdTask; only the computed column needed
+    // an inverse, and the rest of the row is unaffected by that.
+    await expect(page.getByTestId('minutes-reply to sam')).toBeVisible()
+    await expect(page.getByTestId('minutes-input-reply to sam')).toHaveValue('120')
+  })
+})
+
+// A view defined by what is absent. Every other table here loses a row when a
+// fact is deleted; this one loses a row when a fact is added. Nothing declares
+// it — a negated atom flips which channel a request travels on, so `Del_Missing`
+// compiles to `Ins_MdTag` and `Ins_Missing` to `Del_MdTag`. A checkbox exercises
+// both, which is why it is the right control.
+test.describe('a negated view runs backwards', () => {
+  test('reflects the tags already on the notes', async ({ page }) => {
+    await gotoVault(page)
+    await expect(page.getByTestId('tag-work.md-urgent')).toBeChecked()
+    await expect(page.getByTestId('tag-work.md-errand')).not.toBeChecked()
+    await expect(page.getByTestId('tag-home.md-urgent')).not.toBeChecked()
+  })
+
+  test('removing a row from the view inserts a fact', async ({ page }) => {
+    await gotoVault(page)
+    await page.getByTestId('tag-home.md-errand').check()
+
+    // The request was a *delete* on `Missing`; the change is an *insert*.
+    await expect(page.getByTestId('vault-status')).toContainText('ins MdTag(home.md:errand)')
+    await expect(page.getByTestId('note-home.md')).toContainText('# Home #errand')
+    await expect(page.getByTestId('tag-home.md-errand')).toBeChecked()
+  })
+
+  test('and adding one deletes a fact', async ({ page }) => {
+    await gotoVault(page)
+    await page.getByTestId('tag-work.md-urgent').uncheck()
+
+    await expect(page.getByTestId('vault-status')).toContainText('del MdTag(work.md:urgent)')
+    await expect(page.getByTestId('note-work.md')).toContainText('# Work')
+    await expect(page.getByTestId('note-work.md')).not.toContainText('#urgent')
+    await expect(page.getByTestId('tag-work.md-urgent')).not.toBeChecked()
+  })
+
+  test('the two directions compose back to where they started', async ({ page }) => {
+    await gotoVault(page)
+    const before = await page.getByTestId('note-work.md').inputValue()
+    await page.getByTestId('tag-work.md-waiting').check()
+    await expect(page.getByTestId('note-work.md')).toContainText('#waiting')
+    await page.getByTestId('tag-work.md-waiting').uncheck()
+    await expect(page.getByTestId('note-work.md')).toHaveValue(before)
+  })
+
+  test('a tag written by hand flows forward into the grid', async ({ page }) => {
+    await gotoVault(page)
+    const note = page.getByTestId('note-home.md')
+    await note.fill((await note.inputValue()).replace('# Home', '# Home #waiting'))
+    await expect(page.getByTestId('tag-home.md-waiting')).toBeChecked()
+  })
+
+  test('tags are facts about the note, not part of its title', async ({ page }) => {
+    await gotoVault(page)
+    // The title in every other view is the heading without its tags…
+    await expect(page.getByTestId('agenda-input-0-reply to sam')).toHaveValue('Work')
+    // …and renaming it through those views leaves the tags alone.
+    const title = page.getByTestId('agenda-input-0-reply to sam')
+    await title.fill('Job')
+    await title.blur()
+    await expect(page.getByTestId('note-work.md')).toContainText('# Job #urgent')
+    await expect(page.getByTestId('tag-work.md-urgent')).toBeChecked()
+  })
+
+  test('the annotation is what collapses it to one answer', async ({ page }) => {
+    await gotoVault(page)
+    await page.getByTestId('vault-program-panel').getByText('Datalog program').click()
+    const source = page.getByTestId('vault-program-source')
+    await source.fill((await source.inputValue()).replace('.put into MdTag', ''))
+    await page.getByTestId('vault-program-rebuild').click()
+
+    // Deleting the document's heading makes the row stop existing. So does
+    // dropping #errand from the palette, which would take it away from every
+    // note at once. Both are true and neither is what a tick means, so the
+    // engine asks instead of guessing.
+    await page.getByTestId('tag-home.md-errand').click()
+    await expect(page.getByTestId('vault-status')).toContainText('ambiguous')
+    await expect(page.getByTestId('note-home.md')).not.toContainText('#errand')
+  })
+})

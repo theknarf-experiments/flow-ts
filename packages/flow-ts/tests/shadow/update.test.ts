@@ -270,6 +270,29 @@ Outline(title, d, t) :- H(p, d, t), Doc(p, title).
     expect(r.reason).toMatch(/holding up more than one thing/)
   })
 
+  it('and does not blame a view that merely shares a source relation', () => {
+    // `Count` reads H too, so demoting a heading changes it — and it has
+    // nothing to do with why the rewrite failed. Reporting the first IDB row
+    // that happened to disappear made a coincidence look like a cause.
+    const noisy = parseProgram(
+      `${SOURCE}Count(p, count(t)) :- H(p, d, t).\n`.replace(
+        '.decl Outline(title: string, depth: number, text: string)',
+        '.decl Outline(title: string, depth: number, text: string)\n.decl Count(path: string, n: number)',
+      ),
+      { grammarSource: 'o.dl' },
+    )
+    const r = resolveBackward(
+      noisy,
+      FACTS,
+      { rel: 'Outline', row: ['Home', 1, 'Home'], newRow: ['Home', 2, 'Home'] },
+      PARSE,
+    )
+    expect(r.status).toBe('unsatisfied')
+    if (r.status !== 'unsatisfied') return
+    expect(r.reason).toContain('Doc(home.md, Home)')
+    expect(r.reason).not.toContain('Count(')
+  })
+
   it('and the same edit on a heading that is not the title works', () => {
     const r = resolveBackward(
       PROGRAM,

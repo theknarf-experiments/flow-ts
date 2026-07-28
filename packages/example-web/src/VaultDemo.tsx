@@ -22,19 +22,25 @@
 // above them moved.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Store, useProgram, useWritableQuery } from '@flow-ts/react'
+import { Store, useLiveQuery, useProgram, useWritableQuery } from '@flow-ts/react'
 import type { Resolution } from 'flow-ts'
-import { AGENDA_INTO, SEED_NOTES, SOURCE, program } from './vault/program.js'
+import { AGENDA_INTO, SEED_NOTES, SOURCE, VOCAB, program } from './vault/program.js'
 import { parseProgram } from '@flow-ts/parsing'
 import { type Row, type VaultFacts, applyToVault, parseVault } from './vault/markdown.js'
 
 // Only these views are writable. The others are just as derived; they simply
 // aren't opted in, because shadow rules aren't free and most tables are read.
 const store = new Store(program, {
-  writable: ['Task', 'Agenda', 'Outline', 'Effort', 'Line', 'Load'],
+  writable: ['Task', 'Agenda', 'Outline', 'Effort', 'Line', 'Load', 'Minutes', 'Missing'],
 })
 
-const EDBS = ['MdTask', 'MdHeading', 'MdEstimate'] as const
+// The tag palette is the application's, not the notes' — see the note in
+// program.ts on why deriving it from the tags in use breaks the insert
+// direction. It never changes, so it is seeded once.
+for (const tag of VOCAB) store.collection('Vocab').insert([tag] as never)
+store.flush()
+
+const EDBS = ['MdTask', 'MdHeading', 'MdEstimate', 'MdTag'] as const
 const keyOf = (row: Row) => row.map((v) => `${typeof v}:${v}`).join('')
 
 /** Push a new set of facts into the store as a diff, so derivations update
@@ -50,7 +56,7 @@ function syncFacts(prev: VaultFacts, next: VaultFacts): void {
   store.flush()
 }
 
-const EMPTY: VaultFacts = { MdTask: [], MdHeading: [], MdEstimate: [] }
+const EMPTY: VaultFacts = { MdTask: [], MdHeading: [], MdEstimate: [], MdTag: [] }
 
 export function VaultDemo() {
   const [notes, setNotes] = useState<Record<string, string>>(SEED_NOTES)
@@ -101,9 +107,13 @@ export function VaultDemo() {
         next = applied
       }
       setNotes(next)
+      // The channel is worth naming, not just the relation. It is the only
+      // visible sign that a negated view runs backwards: ticking a tag box
+      // removes a row from `Missing` by *inserting* a fact, and reading
+      // "rewrote MdTag" would hide exactly the thing worth seeing.
       setStatus(
-        `${what}: rewrote ${r.changes
-          .map((c) => `${c.rel}(${c.row.slice(0, 2).join(':')})`)
+        `${what}: ${r.changes
+          .map((c) => `${c.kind} ${c.rel}(${c.row.slice(0, 2).join(':')})`)
           .join(', ')}`,
       )
     },
@@ -155,6 +165,8 @@ export function VaultDemo() {
           <EffortTable write={write} />
           <LineTable write={write} />
           <LoadTable />
+          <MinutesTable write={write} />
+          <TagMatrix write={write} />
           {status && (
             <p className="muted" data-testid="vault-status">
               {status}
@@ -446,6 +458,159 @@ function LoadTable() {
         goes back to reporting what it could not work out — an aggregate whose inverse is a
         distribution policy — which is a different answer from "there isn't one".
       </p>
+    </section>
+  )
+}
+
+/** `Minutes(path, text, hours * 60) :- MdEstimate(path, line, hours), MdTask(...).`
+ *
+ *  A head that computes. The two directions need different things and it is
+ *  worth keeping them apart: *deleting* a row never needed an inverse — it only
+ *  asks which tuple produced the value, and replaying `h * 60` as a filter
+ *  answers that. *Rewriting* the computed column is what needs one.
+ *
+ *  `* 60` has an inverse only up to truncation. 240 divides to 4 hours and
+ *  round-trips; 150 divides to 2, which is 120, and does not. No static
+ *  analysis distinguishes those two requests, because the difference is the
+ *  value — so the protocol applies the change, re-runs the forward program,
+ *  compares, and rolls back the one that missed. */
+function MinutesTable({ write }: { write: Write }) {
+  const view = useWritableQuery<readonly [string, string, number]>(store, 'Minutes')
+  const [editing, setEditing] = useState<{ key: string; value: string } | null>(null)
+  const rows = useMemo(
+    () => [...view.rows].sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1])),
+    [view.rows],
+  )
+  const keyOfRow = (row: readonly [string, string, number]) => `${row[0]}/${row[1]}`
+
+  const commit = (row: readonly [string, string, number]) => {
+    const k = keyOfRow(row)
+    if (!editing || editing.key !== k) return
+    const next = Number(editing.value)
+    setEditing(null)
+    if (!Number.isFinite(next) || next === row[2]) return
+    write(`set "${row[1]}" to ${next}m`, () =>
+      view.update(row, [row[0], row[1], next], { dryRun: true }),
+    )
+  }
+
+  return (
+    <section className="card">
+      <h2>Minutes</h2>
+      <p className="muted">
+        <code>Minutes(p, t, h * 60) :- MdEstimate(p, l, h), MdTask(p, l, s, t).</code> The
+        head computes, so a write has to run the computation backwards. Multiples of 60 go
+        through. Anything else divides to an hour count that multiplies back to a different
+        number — try 150 — and the protocol catches it by re-running rather than by knowing
+        in advance.
+      </p>
+      <ul className="tasks" data-testid="minutes-list">
+        {rows.map((row) => (
+          <li key={keyOfRow(row)} data-testid={`minutes-${row[1]}`}>
+            <input
+              type="number"
+              step={60}
+              aria-label={`minutes for ${row[1]}`}
+              data-testid={`minutes-input-${row[1]}`}
+              value={editing?.key === keyOfRow(row) ? editing.value : row[2]}
+              readOnly={!view.canWriteColumn(2)}
+              onChange={(e) => setEditing({ key: keyOfRow(row), value: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commit(row)
+              }}
+              onBlur={() => commit(row)}
+            />
+            <span>{row[1]}</span>
+            <span className="muted">{row[0]}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+/** `Missing(path, title, tag) :- Doc(path, title), Vocab(tag), !MdTag(path, tag).`
+ *
+ *  The only view here defined by what is *absent*, and the only one whose
+ *  backward direction runs the other way round. Everywhere else a row goes away
+ *  when a fact is deleted; a `Missing` row goes away when a fact is *added*, and
+ *  appears when one is deleted. Nothing declares that. A negated atom flips
+ *  which channel a request travels on, so `Del_Missing` compiles to
+ *  `Ins_MdTag` and `Ins_Missing` to `Del_MdTag`.
+ *
+ *  A checkbox is the right control precisely because it exercises both: ticking
+ *  removes a row from the view, unticking puts one back, and the two land on
+ *  opposite channels.
+ *
+ *  `.put into MdTag` keeps the flip on its own. Without it, deleting the
+ *  document's heading is also a way to make the row stop existing — true, and
+ *  not what a tick means. */
+function TagMatrix({ write }: { write: Write }) {
+  const view = useWritableQuery<readonly [string, string, string]>(store, 'Missing')
+  const docs = useLiveQuery<readonly [string, string]>(store, 'Doc')
+  const notes = useMemo(() => [...docs].sort((a, b) => a[0].localeCompare(b[0])), [docs])
+  // A pair is *tagged* exactly when it is not in `Missing`. The grid is the
+  // complement of the view, which is why every cell is a write to it.
+  const missing = useMemo(
+    () => new Set(view.rows.map((r) => `${r[0]}/${r[2]}`)),
+    [view.rows],
+  )
+
+  const toggle = (path: string, title: string, tag: string, tagged: boolean) => {
+    const row: readonly [string, string, string] = [path, title, tag]
+    // A tick has one meaning, so anything with more than one answer is a
+    // question rather than an instruction. With `.put into MdTag` there is
+    // exactly one; take the annotation away and the engine finds three, which
+    // is the point of asking.
+    const opts = { dryRun: true, requireUnambiguous: true } as const
+    tagged
+      ? // Currently tagged ⇒ the pair is absent from `Missing`; putting it back
+        // means deleting the fact.
+        write(`untagged ${path} #${tag}`, () => view.insert(row, opts))
+      : write(`tagged ${path} #${tag}`, () => view.remove(row, opts))
+  }
+
+  return (
+    <section className="card">
+      <h2>Tags</h2>
+      <p className="muted">
+        <code>Missing(p, title, g) :- Doc(p, title), Vocab(g), !MdTag(p, g).</code> A view of
+        what is <em>not</em> there. A box is ticked when the pair is absent from it, so
+        ticking one <em>removes</em> a row from the view — and the way to remove a row from
+        a negated view is to add a fact. Unticking adds a row, by deleting one. The rules
+        are the only place that is written down.
+      </p>
+      <table className="agenda" data-testid="tag-table">
+        <thead>
+          <tr>
+            <th>note</th>
+            {VOCAB.map((tag) => (
+              <th key={tag}>#{tag}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {notes.map(([path, title]) => (
+            <tr key={path} data-testid={`tags-${path}`}>
+              <td>{title}</td>
+              {VOCAB.map((tag) => {
+                const tagged = !missing.has(`${path}/${tag}`)
+                return (
+                  <td key={tag}>
+                    <input
+                      type="checkbox"
+                      aria-label={`${tag} on ${path}`}
+                      data-testid={`tag-${path}-${tag}`}
+                      checked={tagged}
+                      onChange={() => toggle(path, title, tag, tagged)}
+                    />
+                  </td>
+                )
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </section>
   )
 }

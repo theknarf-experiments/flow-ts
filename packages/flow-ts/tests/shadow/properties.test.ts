@@ -24,112 +24,17 @@ import { executeProgram } from '../../src/executing/index.js'
 import type { Row } from '../../src/reading/index.js'
 import { compileShadow } from '../../src/shadow/index.js'
 
-// --- harness ----------------------------------------------------------------
-
-type Facts = Record<string, Row[]>
-
-const key = (row: Row): string => row.map((v) => `${typeof v}:${v}`).join('')
-
-/** Candidate rows of one relation, keyed so they can be set-compared but kept
- *  as real `Row`s — a seed row has to carry the column's JS type, not a
- *  stringified shadow of it. */
-type RowSet = Map<string, Row>
-
-/** Live (net-positive) rows of one relation. */
-function liveRows(source: string, facts: Facts, rel: string): RowSet {
-  const counts = new Map<string, number>()
-  const rows: RowSet = new Map()
-  executeProgram(
-    parseProgram(source, { grammarSource: 'fwd.dl' }),
-    new Map(Object.entries(facts)),
-    {},
-    (r, row, diff) => {
-      if (r !== rel) return
-      const k = key(row)
-      counts.set(k, (counts.get(k) ?? 0) + diff)
-      rows.set(k, [...row])
-    },
-  )
-  const out: RowSet = new Map()
-  for (const [k, n] of counts) if (n > 0) out.set(k, rows.get(k)!)
-  return out
-}
-
-/** Run the compiled shadow program and read the candidate EDB retractions
- *  (and insertions) at the write frontier. */
-function backward(
-  source: string,
-  facts: Facts,
-  seedRel: string,
-  seedRow: Row,
-): { del: Map<string, RowSet>; ins: Map<string, RowSet> } {
-  const program = parseProgram(source, { grammarSource: 'fwd.dl' })
-  const shadow = compileShadow(program)
-  const shadowProgram = parseProgram(shadow.source, { grammarSource: 'shadow.dl' })
-  const edbNames = new Set(program.edbs.map((d) => d.name))
-
-  const edbFacts = new Map<string, Row[]>(Object.entries(facts))
-  edbFacts.set(`Seed_${seedRel}`, [seedRow])
-
-  const counts = new Map<string, Map<string, number>>()
-  const rows = new Map<string, RowSet>()
-  executeProgram(shadowProgram, edbFacts, {}, (rel, row, diff) => {
-    const m = counts.get(rel) ?? new Map<string, number>()
-    const k = key(row)
-    m.set(k, (m.get(k) ?? 0) + diff)
-    counts.set(rel, m)
-    const rs = rows.get(rel) ?? new Map()
-    rs.set(k, [...row])
-    rows.set(rel, rs)
-  })
-
-  const collect = (prefix: string): Map<string, RowSet> => {
-    const out = new Map<string, RowSet>()
-    for (const [rel, m] of counts) {
-      if (!rel.startsWith(prefix)) continue
-      const base = rel.slice(prefix.length)
-      if (!edbNames.has(base)) continue // intermediate IDB channel, not a write target
-      const live: RowSet = new Map()
-      for (const [k, n] of m) if (n > 0) live.set(k, rows.get(rel)!.get(k)!)
-      if (live.size > 0) out.set(base, live)
-    }
-    return out
-  }
-  return { del: collect('Del_'), ins: collect('Ins_') }
-}
-
-const countCandidates = (c: Map<string, RowSet>): number => {
-  let n = 0
-  for (const rows of c.values()) n += rows.size
-  return n
-}
-
-/** Apply candidate retractions to a fact set. */
-function applyDeletes(facts: Facts, del: Map<string, RowSet>): Facts {
-  const out: Facts = {}
-  for (const [rel, rows] of Object.entries(facts)) {
-    const drop = del.get(rel)
-    out[rel] = drop ? rows.filter((r) => !drop.has(key(r))) : [...rows]
-  }
-  return out
-}
-
-const subset = (a: RowSet, b: RowSet): boolean => {
-  for (const x of a.keys()) if (!b.has(x)) return false
-  return true
-}
-
-/** Dedupe rows — Datalog is set-semantics, and duplicate input rows would
- *  make "delete this fact" ambiguous in a way that isn't about the compiler. */
-function dedupe(facts: Facts): Facts {
-  const out: Facts = {}
-  for (const [rel, rows] of Object.entries(facts)) {
-    const seen = new Map<string, Row>()
-    for (const r of rows) seen.set(key(r), r)
-    out[rel] = [...seen.values()]
-  }
-  return out
-}
+import {
+  applyDeletes,
+  backward,
+  countCandidates,
+  dedupe,
+  deleteToFixpoint,
+  type Facts,
+  key,
+  liveRows,
+  subset,
+} from './_harness.js'
 
 // --- program shapes ---------------------------------------------------------
 
@@ -397,6 +302,51 @@ Visible(x) :- Item(x), !Hidden(x).
       ),
       { numRuns: 60 },
     )
+  })
+})
+
+describe('negation re-derives', () => {
+  // Found by the program fuzzer, minimised. The negated atom points at another
+  // tuple of the *same* relation, so the one fact supporting the target is
+  // simultaneously the fact blocking a second derivation. Retract it and the
+  // target comes straight back.
+  //
+  //   E0 = {(0,0,1), (0,1,1)}
+  //   via (0,0,1): d=0, !E0(0,0,0) holds  → derives I0(0)
+  //   via (0,1,1): d=1, !E0(0,0,1) fails  → blocked, by the fact above
+  //
+  // This is why one backward pass is not the general law: `put` is sound (the
+  // candidate really did support the row) but not idempotent under negation.
+  const SOURCE = `\
+.in
+.decl E0(a: number, b: number, c: number)
+.input E0.csv
+
+.printsize
+.decl I0(a: number)
+
+.rule
+I0(a) :- E0(a, d, b), !E0(a, a, d).
+`
+  const FACTS: Facts = { E0: [[0, 0, 1], [0, 1, 1]] }
+
+  it('a single pass proposes a sound candidate that does not stick', () => {
+    expect(liveRows(SOURCE, FACTS, 'I0').has(key([0]))).toBe(true)
+
+    const { del } = backward(SOURCE, FACTS, 'I0', [0])
+    // Exactly one candidate, and it genuinely supports the row.
+    expect(countCandidates(del)).toBe(1)
+    expect([...del.get('E0')!.values()]).toEqual([[0, 0, 1]])
+
+    // …yet applying it brings the target back.
+    const after = liveRows(SOURCE, applyDeletes(FACTS, del), 'I0')
+    expect(after.has(key([0]))).toBe(true)
+  })
+
+  it('iterating to a fixpoint removes it, in more than one round', () => {
+    const r = deleteToFixpoint(SOURCE, FACTS, 'I0', [0])
+    expect(r.removed).toBe(true)
+    expect(r.rounds).toBeGreaterThan(1)
   })
 })
 

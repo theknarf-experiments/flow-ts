@@ -65,11 +65,25 @@ export interface ShadowRefusal {
   reason: string
 }
 
+export type ShadowChannel = 'del' | 'ins' | 'upd'
+
 export interface ShadowOptions {
   /** Head relation → the policy for inverting it. Overrides a `.put` directive
    *  on the relation's declaration, so a caller can try a policy without
    *  editing the program. */
   put?: Record<string, PutPolicy>
+  /** Which views can be written to. Omitted means all of them.
+   *
+   *  This is not free to leave open. A shadow rule replays its rule's body, so
+   *  it forces joins — and therefore indexes — on relations the forward program
+   *  never needed indexed that way. Measured on a flow-md-shaped program, that
+   *  roughly doubles the cost of ordinary forward maintenance, which is paid
+   *  continuously and by readers who never write. A vault with fifty views and
+   *  one editable table should say so. */
+  views?: readonly string[]
+  /** Which request channels to build. Omitted means all three. Deletion is the
+   *  dearest, so a consumer that only rewrites cells can skip it. */
+  channels?: readonly ShadowChannel[]
 }
 
 export interface ShadowProgram {
@@ -121,7 +135,12 @@ export function compileShadow(
   // A request enters on a view, so every IDB gets a seed. It has to become an
   // EDB of the shadow program, which means real attributes: `.decl H()` (arity
   // inferred from the rules) carries nothing to build a fact channel from.
+  const wantView = (name: string): boolean => !options.views || options.views.includes(name)
+  const wantChannel = (c: ShadowChannel): boolean =>
+    !options.channels || options.channels.includes(c)
+
   for (const decl of program.idbs) {
+    if (!wantView(decl.name)) continue
     const idb = declOf.get(decl.name)!
     if (idb.attributes.length === 0) {
       const why = inferred.unresolved.find((u) => u.rel === decl.name)?.reason
@@ -135,24 +154,30 @@ export function compileShadow(
     }
     seeds.push(idb.name)
     const vars = seedVars(idb).join(', ')
-    rules.push({
-      headRel: DEL_PREFIX + idb.name,
-      needs: [],
-      text: `${DEL_PREFIX}${idb.name}(${vars}) :- ${SEED_PREFIX}${idb.name}(${vars}).`,
-    })
+    if (wantChannel('del')) {
+      rules.push({
+        headRel: DEL_PREFIX + idb.name,
+        needs: [],
+        text: `${DEL_PREFIX}${idb.name}(${vars}) :- ${SEED_PREFIX}${idb.name}(${vars}).`,
+      })
+    }
     // The update channel carries the old tuple followed by its replacement, so
     // its arity is 2n and the seed's decl needs two sets of attribute names.
     const pair = updVars(idb).join(', ')
-    rules.push({
-      headRel: UPD_PREFIX + idb.name,
-      needs: [],
-      text: `${UPD_PREFIX}${idb.name}(${pair}) :- ${SEED_UPD_PREFIX}${idb.name}(${pair}).`,
-    })
-    rules.push({
-      headRel: INS_PREFIX + idb.name,
-      needs: [],
-      text: `${INS_PREFIX}${idb.name}(${vars}) :- ${SEED_INS_PREFIX}${idb.name}(${vars}).`,
-    })
+    if (wantChannel('upd')) {
+      rules.push({
+        headRel: UPD_PREFIX + idb.name,
+        needs: [],
+        text: `${UPD_PREFIX}${idb.name}(${pair}) :- ${SEED_UPD_PREFIX}${idb.name}(${pair}).`,
+      })
+    }
+    if (wantChannel('ins')) {
+      rules.push({
+        headRel: INS_PREFIX + idb.name,
+        needs: [],
+        text: `${INS_PREFIX}${idb.name}(${vars}) :- ${SEED_INS_PREFIX}${idb.name}(${vars}).`,
+      })
+    }
   }
 
   const ruleCountByHead = new Map<string, number>()
@@ -859,6 +884,14 @@ function render(
   helpers: ReadonlyArray<{ name: string; attrs: string }>,
 ): string {
   const lines: string[] = []
+  // Seed EDBs are only declared when a surviving rule actually reads them; a
+  // channel that was switched off, or pruned away, leaves no decl behind.
+  const channelsUsed = new Set<string>()
+  for (const r of rules) {
+    for (const m of r.text.matchAll(/\b(Seed_|SeedUpd_|SeedIns_)(\w+)\(/g)) {
+      channelsUsed.add(`${m[1]}${m[2]}`)
+    }
+  }
 
   lines.push('.in')
   for (const edb of program.edbs) {
@@ -871,9 +904,15 @@ function render(
     if (!seeded.has(decl.name)) continue
     // The resolved declaration, so an inferred view gets a typed fact channel.
     const idb = declOf.get(decl.name) ?? decl
-    lines.push(`.decl ${SEED_PREFIX}${idb.name}(${attrsOf(idb)})`)
-    lines.push(`.decl ${SEED_UPD_PREFIX}${idb.name}(${pairAttrsOf(idb)})`)
-    lines.push(`.decl ${SEED_INS_PREFIX}${idb.name}(${attrsOf(idb)})`)
+    if (channelsUsed.has(`${SEED_PREFIX}${idb.name}`)) {
+      lines.push(`.decl ${SEED_PREFIX}${idb.name}(${attrsOf(idb)})`)
+    }
+    if (channelsUsed.has(`${SEED_UPD_PREFIX}${idb.name}`)) {
+      lines.push(`.decl ${SEED_UPD_PREFIX}${idb.name}(${pairAttrsOf(idb)})`)
+    }
+    if (channelsUsed.has(`${SEED_INS_PREFIX}${idb.name}`)) {
+      lines.push(`.decl ${SEED_INS_PREFIX}${idb.name}(${attrsOf(idb)})`)
+    }
   }
 
   lines.push('.printsize')

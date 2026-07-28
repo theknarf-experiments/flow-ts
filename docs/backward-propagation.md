@@ -189,8 +189,41 @@ merely quiet.
 
 ## Cost
 
-Measured, not argued. Sink emissions for one request, batch versus a loaded
-session:
+Measured, not argued — `pnpm -F flow-ts run bench`.
+
+**A request costs the delta, not the database.** Over a flow-md-shaped program:
+
+| tasks | batch | session | speedup |
+| --- | --- | --- | --- |
+| 200 | 8.5ms | 58µs | 146x |
+| 1000 | 35ms | 51µs | 694x |
+| 4000 | 144ms | 51µs | 2814x |
+
+Batch tracks the database because it re-derives everything; the session is flat.
+The protocol's stages, at 1000 tasks: propose 51µs, +verify+commit 126µs (2.5x),
++minimise 231µs (4.6x). All well inside a keystroke.
+
+**Shadow rules are not free when you don't use them.** They derive nothing until
+seeded, but a shadow rule replays its rule's body, so it forces joins — and
+therefore indexes — on relations the forward program never needed indexed that
+way. That roughly *doubles* ordinary forward maintenance, which is paid
+continuously and by readers who never write:
+
+| built | rules | load 2000 tasks | vs none |
+| --- | --- | --- | --- |
+| no shadow rules | 22 | 57ms | 1.0x |
+| every view, every channel | 155 | 140ms | 2.5x |
+| every view, deletes only | 87 | 114ms | 2.0x |
+| one view, every channel | 32 | 71ms | 1.3x |
+| one view, rewrites only | 27 | 66ms | 1.2x |
+
+So it is opt-in: `views` limits which relations get channels, `channels` limits
+which of Del/Ins/Upd get built, and everything unreferenced prunes away. A vault
+with fifty views and one editable table pays 1.2x rather than 2.5x. Request cost
+is flat in data but linear in *program* size, which is the other reason to keep
+the shadow program small.
+
+Sink emissions for one request, batch versus a loaded session:
 
 | database | batch | incremental |
 | --- | --- | --- |

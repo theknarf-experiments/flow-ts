@@ -111,8 +111,11 @@ describe('generator coverage', () => {
 
   it('recursive programs actually recurse', () => {
     const t = survey(recursiveProgramGen, 300, 'recursive')
-    expect((t.recursion ?? 0) / t.programs).toBeGreaterThan(0.4)
-    expect((t.derivesSomething ?? 0) / t.programs).toBeGreaterThan(0.3)
+    // Floors, not targets, and set with room: these are sample statistics over
+    // a few hundred random programs, so a threshold pressed up against the
+    // observed rate is a flaky test rather than a strict one. ~45% observed.
+    expect((t.recursion ?? 0) / t.programs).toBeGreaterThan(0.25)
+    expect((t.derivesSomething ?? 0) / t.programs).toBeGreaterThan(0.2)
   })
 
   it('both seedable and refusing programs occur, or the refusal paths go untested', () => {

@@ -195,14 +195,28 @@ export function openBackwardSession(
     return changes
   }
 
+  const present = (rel: string, row: Row): boolean =>
+    (edbState.get(rel)?.get(keyOf(row))?.n ?? 0) > 0
+
+  /** Add or remove a row, idempotently.
+   *
+   *  A raw `update(rel, row, +1)` on a row that is already there takes its
+   *  multiplicity to 2, and `rows()` still reports it once — so the mirror and
+   *  the graph quietly disagree, and a later rollback leaves the row behind.
+   *  Facts are a set here, so this makes the operation match. */
+  const setRow = (rel: string, row: Row, wanted: boolean): void => {
+    if (present(rel, row) === wanted) return
+    update(rel, row, wanted ? 1 : -1)
+  }
+
   /** Apply changes to the session; `sign = -1` inverts them for a rollback. */
   const applyChanges = (changes: readonly Change[], sign = 1): void => {
     for (const c of changes) {
-      if (c.kind === 'del') update(c.rel, c.row, -sign)
-      else if (c.kind === 'ins') update(c.rel, c.row, sign)
+      if (c.kind === 'del') setRow(c.rel, c.row, sign < 0)
+      else if (c.kind === 'ins') setRow(c.rel, c.row, sign > 0)
       else {
-        update(c.rel, c.row, -sign)
-        update(c.rel, c.newRow!, sign)
+        setRow(c.rel, c.row, sign < 0)
+        setRow(c.rel, c.newRow!, sign > 0)
       }
     }
     session.advance()

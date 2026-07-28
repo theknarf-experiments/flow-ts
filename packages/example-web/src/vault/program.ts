@@ -36,6 +36,7 @@ export const SOURCE = `\
 .in
 .decl MdTask(path: string, line: number, status: string, text: string)
 .decl MdHeading(path: string, line: number, depth: number, text: string)
+.decl MdEstimate(path: string, line: number, hours: number)
 
 .out
 .decl Doc(path: string, title: string)
@@ -44,12 +45,15 @@ export const SOURCE = `\
 .decl Open(path: string, text: string)
 .decl Agenda(title: string, text: string)
 .decl Outline(title: string, depth: number, text: string)
+.decl Effort(path: string, hours: number)
+.put spread(min)
 
 Doc(p, title) :- MdHeading(p, l, 1, title).
 Task(p, s, t) :- MdTask(p, l, s, t).
 Open(p, t) :- MdTask(p, l, "open", t).
 Agenda(title, t) :- Open(p, t), Doc(p, title).
 Outline(title, d, t) :- MdHeading(p, l, d, t), Doc(p, title).
+Effort(p, sum(h)) :- MdEstimate(p, l, h).
 `
 
 export const program = parseProgram(SOURCE, { grammarSource: 'vault.dl' })
@@ -59,13 +63,13 @@ export const SEED_NOTES: Record<string, string> = {
   'work.md': `# Work
 
 ## This week
-- [ ] write the design doc
-- [x] review the benchmark
-- [ ] reply to sam
+- [ ] write the design doc (3h)
+- [x] review the benchmark (1h)
+- [ ] reply to sam (2h)
 `,
   'home.md': `# Home
 
-- [ ] water the plants
-- [ ] book the dentist
+- [ ] water the plants (1h)
+- [ ] book the dentist (1h)
 `,
 }

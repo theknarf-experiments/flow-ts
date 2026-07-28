@@ -17,20 +17,50 @@ export type Row = readonly (string | number)[]
 export interface VaultFacts {
   MdTask: Row[]
   MdHeading: Row[]
+  MdEstimate: Row[]
 }
 
 const TASK = /^(\s*)- \[( |x)\] (.*)$/
 const HEADING = /^(#{1,6}) (.*)$/
+/** A trailing `(3h)` estimate. Kept out of the task's text, so editing the
+ *  text and editing the estimate are separate facts about the same line —
+ *  which is what lets one view rewrite each without disturbing the other. */
+const ESTIMATE = /\s*\((\d+)h\)\s*$/
+
+interface ParsedTask {
+  indent: string
+  status: string
+  text: string
+  hours: number | null
+}
+
+function splitTask(line: string): ParsedTask | null {
+  const m = TASK.exec(line)
+  if (!m) return null
+  const raw = m[3]!
+  const est = ESTIMATE.exec(raw)
+  return {
+    indent: m[1]!,
+    status: m[2] === 'x' ? 'closed' : 'open',
+    text: (est ? raw.slice(0, est.index) : raw).trim(),
+    hours: est ? Number(est[1]) : null,
+  }
+}
+
+const renderTask = (t: ParsedTask): string =>
+  `${t.indent}- [${t.status === 'closed' ? 'x' : ' '}] ${t.text}` +
+  (t.hours === null ? '' : ` (${t.hours}h)`)
 
 /** Lower a set of notes into facts. Line numbers are 1-based. */
 export function parseVault(notes: Record<string, string>): VaultFacts {
-  const facts: VaultFacts = { MdTask: [], MdHeading: [] }
+  const facts: VaultFacts = { MdTask: [], MdHeading: [], MdEstimate: [] }
   for (const [path, source] of Object.entries(notes)) {
     source.split('\n').forEach((line, i) => {
       const no = i + 1
-      const task = TASK.exec(line)
+      const task = splitTask(line)
       if (task) {
-        facts.MdTask.push([path, no, task[2] === 'x' ? 'closed' : 'open', task[3]!])
+        facts.MdTask.push([path, no, task.status, task.text])
+        if (task.hours !== null) facts.MdEstimate.push([path, no, task.hours])
         return
       }
       const heading = HEADING.exec(line)
@@ -65,7 +95,12 @@ export function applyToVault(
     const source = notes[path]
     if (source === undefined) return { reason: `no note "${path}"` }
     const lines = source.split('\n')
-    const rendered = `- [${String(row[2]) === 'closed' ? 'x' : ' '}] ${String(row[3])}`
+    const rendered = renderTask({
+      indent: '',
+      status: String(row[2]),
+      text: String(row[3]),
+      hours: null,
+    })
     const at = Number(row[1])
     if (at > 0 && at <= lines.length) lines.splice(at - 1, 0, rendered)
     else {
@@ -83,11 +118,10 @@ export function applyToVault(
     const lines = source.split('\n')
     const current = lines[line - 1]
     if (current === undefined) return { reason: `${path} has no line ${line}` }
-    const parsed = TASK.exec(current)
+    const parsed = splitTask(current)
     if (!parsed) return { reason: `${path}:${line} is no longer a task` }
     // The fact has to still be what the request thinks it is.
-    const status = parsed[2] === 'x' ? 'closed' : 'open'
-    if (status !== row[2] || parsed[3] !== row[3]) {
+    if (parsed.status !== row[2] || parsed.text !== row[3]) {
       return { reason: `${path}:${line} changed underneath this edit` }
     }
 
@@ -96,10 +130,29 @@ export function applyToVault(
       return { ...notes, [path]: lines.join('\n') }
     }
     if (kind === 'upd' && newRow) {
-      const mark = String(newRow[2]) === 'closed' ? 'x' : ' '
-      lines[line - 1] = `${parsed[1]}- [${mark}] ${String(newRow[3])}`
+      // The estimate is a different fact about this line, so it survives an
+      // edit to the text — read it off the current line rather than dropping it.
+      lines[line - 1] = renderTask({
+        ...parsed,
+        status: String(newRow[2]),
+        text: String(newRow[3]),
+      })
       return { ...notes, [path]: lines.join('\n') }
     }
+  }
+
+  if (rel === 'MdEstimate' && kind === 'upd' && newRow) {
+    const [path, line] = [String(row[0]), Number(row[1])]
+    const source = notes[path]
+    if (source === undefined) return { reason: `no note "${path}"` }
+    const lines = source.split('\n')
+    const parsed = splitTask(lines[line - 1] ?? '')
+    if (!parsed) return { reason: `${path}:${line} is no longer a task` }
+    if (parsed.hours !== Number(row[2])) {
+      return { reason: `${path}:${line} changed underneath this edit` }
+    }
+    lines[line - 1] = renderTask({ ...parsed, hours: Number(newRow[2]) })
+    return { ...notes, [path]: lines.join('\n') }
   }
 
   if (rel === 'MdHeading' && (kind === 'upd' || kind === 'del')) {

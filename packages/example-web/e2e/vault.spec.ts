@@ -286,3 +286,78 @@ test.describe('markdown vault', () => {
     await expect(page.getByTestId('task-review the benchmark')).toBeVisible()
   })
 })
+
+// The one view whose backward direction is a *distribution* rather than a copy.
+// `Effort(path, sum(hours))` — changing a total has to change several facts, and
+// the rule doesn't say how to divide the change. Least change settles most of
+// it, but hours are whole numbers, so a delta that doesn't divide evenly leaves
+// a remainder and something has to decide who takes it. That is the only thing
+// `.put spread(min)` says, and without it the column isn't writable at all.
+test.describe('spreading an aggregate', () => {
+  const work = (page: Page) => page.getByTestId('note-work.md')
+
+  test('a total is derived from the estimates on the lines', async ({ page }) => {
+    await gotoVault(page)
+    // work.md: 3 + 1 + 2
+    await expect(page.getByTestId('effort-input-work.md')).toHaveValue('6')
+    // home.md: 1 + 1
+    await expect(page.getByTestId('effort-input-home.md')).toHaveValue('2')
+  })
+
+  test('an evenly divisible change moves every task by the same amount', async ({ page }) => {
+    await gotoVault(page)
+    const input = page.getByTestId('effort-input-work.md')
+    await input.fill('9')
+    await input.blur()
+
+    // +3 over 3 tasks: one hour each.
+    await expect(work(page)).toContainText('- [ ] write the design doc (4h)')
+    await expect(work(page)).toContainText('- [x] review the benchmark (2h)')
+    await expect(work(page)).toContainText('- [ ] reply to sam (3h)')
+    await expect(page.getByTestId('effort-input-work.md')).toHaveValue('9')
+  })
+
+  test('a remainder lands on the earliest line, as the annotation says', async ({ page }) => {
+    await gotoVault(page)
+    const input = page.getByTestId('effort-input-work.md')
+    await input.fill('8')
+    await input.blur()
+
+    // +2 over 3 tasks: everyone gets 0, and the remainder of 2 goes to the
+    // lowest line number — `.put spread(min)`.
+    await expect(work(page)).toContainText('- [ ] write the design doc (5h)')
+    await expect(work(page)).toContainText('- [x] review the benchmark (1h)')
+    await expect(work(page)).toContainText('- [ ] reply to sam (2h)')
+    // Whatever the split, the total is exactly what was asked for.
+    await expect(page.getByTestId('effort-input-work.md')).toHaveValue('8')
+  })
+
+  test('it works downwards too, and only touches the note edited', async ({ page }) => {
+    await gotoVault(page)
+    const input = page.getByTestId('effort-input-work.md')
+    await input.fill('3')
+    await input.blur()
+
+    await expect(page.getByTestId('effort-input-work.md')).toHaveValue('3')
+    await expect(page.getByTestId('effort-input-home.md')).toHaveValue('2')
+  })
+
+  test('editing an estimate in the markdown flows back to the total', async ({ page }) => {
+    await gotoVault(page)
+    await work(page).fill('# Work\n\n## This week\n- [ ] write the design doc (10h)\n')
+    await expect(page.getByTestId('effort-input-work.md')).toHaveValue('10')
+  })
+
+  test('without the annotation the total is not editable at all', async ({ page }) => {
+    await gotoVault(page)
+    await page.getByTestId('vault-program-panel').getByText('Datalog program').click()
+    const source = page.getByTestId('vault-program-source')
+    await source.fill((await source.inputValue()).replace('.put spread(min)', ''))
+    await page.getByTestId('vault-program-rebuild').click()
+
+    // The rule is unchanged and the total still derives — it just cannot be
+    // written through, because nothing says how to divide a change.
+    await expect(page.getByTestId('effort-input-work.md')).toHaveValue('6')
+    await expect(page.getByTestId('effort-input-work.md')).toHaveAttribute('readonly', '')
+  })
+})

@@ -30,9 +30,9 @@ import { type Row, type VaultFacts, applyToVault, parseVault } from './vault/mar
 
 // Only these views are writable. The others are just as derived; they simply
 // aren't opted in, because shadow rules aren't free and most tables are read.
-const store = new Store(program, { writable: ['Task', 'Agenda', 'Outline'] })
+const store = new Store(program, { writable: ['Task', 'Agenda', 'Outline', 'Effort'] })
 
-const EDBS = ['MdTask', 'MdHeading'] as const
+const EDBS = ['MdTask', 'MdHeading', 'MdEstimate'] as const
 const keyOf = (row: Row) => row.map((v) => `${typeof v}:${v}`).join('')
 
 /** Push a new set of facts into the store as a diff, so derivations update
@@ -48,7 +48,7 @@ function syncFacts(prev: VaultFacts, next: VaultFacts): void {
   store.flush()
 }
 
-const EMPTY: VaultFacts = { MdTask: [], MdHeading: [] }
+const EMPTY: VaultFacts = { MdTask: [], MdHeading: [], MdEstimate: [] }
 
 export function VaultDemo() {
   const [notes, setNotes] = useState<Record<string, string>>(SEED_NOTES)
@@ -133,6 +133,7 @@ export function VaultDemo() {
           <TaskTable write={write} />
           <AgendaTable write={write} />
           <OutlineTable write={write} />
+          <EffortTable write={write} />
           {status && (
             <p className="muted" data-testid="vault-status">
               {status}
@@ -209,6 +210,60 @@ function VaultProgramPanel() {
 }
 
 type Write = (what: string, resolve: () => Resolution) => void
+
+/** `Effort(path, sum(hours)) :- MdEstimate(path, line, hours).`
+ *
+ *  The one view whose backward direction is a *distribution* rather than a
+ *  copy. Every other edit here rewrites one fact; changing a total has to
+ *  change several, and how to divide the change between them is not something
+ *  the rule says. Least change settles most of it — everyone moves by the same
+ *  amount — but hours are whole numbers, so a delta that doesn't divide leaves
+ *  a remainder, and *who absorbs it* is a genuine choice. `.put spread(min)`
+ *  makes it the earliest line in the note. */
+function EffortTable({ write }: { write: Write }) {
+  const view = useWritableQuery<readonly [string, number]>(store, 'Effort')
+  const [editing, setEditing] = useState<{ path: string; value: string } | null>(null)
+  const rows = useMemo(() => [...view.rows].sort((a, b) => a[0].localeCompare(b[0])), [view.rows])
+
+  const commit = (row: readonly [string, number]) => {
+    if (!editing || editing.path !== row[0]) return
+    const next = Number(editing.value)
+    setEditing(null)
+    if (!Number.isFinite(next) || next === row[1]) return
+    write(`set ${row[0]} to ${next}h`, () => view.update(row, [row[0], next], { dryRun: true }))
+  }
+
+  return (
+    <section className="card">
+      <h2>Effort</h2>
+      <p className="muted">
+        <code>Effort(path, sum(hours)) :- MdEstimate(path, line, hours).</code> Changing a
+        total has to change several facts, and the rule does not say how to divide it.
+        Least change spreads it evenly; hours are whole numbers, so a remainder goes to one
+        task, and <code>.put spread(min)</code> is what names which — the earliest line.
+      </p>
+      <ul className="tasks" data-testid="effort-list">
+        {rows.map((row) => (
+          <li key={row[0]} data-testid={`effort-${row[0]}`}>
+            <input
+              type="number"
+              aria-label={`total hours for ${row[0]}`}
+              data-testid={`effort-input-${row[0]}`}
+              value={editing?.path === row[0] ? editing.value : row[1]}
+              readOnly={!view.canWriteColumn(1)}
+              onChange={(e) => setEditing({ path: row[0], value: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commit(row)
+              }}
+              onBlur={() => commit(row)}
+            />
+            <span className="muted">hours across {row[0]}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
 
 /** Column names for a relation, so writability can be reported in the reader's
  *  terms rather than as indices. */

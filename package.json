@@ -11,7 +11,8 @@
     "build": "turbo run build",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
-    "clean": "turbo run clean && rm -rf node_modules/.cache .turbo"
+    "clean": "turbo run clean && rm -rf node_modules/.cache .turbo",
+    "bench": "turbo run bench"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

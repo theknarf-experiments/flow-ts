@@ -20,6 +20,10 @@
       "inputs": ["src/**", "tests/**", "tsconfig.json", "package.json", "vitest.config.ts"],
       "outputs": []
     },
+    "bench": {
+      "dependsOn": ["^build", "build:grammar"],
+      "cache": false
+    },
     "clean": {
       "cache": false
     }

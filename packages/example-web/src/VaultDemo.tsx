@@ -316,6 +316,11 @@ function AgendaTable({ write }: { write: Write }) {
   // outlived the row it belonged to the moment a rename changed those values,
   // and a later row with the same values would inherit it.
   const [editing, setEditing] = useState<{ key: string; value: string } | null>(null)
+  // When a delete can be done more than one way, the choice is the user's.
+  const [choice, setChoice] = useState<{
+    what: string
+    candidates: ReadonlyArray<{ kind: string; rel: string; row: Row; newRow?: Row }>
+  } | null>(null)
   const rows = useMemo(
     () => [...view.rows].sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1])),
     [view.rows],
@@ -338,6 +343,7 @@ function AgendaTable({ write }: { write: Write }) {
         destinations: editing the title rewrites a heading, editing the text rewrites a task
         line. Both are editable here — a document's title is shared by every task in it, so
         renaming one row renames the others too.{' '}
+        Removing is where they part company — see below.{' '}
         <span data-testid="agenda-writable">
           editable: {view.writableColumns.map((i) => columnNames('Agenda')[i] ?? i).join(', ') || 'none'}
         </span>
@@ -371,10 +377,55 @@ function AgendaTable({ write }: { write: Write }) {
                   />
                 </td>
               ))}
+              <td>
+                <button
+                  type="button"
+                  data-testid={`agenda-remove-${row[1]}`}
+                  onClick={() => {
+                    const r = view.remove(row, { dryRun: true, requireUnambiguous: true })
+                    if (r.status === 'ambiguous') {
+                      setChoice({ what: `remove "${row[1]}"`, candidates: r.candidates })
+                      return
+                    }
+                    write(`removed "${row[1]}"`, () => r)
+                  }}
+                >
+                  remove
+                </button>
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
+      {choice && (
+        <div className="choice" data-testid="agenda-choice">
+          <p className="muted">
+            <strong>{choice.what}</strong> can be done {choice.candidates.length} ways. The
+            engine found them all and will not pick for you — removing the heading is a
+            perfectly good way to make the row stop existing, and almost certainly not what
+            you meant.
+          </p>
+          {choice.candidates.map((c) => (
+            <button
+              type="button"
+              key={`${c.rel}/${c.row.join(',')}`}
+              data-testid={`agenda-choice-${c.rel}`}
+              onClick={() => {
+                setChoice(null)
+                write(choice.what, () => ({ status: 'ok', changes: [c as never], rounds: 1 }))
+              }}
+            >
+              {c.rel === 'MdTask' ? 'remove the task line' : 'remove the document heading'}{' '}
+              <span className="muted">
+                {c.rel}({c.row.join(', ')})
+              </span>
+            </button>
+          ))}
+          <button type="button" data-testid="agenda-choice-cancel" onClick={() => setChoice(null)}>
+            cancel
+          </button>
+        </div>
+      )}
     </section>
   )
 }

@@ -559,3 +559,5 @@ ul.nodes button:hover {
 .agenda input[readonly] { opacity: 0.6; cursor: not-allowed; }
 .task-add { display: flex; gap: 0.4rem; margin-top: 0.6rem; }
 .task-add input { flex: 1; font: inherit; padding: 0.25rem 0.4rem; }
+.choice { margin-top: 0.6rem; padding: 0.6rem; border: 1px solid currentColor; border-radius: 4px; opacity: 0.95; }
+.choice button { display: block; margin: 0.3rem 0; text-align: left; }

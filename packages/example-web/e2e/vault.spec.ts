@@ -185,6 +185,57 @@ test.describe('markdown vault', () => {
     await expect(page.getByTestId('task-buy stamps')).toHaveCount(0)
   })
 
+  // Removing is the one operation here with more than one right answer, and
+  // the engine refuses to pick. Deleting the heading really does make the row
+  // stop existing — there would be no title to file it under — and it is
+  // almost certainly not what anyone meant. Surfacing both is the point: the
+  // candidate set is data, not a static verdict.
+  test('removing an agenda row offers the choice rather than guessing', async ({ page }) => {
+    await gotoVault(page)
+    await page.getByTestId('agenda-remove-water the plants').click()
+
+    const choice = page.getByTestId('agenda-choice')
+    await expect(choice).toBeVisible()
+    await expect(page.getByTestId('agenda-choice-MdTask')).toBeVisible()
+    await expect(page.getByTestId('agenda-choice-MdHeading')).toBeVisible()
+    // Nothing has happened yet.
+    await expect(home(page)).toContainText('- [ ] water the plants')
+    await expect(home(page)).toContainText('# Home')
+  })
+
+  test('choosing the task line removes just that line', async ({ page }) => {
+    await gotoVault(page)
+    await page.getByTestId('agenda-remove-water the plants').click()
+    await page.getByTestId('agenda-choice-MdTask').click()
+
+    await expect(home(page)).not.toContainText('water the plants')
+    // The heading, and therefore every other row of that document, survives.
+    await expect(home(page)).toContainText('# Home')
+    await expect(page.getByTestId('agenda-book the dentist')).toBeVisible()
+  })
+
+  test('choosing the heading is offered, and does what it says', async ({ page }) => {
+    await gotoVault(page)
+    await page.getByTestId('agenda-remove-water the plants').click()
+    await page.getByTestId('agenda-choice-MdHeading').click()
+
+    // The task survives; the *title* is gone, so nothing from that note can be
+    // filed on the agenda any more. Drastic, correct, and the user's call.
+    await expect(home(page)).toContainText('- [ ] water the plants')
+    await expect(home(page)).not.toContainText('# Home')
+    await expect(page.getByTestId('agenda-book the dentist')).toHaveCount(0)
+    // The task table is unaffected — it never depended on a title.
+    await expect(page.getByTestId('task-water the plants')).toBeVisible()
+  })
+
+  test('cancelling changes nothing', async ({ page }) => {
+    await gotoVault(page)
+    await page.getByTestId('agenda-remove-water the plants').click()
+    await page.getByTestId('agenda-choice-cancel').click()
+    await expect(page.getByTestId('agenda-choice')).toHaveCount(0)
+    await expect(home(page)).toContainText('- [ ] water the plants')
+  })
+
   test('editing the markdown directly flows the other way', async ({ page }) => {
     await gotoVault(page)
     await expect(page.getByTestId('task-buy milk')).toHaveCount(0)

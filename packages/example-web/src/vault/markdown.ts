@@ -102,7 +102,7 @@ export function applyToVault(
     }
   }
 
-  if (rel === 'MdHeading' && kind === 'upd' && newRow) {
+  if (rel === 'MdHeading' && (kind === 'upd' || kind === 'del')) {
     const [path, line] = [String(row[0]), Number(row[1])]
     const source = notes[path]
     if (source === undefined) return { reason: `no note "${path}"` }
@@ -110,7 +110,8 @@ export function applyToVault(
     const parsed = HEADING.exec(lines[line - 1] ?? '')
     if (!parsed) return { reason: `${path}:${line} is no longer a heading` }
     if (parsed[2] !== row[3]) return { reason: `${path}:${line} changed underneath this edit` }
-    lines[line - 1] = `${'#'.repeat(Number(newRow[2]))} ${String(newRow[3])}`
+    if (kind === 'del') lines.splice(line - 1, 1)
+    else lines[line - 1] = `${'#'.repeat(Number(newRow![2]))} ${String(newRow![3])}`
     return { ...notes, [path]: lines.join('\n') }
   }
 

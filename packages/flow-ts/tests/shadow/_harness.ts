@@ -8,7 +8,7 @@
 import { parseProgram } from '@flow-ts/parsing'
 import { executeProgram } from '../../src/executing/index.js'
 import type { Row } from '../../src/reading/index.js'
-import { compileShadow } from '../../src/shadow/index.js'
+import { type ShadowOptions, compileShadow } from '../../src/shadow/index.js'
 
 export type Facts = Record<string, Row[]>
 
@@ -57,9 +57,10 @@ export function backward(
   seedRel: string,
   seedRow: Row,
   newRow?: Row,
+  options: ShadowOptions = {},
 ): Candidates {
   const program = parseProgram(source, { grammarSource: 'fwd.dl' })
-  const shadow = compileShadow(program)
+  const shadow = compileShadow(program, options)
   const shadowProgram = parseProgram(shadow.source, { grammarSource: 'shadow.dl' })
   const edbNames = new Set(program.edbs.map((d) => d.name))
 

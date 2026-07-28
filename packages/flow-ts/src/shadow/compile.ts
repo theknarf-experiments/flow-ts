@@ -34,6 +34,7 @@
 
 import {
   type Atom,
+  type FLRule,
   type HeadArg,
   type Predicate,
   type Program,
@@ -57,6 +58,22 @@ export interface ShadowRefusal {
   reason: string
 }
 
+/** A semantics the compiler cannot infer, supplied per head relation.
+ *
+ *  `spread` inverts a linear aggregate by least change: every member moves by
+ *  ⌊Δ/n⌋, and the integer remainder goes to one designated member. Over the
+ *  reals the distribution is forced (minimising Σδᵢ² subject to Σδᵢ = Δ gives
+ *  δᵢ = Δ/n), but flow-ts division truncates, so the residual is real and its
+ *  owner is a genuine choice — which is exactly what this names. */
+export type PutPolicy =
+  | { kind: 'none' }
+  | { kind: 'spread'; residual: 'min' | 'max' }
+
+export interface ShadowOptions {
+  /** Head relation → the policy for inverting it. */
+  put?: Record<string, PutPolicy>
+}
+
 export interface ShadowProgram {
   /** The original program plus shadow decls and rules, as `.dl` source. */
   source: string
@@ -76,10 +93,18 @@ interface ShadowRule {
 }
 
 /** Compile the backward direction of `program` into shadow rules. */
-export function compileShadow(program: Program): ShadowProgram {
+export function compileShadow(
+  program: Program,
+  options: ShadowOptions = {},
+): ShadowProgram {
   const refusals: ShadowRefusal[] = []
   const rules: ShadowRule[] = []
   const seeds: string[] = []
+  const policies = options.put ?? {}
+  // Helper relations generated for aggregate inverses, declared alongside the
+  // shadow relations. Kept separate because they are plain IDBs, not channels.
+  const helpers: Array<{ name: string; attrs: string }> = []
+  let helperSeq = 0
 
   const edbNames = new Set(program.edbs.map((d) => d.name))
   const declOf = new Map<string, RelDecl>()
@@ -119,6 +144,26 @@ export function compileShadow(program: Program): ShadowProgram {
     // The head has to be invertible into an atom: plain variables (and bare
     // constants) only. Arithmetic and aggregation are where the forward
     // direction stops being a copy, and they need annotation, not inference.
+    const policy = policies[rule.head.name]
+    if (policy?.kind === 'none') continue
+
+    if (policy?.kind === 'spread') {
+      const emitted = compileSpread(
+        rule,
+        policy,
+        declOf,
+        () => `Sh${helperSeq++}`,
+        helpers,
+        rules,
+      )
+      if (emitted) continue
+      refusals.push({
+        subject,
+        reason: `"${rule.head.name}" has a spread policy but its head is not an aggregate over a single member column`,
+      })
+      continue
+    }
+
     const headArgs: string[] = []
     let headOk = true
     for (const ha of rule.head.headArguments) {
@@ -231,11 +276,155 @@ export function compileShadow(program: Program): ShadowProgram {
   }
 
   const live = prune(rules)
+  const liveHeads = new Set(live.map((r) => r.headRel))
   return {
-    source: render(program, live, seeds, edbNames, declOf),
+    source: render(
+      program,
+      live,
+      seeds,
+      declOf,
+      helpers.filter((h) => liveHeads.has(h.name)),
+    ),
     seeds,
     refusals,
   }
+}
+
+/** Invert a linear aggregate by least change plus a named residual.
+ *
+ *  For `Total(p, sum(h)) :- Hours(p, w, h).` this generates, with `Sh<N>` a
+ *  fresh prefix per rule:
+ *
+ *    Sh0(p, count(w))      :- Hours(p, w, h).          -- group size
+ *    Sh1(p, s2 - s)        :- Upd_Total(p, s, p, s2).  -- requested delta
+ *    Sh2(p, d / n)         :- Sh1(p, d), Sh0(p, n).    -- share (truncating)
+ *    Sh3(p, q * n)         :- Sh2(p, q), Sh0(p, n).
+ *    Sh4(p, d - m)         :- Sh1(p, d), Sh3(p, m).    -- residual
+ *    Sh5(p, min(w))        :- Hours(p, w, h).          -- who absorbs it
+ *    Upd_Hours(p, w, h, p, w, h + q)     :- …, w != a.
+ *    Upd_Hours(p, w, h, p, w, h + q + r) :- …, Sh5(p, w).
+ *
+ *  One operation per rule because arithmetic is flat and left-to-right, and a
+ *  computed value has to sit in the head — see
+ *  tests/executing/comparisons.test.ts.
+ *
+ *  Returns false when the rule isn't a shape this can invert: the head must be
+ *  group-by variables plus one aggregate over a body variable, and the atom
+ *  supplying it must have exactly one remaining column to identify members by
+ *  (otherwise "the lowest member" doesn't name a unique tuple). */
+function compileSpread(
+  rule: FLRule,
+  policy: Extract<PutPolicy, { kind: 'spread' }>,
+  declOf: ReadonlyMap<string, RelDecl>,
+  freshHelper: () => string,
+  helpers: Array<{ name: string; attrs: string }>,
+  out: ShadowRule[],
+): boolean {
+  // Head must be: plain group-by variables, then exactly one aggregate.
+  const groupBy: string[] = []
+  let agg: { op: string; variable: string } | null = null
+  for (const ha of rule.head.headArguments) {
+    if (ha.kind === 'Var') {
+      if (agg) return false // group-by column after the aggregate
+      groupBy.push(ha.name)
+      continue
+    }
+    if (ha.kind !== 'Aggregation' || agg) return false
+    const vars = ha.aggregation.vars()
+    if (vars.length !== 1) return false
+    agg = { op: ha.aggregation.operator, variable: vars[0]! }
+  }
+  if (!agg || agg.op !== 'Sum') return false
+
+  // The single positive atom supplying the aggregated variable.
+  const atoms = rule.rhs.filter((p) => p.kind === 'Atom')
+  if (atoms.length !== 1) return false
+  const pred = atoms[0]!
+  if (pred.kind !== 'Atom') return false
+  const atom = pred.atom
+  const args = atom.args.map(atomArgToString)
+  if (!atom.args.every((a) => a.kind === 'Var')) return false
+  if (!args.includes(agg.variable)) return false
+
+  // Members are identified by whatever column is neither grouped nor summed.
+  const memberCols = args.filter((a) => a !== agg.variable && !groupBy.includes(a))
+  if (memberCols.length !== 1) return false
+  const member = memberCols[0]!
+
+  const decl = declOf.get(atom.name)
+  if (!decl || decl.attributes.length !== args.length) return false
+
+  const g = groupBy.join(', ')
+  const gAttrs = groupBy
+    .map((v) => {
+      const i = args.indexOf(v)
+      return `${v}: ${dataTypeToString(decl.attributes[i]!.dataType)}`
+    })
+    .join(', ')
+  const memberType = dataTypeToString(decl.attributes[args.indexOf(member)]!.dataType)
+  const num = 'number'
+
+  const size = freshHelper()
+  const delta = freshHelper()
+  const share = freshHelper()
+  const prod = freshHelper()
+  const rem = freshHelper()
+  const absorb = freshHelper()
+
+  helpers.push(
+    { name: size, attrs: `${gAttrs}, n: ${num}` },
+    { name: delta, attrs: `${gAttrs}, d: ${num}` },
+    { name: share, attrs: `${gAttrs}, q: ${num}` },
+    { name: prod, attrs: `${gAttrs}, m: ${num}` },
+    { name: rem, attrs: `${gAttrs}, r: ${num}` },
+    { name: absorb, attrs: `${gAttrs}, a: ${memberType}` },
+  )
+
+  const body = renderAtom(atom)
+  const req = `${UPD_PREFIX}${rule.head.name}(${g}, s, ${g}, s2)`
+  const need = [UPD_PREFIX + rule.head.name]
+
+  out.push(
+    { headRel: size, needs: [], text: `${size}(${g}, count(${member})) :- ${body}.` },
+    { headRel: delta, needs: need, text: `${delta}(${g}, s2 - s) :- ${req}.` },
+    {
+      headRel: share,
+      needs: [delta, size],
+      text: `${share}(${g}, d / n) :- ${delta}(${g}, d), ${size}(${g}, n).`,
+    },
+    {
+      headRel: prod,
+      needs: [share, size],
+      text: `${prod}(${g}, q * n) :- ${share}(${g}, q), ${size}(${g}, n).`,
+    },
+    {
+      headRel: rem,
+      needs: [delta, prod],
+      text: `${rem}(${g}, d - m) :- ${delta}(${g}, d), ${prod}(${g}, m).`,
+    },
+    {
+      headRel: absorb,
+      needs: [],
+      text: `${absorb}(${g}, ${policy.residual === 'min' ? 'min' : 'max'}(${member})) :- ${body}.`,
+    },
+    {
+      headRel: UPD_PREFIX + atom.name,
+      needs: [share, absorb],
+      text:
+        `${UPD_PREFIX}${atom.name}(${args.join(', ')}, ${args
+          .map((a) => (a === agg.variable ? `${a} + q` : a))
+          .join(', ')}) :- ${body}, ${share}(${g}, q), ${absorb}(${g}, a), ${member} != a.`,
+    },
+    {
+      headRel: UPD_PREFIX + atom.name,
+      needs: [share, rem, absorb],
+      text:
+        `${UPD_PREFIX}${atom.name}(${args.join(', ')}, ${args
+          .map((a) => (a === agg.variable ? `${a} + q + r` : a))
+          .join(', ')}) :- ${body}, ${share}(${g}, q), ${rem}(${g}, r), ${absorb}(${g}, ${member}).`,
+    },
+  )
+  return true
 }
 
 // --- helpers ----------------------------------------------------------------
@@ -349,8 +538,8 @@ function render(
   program: Program,
   rules: readonly ShadowRule[],
   seeds: readonly string[],
-  edbNames: ReadonlySet<string>,
   declOf: ReadonlyMap<string, RelDecl>,
+  helpers: ReadonlyArray<{ name: string; attrs: string }>,
 ): string {
   const lines: string[] = []
 
@@ -375,7 +564,10 @@ function render(
   // One decl per shadow relation actually derived. Attributes are copied from
   // the relation being shadowed where they exist; an untyped source stays
   // untyped and the arity is inferred from the shadow rules, as usual.
+  for (const h of helpers) lines.push(`.decl ${h.name}(${h.attrs})`)
+  const helperNames = new Set(helpers.map((h) => h.name))
   for (const rel of new Set(rules.map((r) => r.headRel))) {
+    if (helperNames.has(rel)) continue
     const base = rel.slice(rel.indexOf('_') + 1)
     const decl = declOf.get(base)
     const typed = decl && decl.attributes.length > 0
@@ -386,10 +578,6 @@ function render(
       : ''
     lines.push(`.decl ${rel}(${attrs})`)
   }
-  // Every EDB is also a *destination*, so its Del_/Ins_ channels are IDBs of
-  // the shadow program — nothing extra to declare beyond the loop above.
-  void edbNames
-
   lines.push('.rule')
   for (const rule of program.rules) lines.push(rule.toString())
   for (const rule of rules) lines.push(rule.text)

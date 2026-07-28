@@ -18,6 +18,7 @@ import { ArithmeticArgument, type FactorArgument } from './arithmetic.js'
 import {
   type TransformationFlow,
   type HeadProjection,
+  transformationFlowToString,
 } from './flow.js'
 import {
   type Transformation,
@@ -124,10 +125,19 @@ export class RuleQueryPlan {
         (_, i) => new AtomArgumentSignature(sentinelAtom, i),
       )
 
+      // The name has to encode the projections, not just the input. Two rules
+      // over the same body can differ only in their heads —
+      //   P(0, b) :- A(b).
+      //   Q(b, 0) :- A(b).
+      // — and a bare constant contributes no variable, so both reduce to the
+      // same intermediate (`b`). Naming the post-map after its input alone made
+      // them collide, and one rule's projections were applied to both.
       const postMapOutput = new Collection(
         {
           kind: 'UnaryTransformationOutput',
-          name: `HeadArith(${transformationOutput(lastTransformation).signature.name})`,
+          name:
+            `HeadArith(${transformationOutput(lastTransformation).signature.name})` +
+            transformationFlowToString(flow),
         },
         [],
         valueSigs,

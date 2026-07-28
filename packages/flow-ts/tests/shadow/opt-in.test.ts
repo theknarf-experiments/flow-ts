@@ -2,9 +2,14 @@
 //
 // Shadow rules replay their rule's body, which forces joins — and therefore
 // indexes — on relations the forward program never needed indexed that way.
-// Measured on a flow-md-shaped program that roughly doubles ordinary forward
-// maintenance, and that cost is paid continuously, by readers who never write.
-// So scope is not a tuning knob to be left at its most expensive default.
+// Measured on a flow-md-shaped program that is about 1.8x to stand the graph up
+// and about 3x per incremental step — the latter on a base of a few
+// microseconds and flat in data size, since the extra operators fire against an
+// empty seed and emit nothing.
+//
+// A constant factor on the cheap operation, then, rather than a tax on
+// everything. The reason to scope is proportion: fifty views and one editable
+// table means paying for forty-nine nobody will write through.
 //
 // The two entry points want different things:
 //
@@ -80,7 +85,7 @@ describe('openBackwardSession refuses to guess', () => {
       expect.unreachable()
     } catch (e) {
       const msg = (e as Error).message
-      expect(msg).toMatch(/doubles forward maintenance/i)
+      expect(msg).toMatch(/costs about 1\.8x to load/i)
       expect(msg).toMatch(/views: 'all'/)
     }
   })

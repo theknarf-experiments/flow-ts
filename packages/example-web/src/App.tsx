@@ -19,9 +19,10 @@ import { RelationTable } from './components/RelationTable.js'
 // One store per app. Seeded outside the React tree so HMR / strict-mode
 // double-mounts don't try to spin up a second graph.
 // `ICanReach` is opted in as writable; nothing else is. Shadow rules force
-// joins on the relations they read, which roughly doubles ordinary forward
-// maintenance, so a view only carries them if someone is going to write
-// through it. Nothing is compiled until an edit is actually made.
+// joins on the relations they read, which costs about 1.8x to stand the graph
+// up and about 3x per incremental step, so a view only carries them if someone
+// is going to write through it. Nothing is compiled until an edit is actually
+// made.
 const store = new Store(initialProgram, { writable: ['ICanReach'] })
 const persons = store.collection<readonly [number, string]>('Person')
 const me = store.collection<readonly [number]>('Me')

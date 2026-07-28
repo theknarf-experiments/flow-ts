@@ -86,25 +86,30 @@ it('1. what shadow rules cost when nobody writes', () => {
     const loadPlain = time(() => void load(plain, f), { trials: 3, warmup: 1 })
     const loadShadow = time(() => void load(shadow, f), { trials: 3, warmup: 1 })
 
-    // Steady state: one more fact, then advance. This is what a vault does on
-    // every keystroke that changes a parse, and it is the cost that matters
-    // most — it is paid continuously, by readers who never write.
-    const stepPlain = time(
-      () => {
-        const s = load(plain, f)
-        s.update('MdNode', ['extra.md', 999999, 'task-open', 1], 1)
-        s.advance()
-      },
-      { trials: 3, warmup: 1 },
-    )
-    const stepShadow = time(
-      () => {
-        const s = load(shadow, f)
-        s.update('MdNode', ['extra.md', 999999, 'task-open', 1], 1)
-        s.advance()
-      },
-      { trials: 3, warmup: 1 },
-    )
+    // Steady state: one more fact into an *already loaded* graph, then advance.
+    // This is what a vault does on every keystroke that changes a parse, and it
+    // is the cost that matters most — it is paid continuously, by readers who
+    // never write.
+    //
+    // Loading inside the timed closure, which is what this used to do, buries
+    // it. The load dominates, both columns come out at the load's ratio, and
+    // "shadow rules roughly double forward maintenance" gets read off a number
+    // that is mostly the cost of standing the graph up. They are different
+    // costs and only one of them recurs.
+    const step = (program: ReturnType<typeof parseProgram>) => {
+      const s = load(program, f)
+      let i = 0
+      return time(
+        () => {
+          s.update('MdNode', ['extra.md', 900000 + i, 'task-open', 1], 1)
+          s.advance()
+          i++
+        },
+        { trials: 200, warmup: 20 },
+      )
+    }
+    const stepPlain = step(plain)
+    const stepShadow = step(shadow)
 
     rows.push([
       `${n} tasks`,
@@ -120,7 +125,7 @@ it('1. what shadow rules cost when nobody writes', () => {
   const shadowSrc = compileShadow(parseProgram(plainSrc, { grammarSource: 'v.dl' })).source
   table(
     `1. carrying shadow rules  (${countRules(plainSrc)} rules → ${countRules(shadowSrc)})`,
-    ['size', 'load', 'load+shadow', 'x', 'load+step', '+shadow', 'x'],
+    ['size', 'load', 'load+shadow', 'x', 'step', 'step+shadow', 'x'],
     rows,
   )
 })

@@ -76,10 +76,15 @@ export interface ShadowOptions {
    *
    *  This is not free to leave open. A shadow rule replays its rule's body, so
    *  it forces joins — and therefore indexes — on relations the forward program
-   *  never needed indexed that way. Measured on a flow-md-shaped program, that
-   *  roughly doubles the cost of ordinary forward maintenance, which is paid
-   *  continuously and by readers who never write. A vault with fifty views and
-   *  one editable table should say so. */
+   *  never needed indexed that way. Measured on a flow-md-shaped program that
+   *  costs about 1.8x to stand the graph up and about 3x per incremental step —
+   *  the latter on a base of a few microseconds, and flat in data size, because
+   *  the extra operators fire against an empty seed and emit nothing.
+   *
+   *  So it is a constant factor on the cheap thing rather than the ruinous tax
+   *  an earlier version of this comment claimed, and the reason to scope is
+   *  proportion rather than alarm: a vault with fifty views and one editable
+   *  table is paying for forty-nine it will never use. `pnpm bench`. */
   views?: readonly string[] | 'all'
   /** Which request channels to build. Omitted means all three. Deletion is the
    *  dearest, so a consumer that only rewrites cells can skip it. */

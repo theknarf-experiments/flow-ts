@@ -758,39 +758,68 @@ test.describe('what gets compiled', () => {
   })
 })
 
-// One graph held open across a burst of edits, against one graph per edit. The
-// assertion that matters is that they agree — a cheaper wrong answer would be
-// no use — and the count is emissions, meaning work done, so it doesn't move
-// when the machine is busy.
-test.describe('resolving vs maintaining', () => {
-  test('runs a burst both ways and gets the same answer', async ({ page }) => {
+// The engine is incremental in both directions, and that is one idea applied
+// twice: shadow rules are ordinary IDBs, so a warm graph answers a backward
+// request by propagating a delta. The delta is the request itself — one row
+// seeded, read and un-seeded — so the cost is the seed's selectivity on a warm
+// graph and the whole vault on a cold one.
+//
+// The assertion that matters is the shape: warm is flat in the size of the
+// vault and cold is not. Exact emission counts are the engine's business and
+// would make this a change-detector, so it checks the relationship instead.
+test.describe('cost the delta, not the database', () => {
+  const cell = (page: Page, kind: string, n: number) =>
+    page.getByTestId(`session-${kind}-${n}`).textContent().then(Number)
+
+  test('measures the same edits against three vault sizes', async ({ page }) => {
     await gotoOptIn(page)
     await page.getByTestId('session-run').click()
     await expect(page.getByTestId('session-result')).toBeVisible()
-
-    // Four open tasks in the seed notes, each renamed once.
-    await expect(page.getByTestId('session-edits')).toHaveText('4')
-    await expect(page.getByTestId('session-oneshot')).toHaveText('4')
-    await expect(page.getByTestId('session-agree')).toHaveText('same answer')
+    for (const n of [2, 10, 40]) {
+      await expect(page.getByTestId(`session-row-${n}`)).toBeVisible()
+    }
   })
 
-  test('the session is built once, not per edit', async ({ page }) => {
+  test('the warm graph does not care how big the vault is', async ({ page }) => {
     await gotoOptIn(page)
     await page.getByTestId('session-run').click()
-    // Emissions are work actually done, so this is a real number rather than a
-    // placeholder — the claim is only that a request costs the delta.
-    const emitted = Number(await page.getByTestId('session-emissions').textContent())
-    expect(emitted).toBeGreaterThan(0)
+    await expect(page.getByTestId('session-row-40')).toBeVisible()
+
+    // A request costs the delta, so twenty times the data is the same work.
+    expect(await cell(page, 'warm', 40)).toBe(await cell(page, 'warm', 2))
   })
 
-  test('it follows the current facts, so closing a task shortens the burst', async ({
-    page,
-  }) => {
-    await gotoVault(page)
-    await page.getByTestId('task-check-reply to sam').click()
-    await page.getByTestId('vault-subnav').getByText('Opt-in').click()
+  test('and the cold one cares a great deal', async ({ page }) => {
+    await gotoOptIn(page)
     await page.getByTestId('session-run').click()
-    await expect(page.getByTestId('session-edits')).toHaveText('3')
-    await expect(page.getByTestId('session-agree')).toHaveText('same answer')
+    await expect(page.getByTestId('session-row-40')).toBeVisible()
+
+    const small = await cell(page, 'cold', 2)
+    const large = await cell(page, 'cold', 40)
+    // Building the graph and loading every fact, eight times over.
+    expect(large).toBeGreaterThan(small * 5)
+    expect(large).toBeGreaterThan(await cell(page, 'warm', 40))
+  })
+
+  test('both paths give the same answer, which is the part that matters', async ({ page }) => {
+    await gotoOptIn(page)
+    await page.getByTestId('session-run').click()
+    for (const n of [2, 10, 40]) {
+      await expect(page.getByTestId(`session-agree-${n}`)).toHaveText('same')
+    }
+  })
+
+  test('it measures the live program, not a snapshot of it', async ({ page }) => {
+    await gotoOptIn(page)
+    // `Open` is what the burst edits. Take its rule away and the session has
+    // nothing to seed, so the run reports rather than inventing a number.
+    await page.getByTestId('vault-program-panel').getByText('Datalog program').click()
+    const source = page.getByTestId('vault-program-source')
+    await source.fill(
+      (await source.inputValue()).replace('.decl Open(path: string, text: string)', ''),
+    )
+    await page.getByTestId('vault-program-rebuild').click()
+    await page.getByTestId('session-run').click()
+    await expect(page.getByTestId('session-error')).toBeVisible()
   })
 })

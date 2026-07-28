@@ -8,7 +8,7 @@
 // Two decisions are worth stating, because they are not the obvious ones.
 //
 // It is **opt-in per view**. Shadow rules force joins on their sources, which
-// roughly doubles ordinary forward maintenance whether or not anyone writes
+// costs about 1.8x to load and about 3x per step whether or not anyone writes
 // (`pnpm bench`). A UI reads constantly and writes occasionally, so paying that
 // continuously would be exactly the wrong trade.
 //

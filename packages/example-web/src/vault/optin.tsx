@@ -174,144 +174,184 @@ export function CompiledPanel() {
   )
 }
 
-// -- resolving vs maintaining -------------------------------------------
+// -- cost the delta, not the database -----------------------------------
 //
-// `resolveBackward` compiles, runs and throws the graph away per request. The
-// store uses it deliberately: it costs nothing per read, scopes itself to the
-// one view being edited, and works on recursive programs. For a UI that reads
-// constantly and writes rarely, that is the right way round.
+// This engine is incremental in both directions, and that is not two ideas —
+// it is one idea applied twice. Shadow rules are ordinary IDBs, so a graph that
+// holds them answers a backward request the same way it answers a forward
+// query: by propagating a delta.
 //
-// It is also not the point. Compiling the backward direction into Datalog buys
-// something a graph walk cannot: the shadow relations are ordinary IDBs, so
-// they can be *maintained*. `openBackwardSession` holds one graph over
-// `program + shadow(program)` and a request costs the delta rather than a
-// re-run — with the same state answering what the view says, what could have
-// produced a row, and whether applying the answer worked.
+// The delta here is the *request*. A backward request is a single row seeded
+// into a channel, read, and un-seeded — so on a warm graph it costs the seed's
+// selectivity, and on a cold one it costs building the graph and loading every
+// fact first. That is the whole difference, and it is asymptotic rather than
+// constant: warm stays flat as the vault grows, cold does not.
 //
-// The measure here is `emissions()` — sink callbacks, i.e. work actually done —
-// rather than a wall clock, because it is the thing that doesn't change when
-// the machine is busy.
+// `resolveBackward` is the cold path by construction — it compiles, runs and
+// throws the graph away per request. The store uses it, and this panel is the
+// honest accounting of what that costs. Growing the vault is the point: one
+// number stays still and the other doesn't.
 
-interface Burst {
+const SIZES = [2, 10, 40] as const
+
+interface Measured {
+  notes: number
+  facts: number
   edits: number
-  oneShot: number
-  session: number
+  cold: number
+  warm: number
+  build: number
   agree: boolean
 }
 
+/** A synthetic vault, so the cost can be watched against data size without
+ *  making the reader type out forty notes. */
+function syntheticVault(notes: number): Record<string, (string | number)[][]> {
+  const MdTask: (string | number)[][] = []
+  const MdHeading: (string | number)[][] = []
+  const MdEstimate: (string | number)[][] = []
+  const MdTag: (string | number)[][] = []
+  for (let i = 0; i < notes; i++) {
+    const path = `n${i}.md`
+    MdHeading.push([path, 1, 1, `Note ${i}`], [path, 3, 2, 'Week'])
+    MdTag.push([path, 'urgent'])
+    for (let j = 0; j < 5; j++) {
+      MdTask.push([path, 4 + j, 'open', `task ${i}-${j}`])
+      MdEstimate.push([path, 4 + j, j + 1])
+    }
+  }
+  return { MdTask, MdHeading, MdEstimate, MdTag, Vocab: [['urgent'], ['errand'], ['waiting']] }
+}
+
 export function SessionPanel() {
-  const { facts } = useVault()
-  const [burst, setBurst] = useState<Burst | null>(null)
+  const live = useProgram(store)
+  const [rows, setRows] = useState<Measured[]>([])
   const [error, setError] = useState<string | null>(null)
 
   const run = () => {
     setError(null)
     const parse = (src: string) => parseProgram(src, { grammarSource: 'shadow.dl' })
-    const edb: Record<string, (string | number)[][]> = {
-      MdTask: facts.MdTask.map((r) => [...r]),
-      MdHeading: facts.MdHeading.map((r) => [...r]),
-      MdEstimate: facts.MdEstimate.map((r) => [...r]),
-      MdTag: facts.MdTag.map((r) => [...r]),
-      Vocab: [...store.snapshot('Vocab')].map((r) => [...r]),
-    }
-    // Rename every open task, one edit at a time — the shape a UI actually
-    // produces, and the shape that rewards a warm graph.
-    const requests = store
-      .snapshot('Open')
-      .map((row, i) => ({ rel: 'Open', row: [...row], newRow: [row[0]!, `renamed ${i}`] }))
-    if (requests.length === 0) {
-      setError('no open tasks to edit')
-      return
-    }
+    const opts = { parse, views: ['Open'] }
+    const out: Measured[] = []
 
     try {
-      let oneShot = 0
-      const cold: string[] = []
-      for (const req of requests) {
-        const r = resolveBackward(store.program, edb, req, { parse, views: ['Open'] })
-        oneShot++
-        cold.push(r.status === 'ok' ? JSON.stringify(r.changes) : r.status)
-      }
+      for (const notes of SIZES) {
+        const facts = syntheticVault(notes)
+        const load = (s: ReturnType<typeof openBackwardSession>) => {
+          for (const [rel, rs] of Object.entries(facts)) for (const r of rs) s.update(rel, r, +1)
+          s.advance()
+        }
+        // The same eight edits at every size, so the only thing changing is how
+        // much data each one has to be found in.
+        const requests = facts.MdTask!.slice(0, 8).map((r, i) => ({
+          rel: 'Open',
+          row: [r[0]!, r[3]!],
+          newRow: [r[0]!, `renamed ${i}`],
+        }))
 
-      // One graph, held open across the whole burst. Each request seeds, reads
-      // and un-seeds, so the session comes back to exactly where it was.
-      const session = openBackwardSession(store.program, { parse, views: ['Open'] })
-      for (const [rel, rows] of Object.entries(edb)) {
-        for (const row of rows) session.update(rel, row, +1)
-      }
-      session.advance()
-      const before = session.emissions()
-      const warm: string[] = []
-      for (const req of requests) {
-        const changes = session.propose(req)
-        warm.push(changes.length > 0 ? JSON.stringify(changes) : 'none')
-      }
-      const emitted = session.emissions() - before
-      session.close()
+        // Cold: a graph per request, built and thrown away — what
+        // `resolveBackward` does, measured in the same unit as the warm path so
+        // the two numbers can be compared at all.
+        let cold = 0
+        const coldAnswers: string[] = []
+        for (const req of requests) {
+          const s = openBackwardSession(live, opts)
+          load(s)
+          coldAnswers.push(JSON.stringify(s.propose(req)))
+          cold += s.emissions()
+          s.close()
+        }
 
-      setBurst({
-        edits: requests.length,
-        oneShot,
-        session: emitted,
-        // The interesting assertion is not that it is faster but that it is the
-        // same answer. A cheaper wrong answer would be no use.
-        agree: warm.every((w, i) => cold[i]!.includes(w) || w === 'none'),
-      })
+        // Warm: one graph, held open across all of them.
+        const s = openBackwardSession(live, opts)
+        load(s)
+        const build = s.emissions()
+        const warmAnswers = requests.map((req) => JSON.stringify(s.propose(req)))
+        const warm = s.emissions() - build
+        s.close()
+
+        out.push({
+          notes,
+          facts: Object.values(facts).reduce((a, r) => a + r.length, 0),
+          edits: requests.length,
+          cold,
+          warm,
+          build,
+          // The point is not that it is cheaper but that it is the same answer.
+          agree: warmAnswers.every((w, i) => w === coldAnswers[i]),
+        })
+      }
+      setRows(out)
     } catch (e) {
-      // A recursive program is refused outright, and the message says why.
+      // A recursive program is refused outright rather than answered wrongly.
       setError(e instanceof Error ? e.message : String(e))
-      setBurst(null)
+      setRows([])
     }
   }
 
   return (
     <section className="card">
-      <h2>Resolving vs maintaining</h2>
+      <h2>Cost the delta, not the database</h2>
       <p className="muted">
-        Every edit on the other pages calls <code>resolveBackward</code>, which compiles,
-        runs and throws the graph away. That is the right trade for a UI: nothing per read,
-        scoped to the one view being edited, and it works on recursive programs.{' '}
-        <code>openBackwardSession</code> is the other end — one graph over{' '}
-        <code>program + shadow(program)</code>, held open, where a request costs the delta
-        instead of a re-run. The count below is emissions, meaning work done, rather than a
-        clock.
+        The engine is incremental in both directions, and that is one idea applied twice:
+        shadow rules are ordinary IDBs, so a graph holding them answers a backward request by
+        propagating a delta. The delta <em>is</em> the request — one row seeded into a
+        channel, read, and un-seeded — so on a warm graph it costs the seed, and on a cold
+        one it costs loading the whole vault first.
+      </p>
+      <p className="muted">
+        Below: the same eight edits at three vault sizes, counted in emissions, which is work
+        done rather than a clock. <code>resolveBackward</code> — what every edit on the other
+        pages uses — is the cold column.
       </p>
       <button type="button" data-testid="session-run" onClick={run}>
-        rename every open task, both ways
+        measure both ways
       </button>
       {error && (
         <p className="muted" data-testid="session-error">
           {error}
         </p>
       )}
-      {burst && (
-        <ul className="tasks" data-testid="session-result">
-          <li>
-            <span data-testid="session-edits">{burst.edits}</span>
-            <span className="muted">edits, each one a full request</span>
-          </li>
-          <li>
-            <span data-testid="session-oneshot">{burst.oneShot}</span>
-            <span className="muted">graphs built and thrown away by resolveBackward</span>
-          </li>
-          <li>
-            <span data-testid="session-emissions">{burst.session}</span>
-            <span className="muted">emissions through one session, which was built once</span>
-          </li>
-          <li>
-            <span data-testid="session-agree">{burst.agree ? 'same answer' : 'DIVERGED'}</span>
-            <span className="muted">
-              the point is not that it is cheaper but that it agrees
-            </span>
-          </li>
-        </ul>
+      {rows.length > 0 && (
+        <table className="agenda" data-testid="session-result">
+          <thead>
+            <tr>
+              <th>vault</th>
+              <th>facts</th>
+              <th>cold</th>
+              <th>warm</th>
+              <th>build once</th>
+              <th>agree</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.notes} data-testid={`session-row-${r.notes}`}>
+                <td>{r.notes} notes</td>
+                <td>{r.facts}</td>
+                <td data-testid={`session-cold-${r.notes}`}>{r.cold}</td>
+                <td data-testid={`session-warm-${r.notes}`}>{r.warm}</td>
+                <td>{r.build}</td>
+                <td data-testid={`session-agree-${r.notes}`}>{r.agree ? 'same' : 'DIVERGED'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
       <p className="muted">
-        A session refuses a recursive program outright, and says so rather than being subtly
-        wrong: incremental retraction is unsound when derivations can be cyclic, and this
-        session retracts constantly — every proposal un-seeds itself.{' '}
-        <code>resolveBackward</code> recomputes per request and is unaffected, which is why
-        it is what the store uses.
+        The warm column does not move. That is the whole claim — a request costs the delta,
+        so it is flat in the size of the vault, while the cold column grows with it. The
+        standing cost is the other side: carrying shadow rules makes loading the graph about
+        1.8× dearer and an incremental step about 3× dearer, on a base of a few microseconds
+        and flat in data size (<code>pnpm bench</code>). A constant factor on the cheap thing,
+        buying an asymptotic one on the dear thing.
+      </p>
+      <p className="muted">
+        What a session will not do is a recursive program. Incremental retraction is unsound
+        when derivations can be cyclic, and a session retracts constantly — every proposal
+        un-seeds itself, every speculation rolls back — so it refuses rather than being
+        subtly wrong. <code>resolveBackward</code> recomputes per request and is unaffected,
+        which is the one place the cold path is not simply the slower option.
       </p>
     </section>
   )

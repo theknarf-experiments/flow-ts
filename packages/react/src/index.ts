@@ -33,12 +33,17 @@ export interface StoreOptions {
    *
    *  Shadow rules replay their rule's body, which forces joins — and the
    *  indexes behind them — on relations the forward program never needed
-   *  indexed that way; carrying them for every view roughly doubles ordinary
-   *  forward maintenance (`pnpm bench`). A UI reads constantly and writes
-   *  occasionally, so paying that continuously would be the wrong way round.
+   *  indexed that way. Measured, that is about 1.8x to stand the graph up and
+   *  about 3x per incremental step, the latter on a base of a few microseconds
+   *  and flat in data size (`pnpm bench`) — a constant factor on the cheap
+   *  operation, not the doubling of everything an earlier version of this
+   *  comment claimed.
    *
-   *  Nothing is compiled until an edit is actually made. Listing a view here
-   *  costs nothing on its own. */
+   *  In this store it is cheaper still, because nothing is compiled until an
+   *  edit is actually made: each write resolves against a freshly compiled
+   *  shadow program and throws it away, so listing a view here costs nothing
+   *  until someone writes through it. That trade is the opposite one — see the
+   *  note on `#write` — and it is not obviously right for every consumer. */
   writable?: readonly string[]
   /** Backward-direction policies for the cases the rules don't determine — how
    *  to spread an aggregate, which side of a join to write, what to supply for

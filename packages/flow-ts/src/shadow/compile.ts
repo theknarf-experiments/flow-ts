@@ -38,6 +38,7 @@ import {
   type HeadArg,
   type Predicate,
   type Program,
+  type PutPolicy,
   type RelDecl,
   atomArgToString,
   constToString,
@@ -58,19 +59,10 @@ export interface ShadowRefusal {
   reason: string
 }
 
-/** A semantics the compiler cannot infer, supplied per head relation.
- *
- *  `spread` inverts a linear aggregate by least change: every member moves by
- *  ⌊Δ/n⌋, and the integer remainder goes to one designated member. Over the
- *  reals the distribution is forced (minimising Σδᵢ² subject to Σδᵢ = Δ gives
- *  δᵢ = Δ/n), but flow-ts division truncates, so the residual is real and its
- *  owner is a genuine choice — which is exactly what this names. */
-export type PutPolicy =
-  | { kind: 'none' }
-  | { kind: 'spread'; residual: 'min' | 'max' }
-
 export interface ShadowOptions {
-  /** Head relation → the policy for inverting it. */
+  /** Head relation → the policy for inverting it. Overrides a `.put` directive
+   *  on the relation's declaration, so a caller can try a policy without
+   *  editing the program. */
   put?: Record<string, PutPolicy>
 }
 
@@ -100,7 +92,11 @@ export function compileShadow(
   const refusals: ShadowRefusal[] = []
   const rules: ShadowRule[] = []
   const seeds: string[] = []
-  const policies = options.put ?? {}
+  // A `.put` directive on the declaration is the program's own statement of
+  // intent; `options.put` lets a caller override it without editing the source.
+  const policies: Record<string, PutPolicy> = {}
+  for (const idb of program.idbs) if (idb.put) policies[idb.name] = idb.put
+  Object.assign(policies, options.put ?? {})
   // Helper relations generated for aggregate inverses, declared alongside the
   // shadow relations. Kept separate because they are plain IDBs, not channels.
   const helpers: Array<{ name: string; attrs: string }> = []

@@ -27,6 +27,8 @@ import {
 import { type GenProgram, programGen } from './_gen.js'
 import type { Row } from '../../src/reading/index.js'
 
+const PARSE = { parse: (src: string) => parseProgram(src, { grammarSource: 'shadow.dl' }) }
+
 /** Apply resolved changes, independently of the resolver's own helper. */
 function applyChanges(facts: Record<string, Row[]>, changes: readonly Change[]) {
   const out: Record<string, Row[]> = { ...facts }
@@ -265,7 +267,7 @@ describe('generated programs', () => {
           ? { rel: view, row: target, newRow: target.map((v, i) => (i === 0 ? 7000 : v)) }
           : { rel: view, row: target }
 
-        const r = resolveBackward(program, facts, req)
+        const r = resolveBackward(program, facts, req, PARSE)
         outcomes[r.status]++
         if (r.status !== 'ok') return true
 
@@ -291,7 +293,7 @@ describe('generated programs', () => {
         const { p, facts, view, target } = input
         const program = parseProgram(p.source, { grammarSource: 'gen.dl' })
         const bogus = target.map((v) => (typeof v === 'number' ? v + 9000 : `${v}~no`))
-        const r = resolveBackward(program, facts, { rel: view, row: bogus })
+        const r = resolveBackward(program, facts, { rel: view, row: bogus }, PARSE)
         return r.status === 'refused'
       }),
       { numRuns: 200 },

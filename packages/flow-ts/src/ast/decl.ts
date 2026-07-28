@@ -43,11 +43,30 @@ export class Attribute {
   }
 }
 
+/** How a derived relation is written back, when the rule that defines it
+ *  doesn't determine that on its own.
+ *
+ *  Inverting a linear aggregate distributes the change by least change —
+ *  forced over the reals, since minimising Σδᵢ² subject to Σδᵢ = Δ gives
+ *  δᵢ = Δ/n. Over the integers it isn't: ⌊Δ/n⌋ each leaves a remainder, and
+ *  which member absorbs it is a free choice. `spread` names that choice.
+ *  `none` marks a relation read-only on purpose, so a refusal reads as a
+ *  decision rather than an omission. */
+export type PutPolicy =
+  | { kind: 'none' }
+  | { kind: 'spread'; residual: 'min' | 'max' }
+
+export function putPolicyToString(p: PutPolicy): string {
+  return p.kind === 'none' ? '.put none' : `.put spread(${p.residual})`
+}
+
 export class RelDecl {
   constructor(
     public readonly name: string,
     public readonly attributes: Attribute[],
     public readonly path: string | null,
+    /** Backward-direction policy, from a `.put` directive. IDBs only. */
+    public readonly put: PutPolicy | null = null,
   ) {}
 
   arity(): number {

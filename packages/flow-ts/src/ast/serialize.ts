@@ -4,7 +4,7 @@
 // elided, sections are merged); this serializer produces output that
 // `parseProgram` can read again, preserving the structure round-trip.
 
-import { dataTypeToString } from './decl.js'
+import { dataTypeToString, putPolicyToString } from './decl.js'
 import type { Program } from './program.js'
 
 /** Render a Program as valid FlowLog source. */
@@ -30,6 +30,7 @@ export function programToDl(program: Program): string {
         .join(', ')
       lines.push(`.decl ${idb.name}(${attrs})`)
       if (idb.path) lines.push(`.output ${idb.path}`)
+      if (idb.put) lines.push(putPolicyToString(idb.put))
     }
   }
 

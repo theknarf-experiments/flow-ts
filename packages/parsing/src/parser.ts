@@ -19,13 +19,19 @@ import {
   type HeadArg,
   type Predicate,
   Program,
+  type PutPolicy,
   RelDecl,
 } from 'flow-ts'
 import { parse as peggyParse } from './__generated__/grammar.js'
 
 type Builders = {
   program: (edbs: RelDecl[], idbs: RelDecl[], rules: FLRule[]) => Program
-  relDecl: (name: string, attrs: Attribute[], path: string | null) => RelDecl
+  relDecl: (
+    name: string,
+    attrs: Attribute[],
+    path: string | null,
+    put?: PutPolicy | null,
+  ) => RelDecl
   attribute: (name: string, ty: DataType) => Attribute
   rule: (head: Head, rhs: Predicate[], planning: boolean, sip: boolean) => FLRule
   predAtom: (atom: Atom) => Predicate
@@ -58,7 +64,7 @@ type Builders = {
 
 const builders: Builders = {
   program: (edbs, idbs, rules) => new Program(edbs, idbs, rules),
-  relDecl: (name, attrs, path) => new RelDecl(name, attrs, path),
+  relDecl: (name, attrs, path, put) => new RelDecl(name, attrs, path, put ?? null),
   attribute: (name, ty) => new Attribute(name, ty),
   rule: (head, rhs, planning, sip) => new FLRule(head, rhs, planning, sip),
   predAtom: (atom) => ({ kind: 'Atom', atom }),

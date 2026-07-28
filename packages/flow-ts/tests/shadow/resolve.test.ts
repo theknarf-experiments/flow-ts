@@ -24,6 +24,8 @@ import { resolveBackward } from '../../src/shadow/index.js'
 type Facts = Record<string, Row[]>
 
 const prog = (src: string) => parseProgram(src, { grammarSource: 'r.dl' })
+/** flow-ts has no parser dependency, so the reader is injected. */
+const P = { parse: (src: string) => parseProgram(src, { grammarSource: 'shadow.dl' }) }
 
 const PROJECTION = prog(`\
 .in
@@ -47,7 +49,7 @@ const TASKS: Facts = {
 
 describe('delete', () => {
   it('resolves to the source fact and verifies it', () => {
-    const r = resolveBackward(PROJECTION, TASKS, { rel: 'Open', row: ['a.md', 'milk'] })
+    const r = resolveBackward(PROJECTION, TASKS, { rel: 'Open', row: ['a.md', 'milk'] }, P)
     expect(r.status).toBe('ok')
     if (r.status !== 'ok') return
     expect(r.changes).toEqual([
@@ -57,14 +59,14 @@ describe('delete', () => {
   })
 
   it('refuses a row the program does not derive', () => {
-    const r = resolveBackward(PROJECTION, TASKS, { rel: 'Open', row: ['a.md', 'eggs'] })
+    const r = resolveBackward(PROJECTION, TASKS, { rel: 'Open', row: ['a.md', 'eggs'] }, P)
     expect(r.status).toBe('refused')
     if (r.status !== 'refused') return
     expect(r.reason).toMatch(/not derived|no candidate/i)
   })
 
   it('refuses an unknown relation rather than silently doing nothing', () => {
-    const r = resolveBackward(PROJECTION, TASKS, { rel: 'Nope', row: ['x'] })
+    const r = resolveBackward(PROJECTION, TASKS, { rel: 'Nope', row: ['x'] }, P)
     expect(r.status).toBe('refused')
   })
 
@@ -80,7 +82,7 @@ describe('delete', () => {
 .rule
 I0(a) :- E0(a, d, b), !E0(a, a, d).
 `)
-    const r = resolveBackward(SOURCE, { E0: [[0, 0, 1], [0, 1, 1]] }, { rel: 'I0', row: [0] })
+    const r = resolveBackward(SOURCE, { E0: [[0, 0, 1], [0, 1, 1]] }, { rel: 'I0', row: [0] }, P)
     expect(r.status).toBe('ok')
     if (r.status !== 'ok') return
     // One pass proposes a sound but insufficient change; the protocol notices.
@@ -94,7 +96,7 @@ describe('update', () => {
       rel: 'Open',
       row: ['a.md', 'milk'],
       newRow: ['a.md', 'oat milk'],
-    })
+    }, P)
     expect(r.status).toBe('ok')
     if (r.status !== 'ok') return
     expect(r.changes).toEqual([
@@ -124,7 +126,7 @@ I0(d, a) :- E0(d, 1), E0(d, a).
       rel: 'I0',
       row: [1, 1],
       newRow: [1, 9],
-    })
+    }, P)
     expect(r.status).toBe('unsatisfied')
     if (r.status !== 'unsatisfied') return
     // The caller gets the proposal that was rejected, for reporting.
@@ -151,6 +153,7 @@ Assigned(i, n) :- Task(i, p), Person(p, n).
 
   it('surfaces both sides of a join as candidates', () => {
     const r = resolveBackward(JOIN, FACTS, { rel: 'Assigned', row: [1, 'ann'] }, {
+      ...P,
       requireUnambiguous: true,
     })
     expect(r.status).toBe('ambiguous')
@@ -159,7 +162,7 @@ Assigned(i, n) :- Task(i, p), Person(p, n).
   })
 
   it('applies all of them when the caller allows it', () => {
-    const r = resolveBackward(JOIN, FACTS, { rel: 'Assigned', row: [1, 'ann'] })
+    const r = resolveBackward(JOIN, FACTS, { rel: 'Assigned', row: [1, 'ann'] }, P)
     expect(r.status).toBe('ok')
   })
 })
@@ -188,7 +191,7 @@ describe('properties', () => {
           ? { rel: 'Open', row: target, newRow: [target[0]!, 'renamed'] as Row }
           : { rel: 'Open', row: target }
 
-        const r = resolveBackward(PROJECTION, facts, req)
+        const r = resolveBackward(PROJECTION, facts, req, P)
         if (r.status !== 'ok') return true
         ok++
         // Verify independently of the implementation's own check.

@@ -44,9 +44,20 @@ EdbRelationDecl
     }
 
 IdbRelationDecl
-  = ".decl" _ name:RelationName _ "(" _ attrs:AttributesDecl? _ ")" path:(_ OutDecl)? {
-      return options.b.relDecl(name, attrs || [], path ? path[1] : null);
+  = ".decl" _ name:RelationName _ "(" _ attrs:AttributesDecl? _ ")" path:(_ OutDecl)? put:(_ PutDecl)? {
+      return options.b.relDecl(name, attrs || [], path ? path[1] : null, put ? put[1] : null);
     }
+
+// How this relation is written back. Attaches to the declaration the way
+// `.input` attaches to an EDB's: the policy is a property of the relation,
+// not of a request that arrives later.
+PutDecl
+  = ".put" _ "spread" _ "(" _ r:Residual _ ")" { return { kind: "spread", residual: r }; }
+  / ".put" _ "none" { return { kind: "none" }; }
+
+Residual
+  = "min" { return "min"; }
+  / "max" { return "max"; }
 
 AttributesDecl
   = first:AttributeDecl rest:(_ "," _ AttributeDecl)* {

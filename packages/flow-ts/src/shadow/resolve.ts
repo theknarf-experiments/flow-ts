@@ -21,7 +21,6 @@
 // again against the new state. That terminates because each round strictly
 // shrinks a finite EDB and safety guarantees an empty one derives nothing.
 
-import { parseProgram } from '@flow-ts/parsing'
 import type { Program } from '../ast/index.js'
 import { executeProgram } from '../executing/dataflow.js'
 import type { Row } from '../reading/row.js'
@@ -60,6 +59,13 @@ export type Resolution =
   | { status: 'unsatisfied'; attempted: Change[]; reason: string }
 
 export interface ResolveOptions extends ShadowOptions {
+  /** How to read the generated shadow program back in.
+   *
+   *  flow-ts has no parser dependency on purpose — `@flow-ts/parsing` depends
+   *  on *this* package for the AST, not the other way round, so that consumers
+   *  can bring their own syntax. The caller therefore supplies the reader,
+   *  normally `parseProgram` from `@flow-ts/parsing`. */
+  parse: (source: string) => Program
   /** Report `ambiguous` instead of applying every candidate when a request
    *  reaches more than one source relation. Callers that own a UI usually want
    *  this; a batch rewrite usually doesn't. */
@@ -76,7 +82,7 @@ export function resolveBackward(
   program: Program,
   facts: Facts,
   request: BackwardRequest,
-  options: ResolveOptions = {},
+  options: ResolveOptions,
 ): Resolution {
   const maxRounds = options.maxRounds ?? 12
   const isUpdate = request.newRow !== undefined
@@ -94,7 +100,7 @@ export function resolveBackward(
   const shadow = compileShadow(program, options)
   let shadowProgram: Program
   try {
-    shadowProgram = parseProgram(shadow.source, { grammarSource: 'shadow.dl' })
+    shadowProgram = options.parse(shadow.source)
   } catch (err) {
     /* c8 ignore next 2 */
     return { status: 'refused', reason: `shadow program failed to compile: ${String(err)}` }

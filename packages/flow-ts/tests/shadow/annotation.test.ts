@@ -13,7 +13,7 @@
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 import { parseProgram } from '@flow-ts/parsing'
-import { compileShadow } from '../../src/shadow/index.js'
+import { compileShadow, resolveBackward } from '../../src/shadow/index.js'
 import type { Row } from '../../src/reading/index.js'
 import { type Facts, applyUpdates, backward, liveRows } from './_harness.js'
 
@@ -69,6 +69,63 @@ S(x) :- R(x).
       { put: { S: { kind: 'spread', residual: 'min' } } },
     )
     expect(shadow.refusals.some((r) => /not an aggregate/i.test(r.reason))).toBe(true)
+  })
+})
+
+describe('the annotation can live in the program source', () => {
+  // `.put` on the declaration is the program stating its own intent, which is
+  // what makes this usable from a vault: the policy travels with the rules
+  // rather than living in the caller's code.
+  const ANNOTATED = `\
+.in
+.decl Hours(p: string, w: number, h: number)
+.input Hours.csv
+
+.printsize
+.decl Total(p: string, s: number)
+.put spread(min)
+
+.rule
+Total(p, sum(h)) :- Hours(p, w, h).
+`
+
+  it('needs no options object', () => {
+    const shadow = compileShadow(parseProgram(ANNOTATED))
+    expect(shadow.refusals.filter((r) => /aggregation/i.test(r.reason))).toEqual([])
+    expect(shadow.source).toContain('Upd_Hours(')
+  })
+
+  it('resolves a request end to end', () => {
+    const r = resolveBackward(
+      parseProgram(ANNOTATED),
+      { Hours: [['x', 1, 5], ['x', 2, 7]] },
+      { rel: 'Total', row: ['x', 12], newRow: ['x', 15] },
+      { parse: (src) => parseProgram(src, { grammarSource: 'shadow.dl' }) },
+    )
+    expect(r.status).toBe('ok')
+    if (r.status !== 'ok') return
+    // Δ=3 over 2 members: +1 each, remainder 1 to member 1.
+    expect(r.changes.map((c) => c.newRow)).toEqual(
+      expect.arrayContaining([
+        ['x', 1, 7],
+        ['x', 2, 8],
+      ]),
+    )
+  })
+
+  it('an explicit .put none is a decision, not an omission', () => {
+    const shadow = compileShadow(
+      parseProgram(ANNOTATED.replace('.put spread(min)', '.put none')),
+    )
+    expect(shadow.source).not.toContain('Upd_Hours(')
+    expect(shadow.refusals.filter((r) => /aggregation/i.test(r.reason))).toEqual([])
+  })
+
+  it('options override the directive', () => {
+    const shadow = compileShadow(parseProgram(ANNOTATED), {
+      put: { Total: { kind: 'none' } },
+    })
+    expect(shadow.source).not.toContain('Upd_Hours(')
   })
 })
 

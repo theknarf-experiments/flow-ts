@@ -161,3 +161,52 @@ describe('reads are untouched', () => {
     expect(names(store)).toEqual(['ann', 'bob'])
   })
 })
+
+describe('which columns are editable', () => {
+  it('reports the view s writable columns, for rendering affordances', () => {
+    const store = seeded()
+    // `ICanReach(name) :- Me(me), Reach(me, id), Person(id, name).`
+    // `name` is copied from Person and occurs once, so it can be rewritten.
+    expect(store.writableColumns('ICanReach')).toEqual([0])
+  })
+
+  it('reports nothing for a view that was not opted in', () => {
+    const store = seeded([])
+    expect(store.writableColumns('ICanReach')).toEqual([])
+  })
+
+  it('distinguishes a copied column from one that is joined on', () => {
+    const src = `\
+.in
+.decl Task(id: number, p: number)
+.decl Person(p: number, name: string)
+
+.out
+.decl Listed(p: number, name: string)
+
+Listed(p, n) :- Task(i, p), Person(p, n).
+`
+    const store = new Store(parseProgram(src, { grammarSource: 'j.dl' }), {
+      writable: ['Listed'],
+    })
+    // `p` is the join key — rewriting it would have to change both sides.
+    // `name` is copied from one position of one atom.
+    expect(store.writableColumns('Listed')).toEqual([1])
+  })
+
+  it('the answer follows a program swap, since it depends on the rules', () => {
+    const store = seeded()
+    expect(store.writableColumns('ICanReach')).toEqual([0])
+    store.replaceProgram(
+      parseProgram(
+        SOURCE.replace(
+          'ICanReach(name) :- Me(me), Reach(me, id), Person(id, name).',
+          'ICanReach(name) :- Me(me), Reach(me, id), Person(id, name), Person(id, name).',
+        ),
+        { grammarSource: 'demo.dl' },
+      ),
+    )
+    // `name` now occurs in two atoms, so it is no longer a single-position copy.
+    expect(store.writableColumns('ICanReach')).toEqual([])
+  })
+})

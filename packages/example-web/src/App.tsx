@@ -274,10 +274,13 @@ function ReachablePanel() {
   return (
     <div className="card">
       <h2>I can reach</h2>
-      <p className="muted">
+      <p className="muted" data-testid="reachable-writability">
         Derived, and writable. Editing a name here rewrites the <code>Person</code> fact it
         came from; removing one cuts a friendship. Nothing else in this demo is writable —
-        it is opted into per view.
+        it is opted into per view.{' '}
+        {view.canWriteColumn(0)
+          ? 'The name traces to one column of one fact, so it can be rewritten.'
+          : 'The name does not trace to a single source column, so it is read-only — edit the rules and watch this change.'}
       </p>
       {sorted.length === 0 ? (
         <p className="muted" data-testid="reachable-empty">(none — add a row to Me, or a friendship from me, in the inspector below)</p>
@@ -285,10 +288,20 @@ function ReachablePanel() {
         <ul className="reachable" data-testid="reachable-list">
           {sorted.map((name) => (
             <li key={name} data-testid={`reachable-${name}`}>
+              {/* The affordance comes from the compiler, not from a guess:
+                  `writableColumns` says which columns trace back to a single
+                  source position. Editing the rules so `name` no longer does
+                  turns these inputs read-only without touching this file. */}
               <input
                 aria-label={`rename ${name}`}
                 data-testid={`reachable-input-${name}`}
                 value={draft[name] ?? name}
+                readOnly={!view.canWriteColumn(0)}
+                title={
+                  view.canWriteColumn(0)
+                    ? 'rewrites the Person fact this name came from'
+                    : 'read-only: this column does not trace to one source position'
+                }
                 onChange={(e) => setDraft((d) => ({ ...d, [name]: e.target.value }))}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') rename(name)
@@ -297,6 +310,7 @@ function ReachablePanel() {
               <button
                 type="button"
                 data-testid={`reachable-rename-${name}`}
+                disabled={!view.canWriteColumn(0)}
                 onClick={() => rename(name)}
               >
                 rename

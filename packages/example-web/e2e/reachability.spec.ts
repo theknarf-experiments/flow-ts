@@ -350,3 +350,34 @@ test.describe('writes back through the derived view', () => {
     }
   })
 })
+
+// The editable-ness of a cell is derived from the rules, not decided by the
+// component. `writableColumns` reports which columns trace back to a single
+// source position; the panel asks it, and renders accordingly. So changing the
+// rules changes the affordance, with no UI code involved.
+test.describe('writability follows the rules', () => {
+  test('a name that stops tracing to one source column becomes read-only', async ({ page }) => {
+    await gotoApp(page)
+    await expect(page.getByTestId('reachable-input-bob')).not.toHaveAttribute('readonly', '')
+    await expect(page.getByTestId('reachable-rename-bob')).toBeEnabled()
+    await expect(page.getByTestId('reachable-writability')).toContainText('can be rewritten')
+
+    // Mention `name` in a second atom, so it no longer occurs in exactly one
+    // position of one atom. Nothing else about the program changes, and the
+    // derived rows are identical.
+    const textarea = page.getByTestId('program-source')
+    await textarea.fill(
+      (await textarea.inputValue()).replace(
+        'ICanReach(name) :- Me(me), Reach(me, id), Person(id, name).',
+        'ICanReach(name) :- Me(me), Reach(me, id), Person(id, name), Person(id, name).',
+      ),
+    )
+    await page.getByTestId('program-rebuild').click()
+
+    // Same rows…
+    await expect(page.getByTestId('reachable-input-bob')).toHaveValue('bob')
+    // …but no longer editable, and the panel says why.
+    await expect(page.getByTestId('reachable-rename-bob')).toBeDisabled()
+    await expect(page.getByTestId('reachable-writability')).toContainText('read-only')
+  })
+})

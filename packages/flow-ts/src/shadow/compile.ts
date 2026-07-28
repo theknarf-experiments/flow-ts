@@ -94,6 +94,20 @@ export interface ShadowProgram {
   seeds: string[]
   /** Everything the compiler could not invert, and why. */
   refusals: ShadowRefusal[]
+  /** Per view, the column indices an update can be written through.
+   *
+   *  This falls straight out of compilation — a column is listed exactly when
+   *  an update rule was emitted for it — so it costs nothing extra and saves
+   *  every consumer re-deriving the same analysis.
+   *
+   *  It is the *static* answer, and deliberately so: a UI has to decide which
+   *  inputs are editable before it has a row in hand, and that question has no
+   *  data in it. Whether a particular edit succeeds is a different question,
+   *  and `resolveBackward` answers it exactly. A column listed here can still
+   *  come back `ambiguous` or `unsatisfied` for a given row. For a head with
+   *  several rules this is the union: a column one rule can rewrite is listed,
+   *  because hiding it would deny the edit on rows that *can* take it. */
+  writableColumns: Record<string, number[]>
 }
 
 interface ShadowRule {
@@ -121,6 +135,13 @@ export function compileShadow(
   // shadow relations. Kept separate because they are plain IDBs, not channels.
   const helpers: Array<{ name: string; attrs: string }> = []
   let helperSeq = 0
+  // Head relation → head column indices for which an update rule was emitted.
+  const writableCols = new Map<string, Set<number>>()
+  const noteWritable = (rel: string, column: number): void => {
+    let set = writableCols.get(rel)
+    if (!set) writableCols.set(rel, (set = new Set()))
+    set.add(column)
+  }
 
   const edbNames = new Set(program.edbs.map((d) => d.name))
   // An untyped `.decl Foo()` leaves the arity to the rules, which is fine while
@@ -233,7 +254,11 @@ export function compileShadow(
         helpers,
         rules,
       )
-      if (emitted) continue
+      if (emitted) {
+        // `spread` inverts the aggregate column, which is the last one.
+        noteWritable(rule.head.name, rule.head.headArguments.length - 1)
+        continue
+      }
       refusals.push({
         subject,
         reason: `"${rule.head.name}" has a spread policy but its head is not an aggregate over a single member column`,
@@ -312,7 +337,11 @@ export function compileShadow(
       // invert, `/` and `%` are not injective, and a multi-step expression
       // would need helper relations because arithmetic here is flat.
       if (ha.kind === 'Arith') {
-        emitComputedUpdate(rule, ha.arithmetic, headArgs, k, headFilters, only, rules, refusals)
+        if (
+          emitComputedUpdate(rule, ha.arithmetic, headArgs, k, headFilters, only, rules, refusals)
+        ) {
+          noteWritable(rule.head.name, k)
+        }
         return
       }
       if (ha.kind !== 'Var') return
@@ -341,6 +370,7 @@ export function compileShadow(
         ...headFilters,
       ].join(', ')
 
+      noteWritable(rule.head.name, k)
       rules.push({
         headRel: UPD_PREFIX + atom.name,
         needs: [UPD_PREFIX + rule.head.name],
@@ -399,7 +429,16 @@ export function compileShadow(
 
   const live = prune(rules)
   const liveHeads = new Set(live.map((r) => r.headRel))
+  // Only report a column whose update channel actually survived: a view that
+  // was scoped out, or whose Upd_ channel was switched off, is not writable
+  // however invertible its rules happen to be.
+  const writableColumns: Record<string, number[]> = {}
+  for (const [rel, set] of writableCols) {
+    if (!liveHeads.has(UPD_PREFIX + rel)) continue
+    writableColumns[rel] = [...set].sort((a, b) => a - b)
+  }
   return {
+    writableColumns,
     source: render(
       program,
       live,
@@ -434,10 +473,10 @@ function emitComputedUpdate(
   only: string | null,
   out: ShadowRule[],
   refusals: ShadowRefusal[],
-): void {
+): boolean {
   const subject = rule.toString()
   const vars = arith.vars()
-  if (vars.length === 0) return // a bare constant: nothing to write back to
+  if (vars.length === 0) return false // a bare constant: nothing to write back to
   if (new Set(vars).size > 1 || vars.length > 1) {
     refusals.push({
       subject,
@@ -445,7 +484,7 @@ function emitComputedUpdate(
         `the computed column of "${rule.head.name}" depends on more than one variable ` +
         `(${[...new Set(vars)].join(', ')}), so a new value does not determine a new input`,
     })
-    return
+    return false
   }
   if (arith.rest.length !== 1) {
     refusals.push({
@@ -454,14 +493,14 @@ function emitComputedUpdate(
         `the computed column of "${rule.head.name}" is not a single operation, and flat ` +
         'arithmetic cannot express its inverse without helper relations',
     })
-    return
+    return false
   }
 
   const v = vars[0]!
   const [op, operand] = arith.rest[0]!
   const varIsInit = arith.init.kind === 'Var'
   const other = varIsInit ? factorToString(operand) : factorToString(arith.init)
-  if (!varIsInit && operand.kind !== 'Var') return
+  if (!varIsInit && operand.kind !== 'Var') return false
 
   // `y = x op c` undoes as `x = y op⁻¹ c`; `y = c op x` needs the operation
   // rearranged instead, which only works when it can be.
@@ -482,16 +521,16 @@ function emitComputedUpdate(
         `the computed column of "${rule.head.name}" uses ${op}, which is not injective — ` +
         'many inputs give the same output, so nothing says which to write back',
     })
-    return
+    return false
   }
 
   const sites = occurrencesOf(v, rule.rhs)
-  if (sites.length !== 1) return
+  if (sites.length !== 1) return false
   const { atomIndex, argIndex } = sites[0]!
   const pred = rule.rhs[atomIndex]!
-  if (pred.kind !== 'Atom') return
+  if (pred.kind !== 'Atom') return false
   const atom = pred.atom
-  if (only !== null && atom.name !== only) return
+  if (only !== null && atom.name !== only) return false
 
   const fresh = `${headArgs[k]}_n`
   const request = headArgs.map((a, j) => (j === k ? [a, fresh] : [a, a]))
@@ -509,6 +548,7 @@ function emitComputedUpdate(
         ...request.map((r) => r[1]),
       ].join(', ')}), ${body}.`,
   })
+  return true
 }
 
 /** Insert rules for one forward rule: what has to become true for its head to

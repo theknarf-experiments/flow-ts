@@ -21,6 +21,7 @@ import { encodeRow, type Row } from 'flow-ts'
 import {
   type BackwardRequest,
   type Resolution,
+  compileShadow,
   resolveBackward,
 } from 'flow-ts'
 import { parseProgram } from '@flow-ts/parsing'
@@ -90,6 +91,8 @@ export class Store {
   #programListeners = new Set<Listener>()
 
   readonly #writable: ReadonlySet<string>
+  /** Per-view writable columns, computed once per program. */
+  #writableColumns: Record<string, number[]> | null = null
 
   constructor(program: Program, options: StoreOptions = {}) {
     this.#program = program
@@ -155,8 +158,10 @@ export class Store {
       state.snapshot = []
     }
 
-    // 4. Open the new session against the new program.
+    // 4. Open the new session against the new program. Writability is a
+    //    property of the rules, so the cached answer goes with them.
     this.#program = newProgram
+    this.#writableColumns = null
     this.#session = openSession(newProgram, {}, (rel, row, diff) => {
       this.#queueDiff(rel, row, diff)
     })
@@ -270,6 +275,24 @@ export class Store {
   /** True if edits to this view were opted into. */
   canWrite(relation: string): boolean {
     return this.#writable.has(relation)
+  }
+
+  /** Column indices of a view an edit can be written through.
+   *
+   *  The static answer, for deciding which inputs to render as editable before
+   *  there is a row in hand. Whether a *particular* edit succeeds is a
+   *  different question that the `Resolution` answers exactly — a column listed
+   *  here can still come back `ambiguous` or `unsatisfied` for a given row.
+   *
+   *  Cached per program: it depends only on the rules, not on the facts. */
+  writableColumns(relation: string): readonly number[] {
+    if (!this.#writable.has(relation)) return []
+    if (this.#writableColumns === null) {
+      this.#writableColumns = compileShadow(this.#program, {
+        views: [...this.#writable],
+      }).writableColumns
+    }
+    return this.#writableColumns[relation] ?? []
   }
 
   /** Rewrite one derived row. */
@@ -420,6 +443,12 @@ export interface WritableQuery<T extends Row> {
    *  all return `refused` — so a UI can grey out the controls instead of
    *  finding out on click. */
   canWrite: boolean
+  /** Column indices an edit can be written through. Use it to decide which
+   *  cells to render as editable; use the returned `Resolution` to decide
+   *  whether a particular edit actually worked. */
+  writableColumns: readonly number[]
+  /** Convenience for the common per-cell check. */
+  canWriteColumn(column: number): boolean
   update(row: T, next: T, options?: WriteOptions): Resolution
   remove(row: T, options?: WriteOptions): Resolution
   insert(row: T, options?: WriteOptions): Resolution
@@ -436,9 +465,12 @@ export function useWritableQuery<T extends Row>(
   relation: string,
 ): WritableQuery<T> {
   const rows = useLiveQuery<T>(store, relation)
+  const writableColumns = store.writableColumns(relation)
   return {
     rows,
     canWrite: store.canWrite(relation),
+    writableColumns,
+    canWriteColumn: (column) => writableColumns.includes(column),
     update: (row, next, options) => store.updateRow(relation, row, next, options),
     remove: (row, options) => store.removeRow(relation, row, options),
     insert: (row, options) => store.insertRow(relation, row, options),

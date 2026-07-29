@@ -41,11 +41,17 @@ import type { Row } from '../reading/row.js'
 import { inferRelationTypes } from '../typing/index.js'
 import { SEED_INS_PREFIX, SEED_PREFIX, SEED_UPD_PREFIX, compileShadow } from './compile.js'
 import { validateRequest } from './validate.js'
+import type { ShadowChannel } from './compile.js'
 import {
   type BackwardRequest,
   type Change,
+  type LiveRows,
   type Resolution,
   type ResolveOptions,
+  checkAmbiguous,
+  collateral,
+  noCandidateReason,
+  seedFor,
   shrink,
 } from './resolve.js'
 
@@ -166,29 +172,18 @@ export function openBackwardSession(
     return out
   }
 
-  const seedRel = (request: BackwardRequest): string =>
-    request.newRow !== undefined
-      ? `${SEED_UPD_PREFIX}${request.rel}`
-      : request.insert
-        ? `${SEED_INS_PREFIX}${request.rel}`
-        : `${SEED_PREFIX}${request.rel}`
-
-  const seedRow = (request: BackwardRequest): Row =>
-    request.newRow !== undefined ? [...request.row, ...request.newRow] : request.row
-
   const propose = (request: BackwardRequest): Change[] => {
     // `propose` is the raw primitive, so a malformed request is a caller bug
     // and throws. `resolve` turns the same message into a `refused` status,
     // because there it is one outcome among several.
     const malformed = validateRequest(program, inferred, shadow.seeds, request)
     if (malformed) throw new Error(malformed)
-    const rel = seedRel(request)
-    const row = seedRow(request)
-    update(rel, row, 1)
+    const [rel, [row]] = seedFor(request)
+    update(rel, row!, 1)
     session.advance()
     const changes = readChannels()
     // Un-seed, so the next request starts from a clean channel set.
-    update(rel, row, -1)
+    update(rel, row!, -1)
     session.advance()
     return changes
   }
@@ -226,12 +221,47 @@ export function openBackwardSession(
     return (e?.n ?? 0) > 0
   }
 
+  /** Every derived relation's live rows. The graph already holds these, so a
+   *  snapshot is a copy rather than an evaluation — which is what makes it
+   *  affordable to take one on the failure path and explain what a rewrite
+   *  knocked out on its way past. */
+  const liveSnapshot = (): LiveRows => {
+    const out = new Map<string, Map<string, Row>>()
+    for (const [rel, m] of state) {
+      if (!idbNames.has(rel)) continue
+      const live = new Map<string, Row>()
+      for (const [k, e] of m) if (e.n > 0) live.set(k, e.row)
+      out.set(rel, live)
+    }
+    return out
+  }
+
+  // Same precedence as the compiler: a caller-supplied policy overrides the one
+  // in the source text.
+  const policyFor = (rel: string) =>
+    options.put?.[rel] ?? program.idbs.find((d) => d.name === rel)?.put
+
   const resolve = (request: BackwardRequest): Resolution => {
     const malformed = validateRequest(program, inferred, shadow.seeds, request)
     if (malformed) return { status: 'refused', reason: malformed }
 
     const isUpdate = request.newRow !== undefined
     const isInsert = request.insert === true
+
+    // A channel that was never compiled produces no candidates, and "no
+    // candidate change reaches a source relation" is the wrong account of why:
+    // nothing was looked at. The same distinction as `.put none` — a decision,
+    // not a gap — except this one was made by the caller.
+    const channel: ShadowChannel = isInsert ? 'ins' : isUpdate ? 'upd' : 'del'
+    if (options.channels && !options.channels.includes(channel)) {
+      return {
+        status: 'refused',
+        reason:
+          `the "${channel}" channel was not compiled — this session opted into ` +
+          `${options.channels.map((c) => `"${c}"`).join(', ')}`,
+      }
+    }
+
     const live = isLive(request.rel, request.row)
     if (isInsert && live) {
       return {
@@ -257,23 +287,16 @@ export function openBackwardSession(
           status: 'refused',
           reason:
             rounds === 1
-              ? `no candidate change reaches a source relation for ${request.rel}`
+              ? noCandidateReason(shadow.refusals, request, policyFor(request.rel))
               : 'no further candidates',
         }
       }
-      if (rounds === 1 && options.requireUnambiguous) {
-        const rels = new Set(changes.map((c) => c.rel))
-        if (rels.size > 1 || changes.length > 1) {
-          return {
-            status: 'ambiguous',
-            candidates: changes,
-            reason:
-              rels.size > 1
-                ? `the request reaches ${rels.size} source relations (${[...rels].join(', ')})`
-                : `${changes.length} tuples of ${[...rels][0]} could be changed`,
-          }
-        }
+      if (rounds === 1) {
+        const ambiguity = checkAmbiguous(changes, options)
+        if (ambiguity) return ambiguity
       }
+
+      const before = isUpdate ? liveSnapshot() : null
 
       applyChanges(changes)
       applied.push(...changes)
@@ -307,16 +330,19 @@ export function openBackwardSession(
       // no longer exists, or already does. A delete iterates, since negation
       // genuinely needs another pass.
       if (isUpdate || isInsert) {
+        // Read the wreckage before undoing it: `collateral` compares what the
+        // change removed against what the row needed, and one of those two
+        // states disappears on rollback.
+        const after = isUpdate ? liveSnapshot() : null
         applyChanges(applied, -1)
         return {
           status: 'unsatisfied',
           attempted: applied,
-          reason:
-            isInsert
+          reason: isInsert
             ? `the insert did not produce ${request.rel}(${request.row.join(', ')}) — ` +
               'the rule cannot be satisfied by adding facts alone'
-            : `the rewrite did not produce ${request.rel}(${request.newRow!.join(', ')}) — ` +
-              'a source tuple it changed is also relied on elsewhere in the rule',
+            : `the rewrite did not produce ${request.rel}(${request.newRow!.join(', ')})` +
+              collateral(program, before!, after!, request.rel),
         }
       }
     }

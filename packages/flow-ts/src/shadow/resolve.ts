@@ -1,4 +1,13 @@
-// Resolving a view-update request into EDB changes, and checking them.
+// The vocabulary of a view-update request, and the parts of answering one that
+// are the same wherever it is answered.
+//
+// The protocol itself — propose, apply, verify, minimise, commit or roll back —
+// lives in `session.ts`, over a maintained graph. `one-shot.ts` wraps that for
+// callers who want a pure function over facts they hold themselves. It used to
+// be implemented twice, once here and once there, and the two drifted: every
+// improvement to a message landed on one side only, so a session reported a
+// truncated inverse as an aliasing conflict long after the one-shot had learnt
+// to say what it actually was.
 //
 // `compileShadow` answers "which source tuples could have produced this row".
 // That answer is always *sound* — every candidate really did support the row —
@@ -93,176 +102,10 @@ export interface ResolveOptions extends ShadowOptions {
 
 const keyOf = (row: Row): string => row.map((v) => `${typeof v}:${v}`).join('')
 
-/** Resolve a request against the current facts, verified by re-running the
- *  forward program. */
-export function resolveBackward(
-  program: Program,
-  facts: Facts,
-  request: BackwardRequest,
-  options: ResolveOptions,
-): Resolution {
-  const maxRounds = options.maxRounds ?? 12
-  const isUpdate = request.newRow !== undefined
-  const isInsert = request.insert === true
-
-  // Only the relation being asked about needs a channel. Building them for
-  // every view would compile rules — and force the indexes behind them — that
-  // this request can never reach, and a one-shot resolve pays that in full.
-  // The caller can still widen it, but there is no reason to by default.
-  const shadow = compileShadow(program, {
-    ...options,
-    views: options.views ?? [request.rel],
-  })
-  // Shape first. A mistyped row would otherwise just fail to join, and get
-  // reported as stale data rather than as the malformed request it is.
-  const malformed = validateRequest(
-    program,
-    inferRelationTypes(program),
-    shadow.seeds,
-    request,
-  )
-  if (malformed) return { status: 'refused', reason: malformed }
-
-  // A channel that was never compiled produces no candidates, and "no candidate
-  // change reaches a source relation" is the wrong account of why: nothing was
-  // looked at. The same distinction as `.put none` — a decision, not a gap —
-  // except this one was made by the caller rather than the schema.
-  const channel: ShadowChannel = isInsert ? 'ins' : isUpdate ? 'upd' : 'del'
-  if (options.channels && !options.channels.includes(channel)) {
-    return {
-      status: 'refused',
-      reason:
-        `the "${channel}" channel was not compiled — this session opted into ` +
-        `${options.channels.map((c) => `"${c}"`).join(', ')}`,
-    }
-  }
-
-  const live = liveRows(program, facts, request.rel).has(keyOf(request.row))
-  if (isInsert && live) {
-    return {
-      status: 'refused',
-      reason: `${request.rel}(${request.row.join(', ')}) is already derived`,
-    }
-  }
-  if (!isInsert && !live) {
-    return {
-      status: 'refused',
-      reason: `${request.rel}(${request.row.join(', ')}) is not derived from the current facts (stale?)`,
-    }
-  }
-
-  let shadowProgram: Program
-  try {
-    shadowProgram = options.parse(shadow.source)
-  } catch (err) {
-    /* c8 ignore next 2 */
-    return { status: 'refused', reason: `shadow program failed to compile: ${String(err)}` }
-  }
-  const edbNames = new Set(program.edbs.map((d) => d.name))
-  // Same precedence as the compiler: a caller-supplied policy overrides the
-  // one in the source text.
-  const policy =
-    options.put?.[request.rel] ?? program.idbs.find((d) => d.name === request.rel)?.put
-
-  if (isInsert) {
-    const changes = propose(shadowProgram, edbNames, facts, request)
-    if (changes.length === 0) {
-      return { status: 'refused', reason: noCandidateReason(shadow.refusals, request, policy) }
-    }
-    const ambiguity = checkAmbiguous(changes, options)
-    if (ambiguity) return ambiguity
-
-    const after = apply(facts, changes)
-    if (!liveRows(program, after, request.rel).has(keyOf(request.row))) {
-      return {
-        status: 'unsatisfied',
-        attempted: changes,
-        reason:
-          `the insert did not produce ${request.rel}(${request.row.join(', ')}) — ` +
-          'the rule cannot be satisfied by adding facts alone',
-      }
-    }
-    return { status: 'ok', changes, rounds: 1 }
-  }
-
-  if (isUpdate) {
-    const changes = propose(shadowProgram, edbNames, facts, request)
-    if (changes.length === 0) {
-      return { status: 'refused', reason: noCandidateReason(shadow.refusals, request, policy) }
-    }
-    const ambiguity = checkAmbiguous(changes, options)
-    if (ambiguity) return ambiguity
-
-    const after = apply(facts, changes)
-    if (!liveRows(program, after, request.rel).has(keyOf(request.newRow!))) {
-      return {
-        status: 'unsatisfied',
-        attempted: changes,
-        reason:
-          `the rewrite did not produce ${request.rel}(${request.newRow!.join(', ')})` +
-          collateral(program, facts, after, request.rel),
-      }
-    }
-    return { status: 'ok', changes, rounds: 1 }
-  }
-
-  // Delete: iterate until the row stays gone.
-  const all: Change[] = []
-  let current = facts
-  for (let rounds = 1; rounds <= maxRounds; rounds++) {
-    const changes = propose(shadowProgram, edbNames, current, request)
-    if (changes.length === 0) {
-      return {
-        status: 'refused',
-        reason: rounds === 1 ? noCandidateReason(shadow.refusals, request, policy) : 'no further candidates',
-      }
-    }
-    if (rounds === 1) {
-      const ambiguity = checkAmbiguous(changes, options)
-      if (ambiguity) return ambiguity
-    }
-    all.push(...changes)
-    current = apply(current, changes)
-    if (!liveRows(program, current, request.rel).has(keyOf(request.row))) {
-      const kept = options.minimize
-        ? shrink(all, (subset) =>
-            !liveRows(program, apply(facts, subset), request.rel).has(keyOf(request.row)),
-          )
-        : all
-      return { status: 'ok', changes: kept, rounds }
-    }
-  }
-  return {
-    status: 'unsatisfied',
-    attempted: all,
-    reason: `the row survived ${maxRounds} rounds of retraction`,
-  }
-}
-
 // --- internals --------------------------------------------------------------
 
-/** Every derived relation's live rows, in one pass. Rows are kept, not just
- *  keys, so a message can show values rather than an encoding. */
-function allLiveRows(program: Program, facts: Facts): Map<string, Map<string, Row>> {
-  const counts = new Map<string, Map<string, number>>()
-  const rows = new Map<string, Map<string, Row>>()
-  executeProgram(program, new Map(Object.entries(facts)), {}, (rel, row, diff) => {
-    const m = counts.get(rel) ?? new Map<string, number>()
-    const k = keyOf(row)
-    m.set(k, (m.get(k) ?? 0) + diff)
-    counts.set(rel, m)
-    const r = rows.get(rel) ?? new Map<string, Row>()
-    r.set(k, [...row])
-    rows.set(rel, r)
-  })
-  const out = new Map<string, Map<string, Row>>()
-  for (const [rel, m] of counts) {
-    const live = new Map<string, Row>()
-    for (const [k, n] of m) if (n > 0) live.set(k, rows.get(rel)!.get(k)!)
-    out.set(rel, live)
-  }
-  return out
-}
+/** Live rows of every derived relation, keyed for comparison. */
+export type LiveRows = ReadonlyMap<string, ReadonlyMap<string, Row>>
 
 /** Name what the change knocked out on its way past.
  *
@@ -270,14 +113,14 @@ function allLiveRows(program: Program, facts: Facts): Map<string, Map<string, Ro
  *  step removed: the tuple that was rewritten was also holding up something
  *  else, and that something else is what the row needed. Finding it costs two
  *  evaluations, paid only on the failure path. */
-function collateral(
+export function collateral(
   program: Program,
-  before: Facts,
-  after: Facts,
+  before: LiveRows,
+  after: LiveRows,
   target: string,
 ): string {
-  const was = allLiveRows(program, before)
-  const now = allLiveRows(program, after)
+  const was = before
+  const now = after
 
   // Landing somewhere else is its own failure, and a different one. An inverse
   // that doesn't round-trip — `h * 60` inverted by a division that truncates —
@@ -370,7 +213,7 @@ export function shrink(
   return kept
 }
 
-function noCandidateReason(
+export function noCandidateReason(
   refusals: ReadonlyArray<{ subject: string; reason: string }>,
   request: BackwardRequest,
   policy: PutPolicy | null | undefined,
@@ -389,7 +232,7 @@ function noCandidateReason(
     : `no candidate change reaches a source relation for ${request.rel}`
 }
 
-function checkAmbiguous(
+export function checkAmbiguous(
   changes: readonly Change[],
   options: ResolveOptions,
 ): Resolution | null {
@@ -406,73 +249,5 @@ function checkAmbiguous(
   }
 }
 
-/** Run the shadow program once and read the candidate changes. */
-function propose(
-  shadowProgram: Program,
-  edbNames: ReadonlySet<string>,
-  facts: Facts,
-  request: BackwardRequest,
-): Change[] {
-  const edbFacts = new Map<string, Row[]>(Object.entries(facts))
-  const [rel, row] = seedFor(request)
-  edbFacts.set(rel, row)
 
-  const counts = new Map<string, Map<string, { row: Row; n: number }>>()
-  executeProgram(shadowProgram, edbFacts, {}, (rel, row, diff) => {
-    const m = counts.get(rel) ?? new Map()
-    const k = keyOf(row)
-    m.set(k, { row: [...row], n: (m.get(k)?.n ?? 0) + diff })
-    counts.set(rel, m)
-  })
 
-  const out: Change[] = []
-  for (const [rel, m] of counts) {
-    const kind = rel.startsWith('Del_')
-      ? ('del' as const)
-      : rel.startsWith('Ins_')
-        ? ('ins' as const)
-        : rel.startsWith('Upd_')
-          ? ('upd' as const)
-          : null
-    if (!kind) continue
-    const base = rel.slice(rel.indexOf('_') + 1)
-    if (!edbNames.has(base)) continue // an intermediate channel, not a write target
-    for (const { row, n } of m.values()) {
-      if (n <= 0) continue
-      if (kind === 'upd') {
-        const half = row.length / 2
-        out.push({ kind, rel: base, row: row.slice(0, half), newRow: row.slice(half) })
-      } else {
-        out.push({ kind, rel: base, row })
-      }
-    }
-  }
-  return out
-}
-
-function apply(facts: Facts, changes: readonly Change[]): Facts {
-  const out: Facts = { ...facts }
-  for (const c of changes) {
-    const rows = out[c.rel] ?? []
-    if (c.kind === 'del') {
-      out[c.rel] = rows.filter((r) => keyOf(r) !== keyOf(c.row))
-    } else if (c.kind === 'ins') {
-      out[c.rel] = rows.some((r) => keyOf(r) === keyOf(c.row)) ? rows : [...rows, c.row]
-    } else {
-      out[c.rel] = rows.map((r) => (keyOf(r) === keyOf(c.row) ? c.newRow! : r))
-    }
-  }
-  return out
-}
-
-function liveRows(program: Program, facts: Facts, rel: string): Set<string> {
-  const counts = new Map<string, number>()
-  executeProgram(program, new Map(Object.entries(facts)), {}, (r, row, diff) => {
-    if (r !== rel) return
-    const k = keyOf(row)
-    counts.set(k, (counts.get(k) ?? 0) + diff)
-  })
-  const out = new Set<string>()
-  for (const [k, n] of counts) if (n > 0) out.add(k)
-  return out
-}

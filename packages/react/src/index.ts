@@ -15,8 +15,13 @@
 // flurry of writes (e.g. seeding from a JSON blob) produces a single
 // render, not one per row.
 
-import { useSyncExternalStore } from 'react'
-import { openSession, type Program, type ProgramSession } from 'flow-ts'
+import { useMemo, useSyncExternalStore } from 'react'
+import {
+  type Program,
+  type ProgramSession,
+  executeProgram,
+  openSession,
+} from 'flow-ts'
 import { encodeRow, type Row } from 'flow-ts'
 import {
   type BackwardRequest,
@@ -134,6 +139,7 @@ export class Store {
   #backward: BackwardSession | null = null
   /** Per-view writable columns, computed once per program. */
   #writableColumns: Record<string, number[]> | null = null
+  #edbVersion = 0
 
   constructor(program: Program, options: StoreOptions = {}) {
     this.#program = program
@@ -299,6 +305,7 @@ export class Store {
       bucket.delete(key)
     }
     this.#queueDiff(relation, row, diff)
+    this.#edbVersion++
     // Keep the backward graph in step. It only exists once somebody has
     // written, and an unknown relation there is one this program does not
     // declare — the same rows `replaceProgram` parks for a later rebuild.
@@ -316,6 +323,57 @@ export class Store {
    *  doesn't need it — the microtask flush is enough. */
   flush(): void {
     this.#flushNow()
+  }
+
+  /** Bumped whenever a source relation changes, so a consumer that depends on
+   *  *all* of them has one value to compare rather than a set of snapshots. */
+  edbVersion(): number {
+    return this.#edbVersion
+  }
+
+  /** Run a program this store has never seen, over the facts it holds.
+   *
+   *  The source is the caller's declarations and rules; the source-relation
+   *  declarations are prepended, so a query names them without restating their
+   *  schemas — and gets every one the store knows, including relations put in
+   *  directly rather than parsed from anywhere.
+   *
+   *  A throwaway evaluation, so it costs a batch run. `useAdHocQuery` is the
+   *  React wrapper and the place the trade is explained. */
+  runAdHoc(source: string): AdHocResult {
+    const rows = new Map<string, Row[]>()
+    const edbNames = new Set(this.#program.edbs.map((d) => d.name))
+    // Built from the attributes rather than `RelDecl.toString()`, which
+    // appends `read as <path>` — the `.input` clause inlined, and not
+    // something a `.decl` line can carry.
+    const declaration = (d: Program['edbs'][number]) =>
+      `.decl ${d.name}(${d.attributes.map((a) => String(a)).join(', ')})\n.input ${d.name}.csv`
+    const text = `.in\n${this.#program.edbs.map(declaration).join('\n\n')}\n\n${source}\n`
+
+    let program: Program
+    try {
+      program = parseProgram(text, { grammarSource: 'ad-hoc.dl' })
+    } catch (err) {
+      return { rows, error: err instanceof Error ? err.message : String(err) }
+    }
+
+    const facts = new Map<string, Row[]>()
+    for (const name of edbNames) {
+      facts.set(name, [...(this.#edbRows.get(name)?.values() ?? [])])
+    }
+    try {
+      executeProgram(program, facts, {}, (rel, row, diff) => {
+        // Source relations are the input; echoing them back would bury the
+        // answer under what was already known.
+        if (diff <= 0 || edbNames.has(rel)) return
+        const list = rows.get(rel)
+        if (list) list.push([...row])
+        else rows.set(rel, [[...row]])
+      })
+    } catch (err) {
+      return { rows, error: err instanceof Error ? err.message : String(err) }
+    }
+    return { rows, error: null }
   }
 
   // --- writing back ----------------------------------------------------
@@ -549,6 +607,66 @@ export function useLiveQuery<T extends Row>(
     () => store.snapshot(relation),
     () => store.snapshot(relation),
   ) as ReadonlyArray<T>
+}
+
+/** The result of running a one-off program over the store's facts. */
+export interface AdHocResult {
+  /** Rows per relation the query derived. Source relations are excluded — they
+   *  are the input, and echoing them back would bury the answer. */
+  rows: ReadonlyMap<string, ReadonlyArray<Row>>
+  /** A parse or evaluation failure, as something to show rather than throw. A
+   *  query console's normal state is half-written. */
+  error: string | null
+}
+
+const EMPTY_RESULT: AdHocResult = { rows: new Map(), error: null }
+
+/**
+ * React hook: run a program the store has never seen, over the facts it
+ * currently holds.
+ *
+ * `useLiveQuery` reads a relation the program already declares. This is for the
+ * other case — a query somebody just typed — where there is no relation to
+ * subscribe to because the rule did not exist when the graph was built.
+ *
+ * Splicing it into the live program is the wrong trade: that rebuilds the whole
+ * graph and makes a scratch query everyone else's problem. So this evaluates it
+ * in a throwaway, which is a batch run and priced like one.
+ *
+ * What it does *not* do is re-derive the facts. A consumer left to itself
+ * reaches for whatever it parsed the project from, and then the query can only
+ * see what came from that source — flow-page's console could query its CSS and
+ * not the canvas, because canvas facts are put into the store directly and were
+ * never in a file. Reading the store's own relations is both cheaper and the
+ * only way to see everything it knows.
+ *
+ * Re-runs when the source changes, when the program is swapped, and when any
+ * source relation does. That last one is the expensive one: a batch evaluation
+ * per edit. Fine for a console someone is looking at, wrong for anything on a
+ * hot path — which is what `writable` views and `useLiveQuery` are for.
+ */
+export function useAdHocQuery(store: Store, source: string): AdHocResult {
+  const program = useProgram(store)
+  // One subscription covering every source relation: any of them changing
+  // changes the answer, and a query console is not worth finer granularity.
+  const version = useSyncExternalStore(
+    (cb) => {
+      const offs = program.edbs.map((d) => store.subscribe(d.name, cb))
+      return () => {
+        for (const off of offs) off()
+      }
+    },
+    () => store.edbVersion(),
+    () => store.edbVersion(),
+  )
+
+  return useMemo(() => {
+    if (!source.trim()) return EMPTY_RESULT
+    return store.runAdHoc(source)
+    // `version` is the dependency that matters — it moves whenever the facts
+    // do — and the linter cannot see that, hence naming it here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store, source, program, version])
 }
 
 /** A live view you can write through. */

@@ -223,3 +223,74 @@ describe('behaviour', () => {
     )
   })
 })
+
+// The spread helpers need eight variables of their own, and for a long time
+// they were named `s`, `s2`, `n`, `d`, `q`, `m`, `r`, `a` unconditionally. Every
+// test above happens to write the group key as `p`, so nothing collided and the
+// bug sat there — until a program named its group key `n`, at which point
+// `Sh2(n, d / n) :- Sh1(n, d), Sh0(n, n).` made the group key and the group
+// size the same variable and the request resolved against nothing. It compiled
+// clean and refused at runtime, which is the worst way for this to fail.
+describe("helper variables do not capture the rule's own", () => {
+  // One program per name the generator wants, each using it as the group key.
+  const collidingSource = (groupKey: string): string => `\
+.in
+.decl Hours(${groupKey}: string, w: number, h: number)
+.input Hours.csv
+
+.printsize
+.decl Total(${groupKey}: string, s0: number)
+
+.rule
+Total(${groupKey}, sum(h)) :- Hours(${groupKey}, w, h).
+`
+
+  it.each(['s', 's2', 'n', 'd', 'q', 'm', 'r', 'a'])(
+    'group key named %s still spreads',
+    (groupKey) => {
+      const facts: Facts = { Hours: [['x', 1, 5], ['x', 2, 7]] }
+      const { upd } = backward(collidingSource(groupKey), facts, 'Total', ['x', 12], ['x', 16], SPREAD)
+      const rows = [...(upd.get('Hours')?.values() ?? [])].sort(
+        (l, r) => Number(l[1]) - Number(r[1]),
+      )
+      // Δ=4 over 2 members: +2 each, no remainder.
+      expect(rows).toEqual([
+        ['x', 1, 5, 'x', 1, 7],
+        ['x', 2, 7, 'x', 2, 9],
+      ])
+    },
+  )
+
+  it('renames rather than shadowing, and the result still parses', () => {
+    const shadow = compileShadow(parseProgram(collidingSource('n')), SPREAD)
+    expect(() => parseProgram(shadow.source, { grammarSource: 's.dl' })).not.toThrow()
+    // The group key keeps its name; the size variable is the one that moves.
+    expect(shadow.source).toContain('Sh0(n, count(w)) :- Hours(n, w, h).')
+    expect(shadow.source).not.toContain('Sh0(n, n)')
+  })
+
+  it('handles a member column that collides too', () => {
+    const source = `\
+.in
+.decl Hours(n: string, a: number, h: number)
+.input Hours.csv
+
+.printsize
+.decl Total(n: string, s0: number)
+
+.rule
+Total(n, sum(h)) :- Hours(n, a, h).
+`
+    const facts: Facts = { Hours: [['x', 1, 5], ['x', 2, 7], ['x', 3, 11]] }
+    const { upd } = backward(source, facts, 'Total', ['x', 23], ['x', 27], SPREAD)
+    const rows = [...(upd.get('Hours')?.values() ?? [])].sort(
+      (l, r) => Number(l[1]) - Number(r[1]),
+    )
+    // Δ=4 over 3 members: +1 each, remainder 1 to the lowest member.
+    expect(rows).toEqual([
+      ['x', 1, 5, 'x', 1, 7],
+      ['x', 2, 7, 'x', 2, 8],
+      ['x', 3, 11, 'x', 3, 12],
+    ])
+  })
+})

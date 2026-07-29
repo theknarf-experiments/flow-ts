@@ -822,6 +822,32 @@ function compileSpread(
   const memberType = dataTypeToString(decl.attributes[args.indexOf(member)]!.dataType)
   const num = 'number'
 
+  // The helper rules below need eight variables of their own. Naming them
+  // `n`, `d`, … unconditionally captures whenever the *rule* already uses that
+  // name: `Booked(n, sum(h)) :- Hours(n, w, h).` turned `Sh2(n, d / n) :-
+  // Sh1(n, d), Sh0(n, n).` into a rule where `n` is both the group key and the
+  // group size, and the request then resolved against nothing. Mint them
+  // against the names already in play instead. They double as attribute names
+  // on the helper `.decl`s, where a collision with a group-by column is the
+  // same bug one namespace over.
+  const taken = new Set([...args, ...groupBy])
+  const mint = (base: string): string => {
+    let name = base
+    for (let i = 1; taken.has(name); i++) name = `${base}_${i}`
+    taken.add(name)
+    return name
+  }
+  // `s`/`s2` are the request's before and after, and only appear in `delta`'s
+  // body; the rest thread through the helper chain.
+  const vOld = mint('s')
+  const vNew = mint('s2')
+  const vSize = mint('n')
+  const vDelta = mint('d')
+  const vShare = mint('q')
+  const vProd = mint('m')
+  const vRem = mint('r')
+  const vAbsorb = mint('a')
+
   const size = freshHelper()
   const delta = freshHelper()
   const share = freshHelper()
@@ -830,35 +856,35 @@ function compileSpread(
   const absorb = freshHelper()
 
   helpers.push(
-    { name: size, attrs: `${gAttrs}, n: ${num}` },
-    { name: delta, attrs: `${gAttrs}, d: ${num}` },
-    { name: share, attrs: `${gAttrs}, q: ${num}` },
-    { name: prod, attrs: `${gAttrs}, m: ${num}` },
-    { name: rem, attrs: `${gAttrs}, r: ${num}` },
-    { name: absorb, attrs: `${gAttrs}, a: ${memberType}` },
+    { name: size, attrs: `${gAttrs}, ${vSize}: ${num}` },
+    { name: delta, attrs: `${gAttrs}, ${vDelta}: ${num}` },
+    { name: share, attrs: `${gAttrs}, ${vShare}: ${num}` },
+    { name: prod, attrs: `${gAttrs}, ${vProd}: ${num}` },
+    { name: rem, attrs: `${gAttrs}, ${vRem}: ${num}` },
+    { name: absorb, attrs: `${gAttrs}, ${vAbsorb}: ${memberType}` },
   )
 
   const body = renderAtom(atom)
-  const req = `${UPD_PREFIX}${rule.head.name}(${g}, s, ${g}, s2)`
+  const req = `${UPD_PREFIX}${rule.head.name}(${g}, ${vOld}, ${g}, ${vNew})`
   const need = [UPD_PREFIX + rule.head.name]
 
   out.push(
     { headRel: size, needs: [], text: `${size}(${g}, count(${member})) :- ${body}.` },
-    { headRel: delta, needs: need, text: `${delta}(${g}, s2 - s) :- ${req}.` },
+    { headRel: delta, needs: need, text: `${delta}(${g}, ${vNew} - ${vOld}) :- ${req}.` },
     {
       headRel: share,
       needs: [delta, size],
-      text: `${share}(${g}, d / n) :- ${delta}(${g}, d), ${size}(${g}, n).`,
+      text: `${share}(${g}, ${vDelta} / ${vSize}) :- ${delta}(${g}, ${vDelta}), ${size}(${g}, ${vSize}).`,
     },
     {
       headRel: prod,
       needs: [share, size],
-      text: `${prod}(${g}, q * n) :- ${share}(${g}, q), ${size}(${g}, n).`,
+      text: `${prod}(${g}, ${vShare} * ${vSize}) :- ${share}(${g}, ${vShare}), ${size}(${g}, ${vSize}).`,
     },
     {
       headRel: rem,
       needs: [delta, prod],
-      text: `${rem}(${g}, d - m) :- ${delta}(${g}, d), ${prod}(${g}, m).`,
+      text: `${rem}(${g}, ${vDelta} - ${vProd}) :- ${delta}(${g}, ${vDelta}), ${prod}(${g}, ${vProd}).`,
     },
     {
       headRel: absorb,
@@ -870,16 +896,16 @@ function compileSpread(
       needs: [share, absorb],
       text:
         `${UPD_PREFIX}${atom.name}(${args.join(', ')}, ${args
-          .map((a) => (a === agg.variable ? `${a} + q` : a))
-          .join(', ')}) :- ${body}, ${share}(${g}, q), ${absorb}(${g}, a), ${member} != a.`,
+          .map((a) => (a === agg.variable ? `${a} + ${vShare}` : a))
+          .join(', ')}) :- ${body}, ${share}(${g}, ${vShare}), ${absorb}(${g}, ${vAbsorb}), ${member} != ${vAbsorb}.`,
     },
     {
       headRel: UPD_PREFIX + atom.name,
       needs: [share, rem, absorb],
       text:
         `${UPD_PREFIX}${atom.name}(${args.join(', ')}, ${args
-          .map((a) => (a === agg.variable ? `${a} + q + r` : a))
-          .join(', ')}) :- ${body}, ${share}(${g}, q), ${rem}(${g}, r), ${absorb}(${g}, ${member}).`,
+          .map((a) => (a === agg.variable ? `${a} + ${vShare} + ${vRem}` : a))
+          .join(', ')}) :- ${body}, ${share}(${g}, ${vShare}), ${rem}(${g}, ${vRem}), ${absorb}(${g}, ${member}).`,
     },
   )
   return true

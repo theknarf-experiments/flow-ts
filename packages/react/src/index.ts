@@ -100,14 +100,29 @@ class RelationState {
   /** Composite key (`encodeRow(row)`) → live row tuple. Excludes any
    *  row whose net multiplicity dropped to zero. */
   readonly rows = new Map<string, Row>()
+  /** Running multiplicity per row, across every tick.
+   *
+   *  Presence can't be derived from one tick's diff alone. A row with two
+   *  derivations, one of which is retracted, is emitted `-1` and `+1` in the
+   *  *same* advance — deleting `docs → api` from a link graph retracts
+   *  `Reach(home, api)` by that path and re-derives it via the other one. Read
+   *  as a per-tick net that is zero, so treating "not positive this tick" as
+   *  "gone" drops a row that is still live. Kept as a running total, it is
+   *  1 - 1 + 1 = 1 and the row stays.
+   *
+   *  Entries at exactly zero are dropped, since a fresh key reads as zero
+   *  anyway and a long-lived store would otherwise accumulate one per row it
+   *  ever held. Negative entries are kept: a row retracted more often than it
+   *  was derived would come back on the next `+1` if the debt were forgotten,
+   *  and quietly resurrecting a row is worse than holding a small map. */
+  readonly counts = new Map<string, number>()
   /** Listeners (React subscribers) attached via `subscribe()`. */
   readonly listeners = new Set<Listener>()
   /** Snapshot identity. Returned by `useSyncExternalStore`'s
    *  getSnapshot — we hand back a fresh array reference each time
    *  the row set changes so React picks up the diff. */
   snapshot: ReadonlyArray<Row> = []
-  /** Diff buffer per tick. Positive net counts move row into `rows`;
-   *  zero/negative net counts remove it. Resolved by `flush()`. */
+  /** Diff buffer per tick, folded into `counts` by `flush()`. */
   pending = new Map<string, [Row, number]>()
 }
 
@@ -205,6 +220,9 @@ export class Store {
     for (const [name, state] of this.#relations) {
       if (state.snapshot.length > 0) toNotify.add(name)
       state.rows.clear()
+      // The multiplicities belong to the old graph. Carrying them over would
+      // add the replay's `+1`s to counts the new session never emitted.
+      state.counts.clear()
       state.pending.clear()
       state.snapshot = []
     }
@@ -285,33 +303,50 @@ export class Store {
 
   /** Queue an EDB update. Used by `Collection`. Mirrors the diff
    *  locally so EDB live queries see the change — the executor only
-   *  emits sink callbacks for IDB heads. */
+   *  emits sink callbacks for IDB heads.
+   *
+   *  A store's EDBs are **sets**, not multisets. The session underneath is a
+   *  Z-set and would happily carry `Link("home","docs")` at multiplicity 2,
+   *  where one delete leaves it derived and one delete removes it from
+   *  `#edbRows` — the table would show the row gone and everything derived
+   *  from it still there. A UI has no vocabulary for "present twice", and
+   *  `#edbRows` (which is what a `replaceProgram` replays) has never had one
+   *  either. So a redundant insert or delete is dropped rather than forwarded,
+   *  and the set is the single answer to what this store holds. */
   update(relation: string, row: Row, diff: number): void {
-    // Validate first — if `session.update` throws (unknown relation,
-    // closed session, etc.) we don't want to mutate any local state.
-    this.#session.update(relation, row, diff)
-    // Track the row authoritatively so a future `replaceProgram` can
-    // replay it even if the user briefly swaps in a program that
-    // doesn't declare this relation.
     const key = encodeRow(row)
     let bucket = this.#edbRows.get(relation)
     if (!bucket) {
       bucket = new Map()
       this.#edbRows.set(relation, bucket)
     }
-    if (diff > 0) {
-      if (!bucket.has(key)) bucket.set(key, row)
-    } else if (diff < 0) {
-      bucket.delete(key)
+    const had = bucket.has(key)
+    const changes = diff > 0 ? !had : diff < 0 ? had : false
+    if (!changes) {
+      // Still ask the session, with a diff that does nothing, so an unknown
+      // relation or a closed session throws exactly as it would for a call
+      // that isn't a no-op. A quiet success here would be a worse bug than the
+      // one this branch exists to avoid.
+      this.#session.update(relation, row, 0)
+      return
     }
-    this.#queueDiff(relation, row, diff)
+    const signed = diff > 0 ? +1 : -1
+    // Validate first — if `session.update` throws (unknown relation,
+    // closed session, etc.) we don't want to mutate any local state.
+    this.#session.update(relation, row, signed)
+    // Track the row authoritatively so a future `replaceProgram` can
+    // replay it even if the user briefly swaps in a program that
+    // doesn't declare this relation.
+    if (signed > 0) bucket.set(key, row)
+    else bucket.delete(key)
+    this.#queueDiff(relation, row, signed)
     this.#edbVersion++
     // Keep the backward graph in step. It only exists once somebody has
     // written, and an unknown relation there is one this program does not
     // declare — the same rows `replaceProgram` parks for a later rebuild.
     if (this.#backward) {
       try {
-        this.#backward.update(relation, row, diff)
+        this.#backward.update(relation, row, signed)
       } catch {
         // not an EDB of this program — ignore, as the forward path does
       }
@@ -546,17 +581,22 @@ export class Store {
       const state = this.#getState(rel)
       let mutated = false
       for (const [key, [row, delta]] of state.pending) {
+        // Fold this tick's diff into the running multiplicity, then read
+        // presence off the total. Reading it off `delta` alone would drop any
+        // row whose derivations were shuffled rather than removed — see the
+        // note on `counts`.
+        const count = (state.counts.get(key) ?? 0) + delta
+        if (count === 0) state.counts.delete(key)
+        else state.counts.set(key, count)
         const had = state.rows.has(key)
-        if (delta <= 0) {
+        if (count <= 0) {
           if (had) {
             state.rows.delete(key)
             mutated = true
           }
-        } else {
-          if (!had) {
-            state.rows.set(key, row)
-            mutated = true
-          }
+        } else if (!had) {
+          state.rows.set(key, row)
+          mutated = true
         }
       }
       state.pending.clear()

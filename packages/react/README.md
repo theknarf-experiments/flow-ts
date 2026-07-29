@@ -56,6 +56,25 @@ once per affected relation.
 Updates auto-batch — `useLiveQuery` renders exactly once per microtask
 no matter how many `insert` calls land in the same tick.
 
+## Sets, and multiplicities
+
+Two things about the fold from diffs to rows are worth stating, because
+neither is what a first reading suggests.
+
+**A store's EDBs are sets.** Inserting the same row twice is one row, and
+one `delete` removes it. The session underneath is a Z-set and would
+happily carry it at multiplicity 2 — leaving a row that the table shows as
+gone and everything derived from it still there — so a redundant insert or
+delete is dropped rather than forwarded. An unknown relation still throws.
+
+**Row presence is read off a running multiplicity, not off one tick's
+diff.** A row with two derivations, one of which is retracted, is emitted
+`-1` and `+1` in the same `advance()`: deleting `docs → api` from a link
+graph retracts `Reach(home, api)` by that path and re-derives it via the
+other one. The tick's net is zero, and treating that as "gone" drops a row
+that is still perfectly well derived. Kept as a running total it is
+`1 - 1 + 1 = 1` and the row stays. `tests/mirror.test.ts` pins both.
+
 ## Live program edits
 
 `store.replaceProgram(newProgram)` swaps the running rules without

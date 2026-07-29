@@ -30,7 +30,6 @@ import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 import { parseProgram } from '@flow-ts/parsing'
 import { executeProgram, openSession } from '../../src/executing/index.js'
-import { guardRecursiveRules } from '../../src/strata/index.js'
 import type { Row } from '../../src/reading/index.js'
 
 /** Programs are parsed once per source. The property tests below recompute a
@@ -45,6 +44,15 @@ const program = (src: string): ReturnType<typeof parseProgram> => {
 
 const live = (c: Map<string, number>): string[] =>
   [...c.entries()].filter(([, n]) => n > 0).map(([k]) => k).sort()
+
+/** Recompute over a whole fact map, for programs with more than one source. */
+function batchFacts(src: string, view: string, facts: Map<string, Row[]>): string[] {
+  const c = new Map<string, number>()
+  executeProgram(program(src), facts, {}, (r, row, d) => {
+    if (r === view) c.set(row.join(','), (c.get(row.join(',')) ?? 0) + d)
+  })
+  return live(c)
+}
 
 function batch(src: string, edb: string, view: string, rows: Row[]): string[] {
   const c = new Map<string, number>()
@@ -466,6 +474,9 @@ function replay(
   src: string,
   view: string,
   edits: readonly Edit[],
+  /** Which EDB rows an edit stands for. Defaults to a single `Arc` row; a
+   *  program with a second source relation can churn that one too. */
+  touches: (e: Edit) => Array<[string, Row]> = (e) => [['Arc', [...e.edge]]],
 ): { at: number; edges: string[]; got: string[]; want: string[] } | null {
   const model = new Set<string>()
   const counts = new Map<string, number>()
@@ -482,16 +493,20 @@ function replay(
     if (edit.add === model.has(key)) return
     if (edit.add) model.add(key)
     else model.delete(key)
-    session.update('Arc', [...edit.edge], edit.add ? 1 : -1)
+    for (const [rel, row] of touches(edit)) session.update(rel, row, edit.add ? 1 : -1)
     session.advance()
 
     const got = live(counts)
-    const want = batch(
-      src,
-      'Arc',
-      view,
-      [...model].map((k) => k.split(',').map(Number) as unknown as Row),
-    )
+    const facts = new Map<string, Row[]>()
+    for (const k of model) {
+      const e: Edit = { add: true, edge: k.split(',').map(Number) as [number, number] }
+      for (const [rel, row] of touches(e)) {
+        const rows = facts.get(rel) ?? []
+        if (!rows.some((r) => r.join() === row.join())) rows.push(row)
+        facts.set(rel, rows)
+      }
+    }
+    const want = batchFacts(src, view, facts)
     if (got.join('|') !== want.join('|')) {
       divergence = { at: i, edges: [...model].sort(), got, want }
     }
@@ -537,6 +552,31 @@ describe('generated edit sequences agree with recomputation', () => {
         // the base case off node 0 having any outgoing edge instead.
         const src = REACH.replace('R(y) :- S(y).', 'R(y) :- Arc(0, y).')
         expect(replay(src, 'R', edits)).toBeNull()
+      }),
+      { numRuns: 120 },
+    )
+  })
+
+  it('a guard-recursive program, where the recursive atom is only an existence test', () => {
+    // `I0(t) :- I0(s), E0(t).` — the shape that needed the unit projection to
+    // stop deduping. Two EDBs, so the generator's edits drive both.
+    const GUARD = `.in
+.decl E0(c0: number)
+.input E0.csv
+.decl Arc(x: number, y: number)
+.input Arc.csv
+
+.printsize
+.decl I0(c0: number)
+
+.rule
+I0(x) :- Arc(x, 0).
+I0(t) :- I0(s), E0(t).`
+    fc.assert(
+      fc.property(fc.array(editGen, { minLength: 1, maxLength: 16 }), (edits) => {
+        // Feed the same edits to E0 as single-column rows, so the guard side
+        // churns too rather than sitting still.
+        expect(replay(GUARD, 'I0', edits, (e) => [['Arc', [...e.edge]], ['E0', [e.edge[0]]]])).toBeNull()
       }),
       { numRuns: 120 },
     )
@@ -639,26 +679,23 @@ describe('order does not matter', () => {
   })
 })
 
-// -- what is still not fixed --------------------------------------------
-//
-// One recursive shape remains, and it is worth being exact about because the
-// boundary is not "recursion".
+// -- the last shape ------------------------------------------------------
 //
 //   I0(t) :- I0(s), E0(t).
 //
-// The head shares no variable with `I0(s)`, so the recursive atom is a guard:
-// it asserts that some `I0` exists and contributes nothing else. The planner
-// projects it down to the join key — nothing, here — and that projection is
-// where every distinct derivation of a row collapses into one. A row derived
-// once from `I0("y")` and again from `I0("x")` arrives as a single fact about
-// existence, so retracting `I0("y")` produces no delta and `I0("x")` is left
-// deriving itself.
+// `s` appears nowhere else, so `I0(s)` is a guard: it asserts that some `I0`
+// exists and contributes nothing else. The planner projects it to a unit, and
+// that projection used to dedupe — reasonably, since outside a loop the
+// multiplicity is noise that would multiply the cartesian join N-fold.
 //
-// Nothing downstream can recover it: the information is gone before any dedup
-// sees it. That needs the derivation to stay distinguishable through the join,
-// which is what differential-dataflow's product timestamps are for.
+// Inside a loop that multiplicity *is* the derivation count. Dropping it meant
+// a row derived once from `I0("y")` and again from `I0("x")` arrived as a
+// single fact about existence, so retracting `I0("y")` produced no delta and
+// `I0("x")` was left deriving itself. Keeping it — see `RowToUnit` — lets the
+// dedup at the head of the loop see one of the two go, which is the question
+// it already knows how to answer.
 
-describe('guard recursion: the shape that is still wrong', () => {
+describe('guard recursion: a recursive atom used for nothing but existence', () => {
   const GUARD = `.in
 .decl E0(c0: string)
 .input E0.csv
@@ -672,18 +709,9 @@ describe('guard recursion: the shape that is still wrong', () => {
 I0(s) :- E1(s, _, "x").
 I0(t) :- I0(s), E0(t).`
 
-  it('is detected statically, by name', () => {
-    const found = guardRecursiveRules(program(GUARD))
-    expect(found).toHaveLength(1)
-    expect(found[0]!.atom).toBe('I0')
-    expect(found[0]!.rule).toContain('I0(t) :- I0(s), E0(t)')
-  })
-
-  it('and the recursion people actually write is not', () => {
-    expect(guardRecursiveRules(program(TC))).toEqual([])
-    expect(guardRecursiveRules(program(REACH))).toEqual([])
-    // One head column from the recursive atom is enough to keep derivations
-    // distinguishable, so half-and-half is fine.
+  it('half and half retracts too, and always did', () => {
+    // One head column out of the recursive atom is enough to keep derivations
+    // distinguishable without any of this, so it was never affected.
     const HALF = `.in
 .decl E0(c0: string)
 .input E0.csv
@@ -696,25 +724,11 @@ I0(t) :- I0(s), E0(t).`
 .rule
 I0(a, s) :- E1(a, s).
 I0(a, s) :- I0(a, t), E0(s).`
-    expect(guardRecursiveRules(program(HALF))).toEqual([])
+    expect(agrees(HALF, 'E1', 'I0', [[1, 'x']], [1, 'x'])).toBe(true)
+    expect(incremental(HALF, 'E1', 'I0', [[1, 'x']], [1, 'x'])).toEqual([])
   })
 
-  it('a program with no recursion at all reports nothing', () => {
-    const FLAT = `.in
-.decl A(x: number)
-.input A.csv
-
-.printsize
-.decl B(x: number)
-
-.rule
-B(x) :- A(x).`
-    expect(guardRecursiveRules(program(FLAT))).toEqual([])
-  })
-
-  it.fails('and retracting through it still disagrees with recomputation', () => {
-    // Kept failing rather than deleted: this is the thing left to fix, and a
-    // test that starts passing is how we find out it was.
+  it('and retracting through it agrees with recomputation', () => {
     const c = new Map<string, number>()
     const s = openSession(program(GUARD), {}, (r, row, d) => {
       if (r === 'I0') c.set(String(row[0]), (c.get(String(row[0])) ?? 0) + d)
@@ -730,19 +744,12 @@ B(x) :- A(x).`
     expect(live(c)).toEqual([])
   })
 
-  it('which is what it does instead', () => {
-    const c = new Map<string, number>()
-    const s = openSession(program(GUARD), {}, (r, row, d) => {
-      if (r === 'I0') c.set(String(row[0]), (c.get(String(row[0])) ?? 0) + d)
-    })
-    s.update('E0', ['x'], 1)
-    s.update('E1', ['x', 0, 'y'], 1)
-    s.update('E1', ['y', 0, 'x'], 1)
-    s.advance()
-    s.update('E1', ['y', 0, 'x'], -1)
-    s.advance()
-    s.close()
-    expect(live(c)).toEqual(['x'])
+  it('it used to leave I0("x") deriving itself', () => {
+    // What the old behaviour was, so the shape stays legible. `I0("x")` was
+    // derived from `I0("y")` and from itself; the unit projection collapsed
+    // both into one fact about existence, so retracting `I0("y")` produced no
+    // delta and the self-derivation carried it.
+    expect(batch(GUARD, 'E1', 'I0', [['x', 0, 'y']])).toEqual([])
   })
 
   it('and batch evaluation is right, as it always is', () => {

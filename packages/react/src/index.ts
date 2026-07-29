@@ -307,9 +307,9 @@ export class Store {
   // Each edit resolves against a freshly compiled shadow program and throws it
   // away, rather than holding a maintained backward session. That costs more
   // per write and nothing per read, which is the right way round for a UI; it
-  // scopes itself to the relation being edited; and it works on any program a
-  // maintained session refuses, which is now only one narrow recursive shape
-  // (see flow-ts strata/guard-recursion.ts) rather than recursion at large.
+  // scopes itself to the relation being edited; and it costs nothing to hold
+  // open. A maintained session is the other trade, and no longer a narrower
+  // one: it used to refuse recursive programs and now handles them.
 
   /** True if edits to this view were opted into. */
   canWrite(relation: string): boolean {

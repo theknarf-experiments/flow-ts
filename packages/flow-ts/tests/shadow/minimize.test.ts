@@ -199,12 +199,11 @@ H(x) :- A(x), C(y).
     session.close()
   })
 
-  it('but still refuses a recursive atom that is only a guard', () => {
-    // The one shape left — see strata/guard-recursion.ts. `s` appears nowhere
-    // but the recursive atom, so its derivations collapse into one before any
-    // of this can count them.
-    const GUARD = parseProgram(
-      `\
+  it('including a recursive atom that is only an existence test', () => {
+    // The last shape to be refused: `s` appears nowhere but the recursive
+    // atom, so the planner projects it to a unit and its derivations used to
+    // collapse into one before any of this could count them.
+    const GUARD_SRC = `\
 .in
 .decl E(x: number)
 .input E.csv
@@ -213,14 +212,25 @@ H(x) :- A(x), C(y).
 .decl G(x: number)
 
 .rule
-G(x) :- E(x).
+G(x) :- E(x), x < 2.
 G(t) :- G(s), E(t).
-`,
-      { grammarSource: 'g.dl' },
+`
+    const GUARD = parseProgram(GUARD_SRC, { grammarSource: 'g.dl' })
+    const session = openBackwardSession(GUARD, { ...PARSE, minimize: true })
+    for (const row of [[0], [1], [5]] as Row[]) session.update('E', row, 1)
+    session.advance()
+    // Everything in E is derived, since any G at all lets every E through.
+    expect(session.rows('G').map((r) => r[0]).sort()).toEqual([0, 1, 5])
+
+    const r = session.resolve({ rel: 'G', row: [5] })
+    expect(r.status).toBe('ok')
+    if (r.status !== 'ok') return
+    expect(session.rows('G').map((x) => x[0]).sort()).toEqual(
+      [...liveRows(GUARD_SRC, { E: [...session.rows('E')] }, 'G').values()]
+        .map((x) => x[0])
+        .sort(),
     )
-    expect(() => openBackwardSession(GUARD, { ...PARSE, minimize: true })).toThrow(
-      /shares no variable with its head/i,
-    )
+    session.close()
   })
 })
 

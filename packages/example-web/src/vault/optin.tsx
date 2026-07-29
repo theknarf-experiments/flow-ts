@@ -350,11 +350,9 @@ export function SessionPanel() {
         A session used to refuse recursive programs outright — retraction through a
         recursive stratum did not fully propagate, and a session cannot live with that
         since it retracts constantly: every proposal un-seeds itself, every speculation
-        rolls back. That is fixed, so recursion is no longer the dividing line. What is
-        left is one narrow shape: a recursive atom sharing no variable with anything else
-        in its rule, whose derivations collapse into a single fact about existence before
-        anything can count them. <code>resolveBackward</code> recomputes per request and is
-        unaffected, which is the one place the cold path is not simply the slower option.
+        rolls back. That is fixed, so the choice between the two is now purely about
+        where you want to pay. The cold path costs nothing to hold open and everything
+        per request; the warm one is the other way round.
       </p>
     </section>
   )

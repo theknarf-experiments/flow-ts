@@ -24,11 +24,11 @@
 // the next one. Fixed in db-ivm's `recursiveDistinct` and in the delete-before-
 // insert staging in `openSession`, so recursion is no longer the dividing line.
 //
-// One shape is still refused, and it is a narrow one: a recursive atom sharing
-// no variable with its head, which collapses every derivation of a row into a
-// single fact about existence before anything downstream can count them. See
-// strata/guard-recursion.ts. Transitive closure, reachability and ancestry all
-// carry a variable out of the recursive atom and are fine.
+// The last shape to go was a recursive atom used for nothing but existence,
+// whose derivations the planner's unit projection collapsed into one before
+// anything downstream could count them. Keeping that projection's multiplicity
+// inside a loop — where it *is* the derivation count — closed it, and there is
+// no recursive shape left that this refuses.
 //
 // Speculation works the same way. Apply the proposed EDB changes, advance, ask
 // whether the view moved; if it didn't, apply the inverse and the session is
@@ -37,7 +37,6 @@
 
 import type { Program } from '../ast/index.js'
 import { type ProgramSession, openSession } from '../executing/dataflow.js'
-import { guardRecursiveRules } from '../strata/index.js'
 import type { Row } from '../reading/row.js'
 import { inferRelationTypes } from '../typing/index.js'
 import { SEED_INS_PREFIX, SEED_PREFIX, SEED_UPD_PREFIX, compileShadow } from './compile.js'
@@ -58,12 +57,6 @@ export interface BackwardSessionOptions extends ResolveOptions {
    *  highly selective row, so it is exactly the case SIP is for. */
   optLevel?: number | null
   noSharing?: boolean
-  /** Open a session over a guard-recursive program anyway.
-   *
-   *  It will drift, and not because of anything in this file: the derivations
-   *  collapse in the planner's join key, before any of this sees them. The
-   *  escape hatch exists so the gap can be worked on. */
-  allowRecursive?: boolean
 }
 
 export interface BackwardSession {
@@ -103,24 +96,6 @@ export function openBackwardSession(
         'costs about 1.8x to load and 3x per step whether or not anyone writes — see ' +
         "`pnpm -F flow-ts run bench`. Pass `views: 'all'` to opt out of narrowing.",
     )
-  }
-
-  // Refuse the one recursive shape a maintained graph cannot undo: a recursive
-  // atom that shares no variable with its head, and so collapses every
-  // derivation of a row into a single fact about existence. See
-  // strata/guard-recursion.ts. Everything else — transitive closure,
-  // reachability, ancestry, anything that carries a variable out of the
-  // recursive atom — is fine, and used to be refused along with it.
-  if (!options.allowRecursive) {
-    const guards = guardRecursiveRules(program)
-    if (guards.length > 0) {
-      throw new Error(
-        `openBackwardSession: ${guards[0]!.rule} has a recursive atom (${guards[0]!.atom}) ` +
-          'that shares no variable with its head, so its derivations collapse into one and ' +
-          'retracting them incrementally is unsound. Use resolveBackward, which recomputes ' +
-          'per request, or pass allowRecursive to override.',
-      )
-    }
   }
 
   const shadow = compileShadow(program, options)

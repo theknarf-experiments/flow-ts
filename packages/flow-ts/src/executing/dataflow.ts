@@ -391,6 +391,10 @@ function buildRecursiveStratum(
 ): void {
   const heads = [...groupPlan.headSignaturesSet()]
   if (heads.length === 0) return
+  // A unit projection keeps its multiplicity here, because inside the loop that
+  // is the derivation count — but only if nothing in the stratum is going to
+  // read it as a count of something else. An aggregate head does exactly that.
+  const countsDerivations = !heads.some((h) => aggCatalog.has(h))
 
   // Snapshot the prior-stratum head streams BEFORE we install variable
   // placeholders so the body can concat them with the per-rule outputs.
@@ -418,7 +422,7 @@ function buildRecursiveStratum(
       }
 
       for (const t of groupPlan.strataPlanFlat()) {
-        applyTransformation(t, nestMaps, groupPlan)
+        applyTransformation(t, nestMaps, groupPlan, countsDerivations)
       }
 
       const out: Record<string, IStreamBuilder<EncodedRow>> = {}
@@ -597,10 +601,14 @@ function applyTransformation(
   t: Transformation,
   maps: DataflowMaps,
   groupPlan?: GroupStrataQueryPlan,
+  /** Whether a unit projection in this stratum should keep its multiplicity —
+   *  true only inside a recursive stratum with no aggregate head, where that
+   *  multiplicity is the derivation count. See `RowToUnit`. */
+  countsDerivations = false,
 ): void {
   const outName = transformationOutput(t).signature.name
   if (isUnary(t)) {
-    applyUnary(t, maps, outName)
+    applyUnary(t, maps, outName, countsDerivations)
   } else {
     applyBinary(t, maps, outName)
   }
@@ -631,6 +639,7 @@ function applyUnary(
   t: Transformation,
   maps: DataflowMaps,
   outName: string,
+  countsDerivations: boolean,
 ): void {
   const inputName = unaryInput(t).signature.name
   switch (t.kind) {
@@ -662,12 +671,33 @@ function applyUnary(
     }
     case 'RowToUnit': {
       // Projection onto no columns: every surviving row becomes the empty
-      // tuple. Dedupe is not an optimisation here but the semantics — without
-      // it a relation of N rows would carry multiplicity N into the cartesian
-      // join and multiply its partner N-fold.
+      // tuple, so a relation of N rows carries multiplicity N into the
+      // cartesian join and multiplies its partner N-fold.
+      //
+      // Outside a recursive stratum that multiplicity is pure noise — the head
+      // dedup collapses it back to presence, and anything counting it (an
+      // aggregate) would be counting the wrong thing. Dedupe it away.
+      //
+      // Inside one it is the derivation count, and throwing it away is what
+      // makes `I0(t) :- I0(s), E0(t).` unretractable. `I0(s)` projected to a
+      // unit says only that some I0 exists, so a row derived once from
+      // I0("y") and again from I0("x") arrives as one fact; retract I0("y")
+      // and no delta is produced, leaving I0("x") deriving itself. Keeping the
+      // multiplicity keeps the two derivations countable, and the dedup at the
+      // head of the loop — which has to reason about exactly this — can then
+      // see one of them go. It normalises back to presence before anything
+      // outside the loop sees it, so the inflation does not escape.
+      //
+      // Unless something inside the loop counts it. A recursive stratum can
+      // carry an aggregate head, and that consumes multiplicity directly, so
+      // those keep the dedupe and keep the limitation.
       const stream = requireRow(maps, inputName, t.kind)
       const fn = makeRowToRowFn(t.flow)
-      maps.rowMap.set(outName, dedupeEncodedRows(stream.pipe(filterMap(fn))))
+      const projected = stream.pipe(filterMap(fn))
+      maps.rowMap.set(
+        outName,
+        countsDerivations ? projected : dedupeEncodedRows(projected),
+      )
       return
     }
     case 'KvToKv': {

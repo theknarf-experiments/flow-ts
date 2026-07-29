@@ -63,8 +63,11 @@ class Draw {
 // alternative — letting any variable land anywhere — generates programs that
 // are legal but never join, and whose relations infer as type conflicts, so the
 // interesting paths would go untested while coverage looked fine.
-const NUM_VARS = ['a', 'b'] as const
-const STR_VARS = ['s', 't'] as const
+// Three of each rather than two. With two, nearly every pair of positions
+// joins by accident, which over-tests joins and under-tests the projections
+// and placeholders that a real program is mostly made of.
+const NUM_VARS = ['a', 'b', 'c'] as const
+const STR_VARS = ['s', 't', 'u'] as const
 type ColType = 'number' | 'string'
 
 /** Small domains, so joins actually hit. */
@@ -94,11 +97,16 @@ function buildAtom(
   bound?: readonly string[],
 ): BuiltAtom {
   const args: string[] = []
+  // A wide relation is mostly ignored by any one rule. flow-md's `MdNode` has
+  // seven columns and its rules name three or four of them, so placeholders
+  // scale with arity rather than staying a flat one-in-ten — otherwise the
+  // wide atoms this now generates would be dense in a way no real rule is.
+  const placeholderIn10 = rel.arity >= 5 ? 4 : 2
   for (let i = 0; i < rel.arity; i++) {
     const t = rel.cols[i]!
     const roll = d.next(10)
-    if (allowPlaceholder && roll === 0) args.push('_')
-    else if (roll === 1) args.push(literalOfType(d, t))
+    if (allowPlaceholder && roll < placeholderIn10) args.push('_')
+    else if (roll === placeholderIn10) args.push(literalOfType(d, t))
     else args.push(d.pick(varsOfType(t)))
   }
   // Bodies are usually tied together, but not always: an atom sharing nothing
@@ -129,7 +137,10 @@ export function buildProgram(pool: readonly number[], recursive = false): GenPro
 
   const edbCount = 1 + d.next(3)
   const edbs: GenRel[] = Array.from({ length: edbCount }, (_, i) => {
-    const arity = 1 + d.next(3)
+    // Usually narrow, sometimes wide. `MdNode` is seven columns, and the
+    // placeholder freshening and the rendering of a `Del_`/`Upd_` head over
+    // that many positions were reachable only in theory before.
+    const arity = d.chance(25) ? 4 + d.next(4) : 1 + d.next(3)
     return {
       name: `E${i}`,
       arity,
@@ -153,7 +164,9 @@ export function buildProgram(pool: readonly number[], recursive = false): GenPro
     const texts: string[] = []
 
     for (let r = 0; r < ruleCount; r++) {
-      const bodyLen = 1 + d.next(3)
+      // Up to four atoms: `Task` joins four, and the third of them reads a
+      // relation the first already read.
+      const bodyLen = 1 + d.next(4)
       const atoms: BuiltAtom[] = []
       const inScope: string[] = []
       for (let b = 0; b < bodyLen; b++) {

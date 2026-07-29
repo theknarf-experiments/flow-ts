@@ -43,6 +43,17 @@ function survey(gen: fc.Arbitrary<GenProgram>, runs: number, label: string): Tal
       if (/[(,] ?\d/.test(text)) bump('numberConstant')
       if (/: string/.test(decls)) bump('stringColumn')
       if (/:-.*\bI\d/.test(text)) bump('idbInBody')
+      // Shapes a real consumer's rules have and mine did not: an atom of five
+      // or more columns, and a body reading one relation more than once.
+      if (/\(([^)]*,){4}/.test(text)) bump('wideAtom')
+      for (const r of p.rules) {
+        const body = r.slice(r.indexOf(':-') + 2)
+        const names = [...body.matchAll(/!?([A-Z]\w*)\(/g)].map((m) => m[1]!)
+        if (new Set(names).size !== names.length) {
+          bump('repeatedRelation')
+          break
+        }
+      }
 
       const heads = p.rules.map((r) => r.slice(0, r.indexOf('(')))
       if (new Set(heads).size !== heads.length) bump('multiRuleHead')
@@ -55,7 +66,7 @@ function survey(gen: fc.Arbitrary<GenProgram>, runs: number, label: string): Tal
         const body = r.slice(r.indexOf(':-') + 2)
         const head = r.slice(r.indexOf('(') + 1, r.indexOf(')'))
         for (const m of body.matchAll(/!?([A-Z]\w*)\(([^)]*)\)/g)) {
-          const vars = m[2]!.split(',').map((x) => x.trim()).filter((x) => /^[abst]$/.test(x))
+          const vars = m[2]!.split(',').map((x) => x.trim()).filter((x) => /^[abcstu]$/.test(x))
           const rest = body.split(m[0]!).join('')
           if (!vars.some((v) => head.includes(v) || rest.includes(v))) bump('existenceTest')
         }

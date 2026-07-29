@@ -16,6 +16,8 @@ import {
   type Transformation,
   aggregationCatalogFromProgram,
   binaryInputs,
+  dataTypeToString,
+  inferRelationTypes,
   isUnary,
   transformationOutput,
   unaryInput,
@@ -77,7 +79,26 @@ function* buildTextReport(
   }
   yield ''
   yield `IDBs (${program.idbs.length}):`
-  for (const idb of program.idbs) yield `  ${idb.toString()}`
+  // A relation declared without attributes — `.decl Foo()`, or the `?-` query
+  // shorthand that desugars to one — has its schema left to the rules. That is
+  // legal and deliberate, but printing `Foo()` here tells a reader nothing
+  // about what they are about to get, so show what inference recovers and mark
+  // it as recovered rather than declared.
+  const inferred = inferRelationTypes(program)
+  for (const idb of program.idbs) {
+    if (idb.attributes.length > 0) {
+      yield `  ${idb.toString()}`
+      continue
+    }
+    const cols = inferred.types.get(idb.name)
+    if (cols) {
+      const shown = cols.map((t, i) => `c${i}: ${dataTypeToString(t)}`).join(', ')
+      yield `  ${idb.name}(${shown})   [inferred]`
+    } else {
+      const why = inferred.unresolved.find((u) => u.rel === idb.name)?.reason
+      yield `  ${idb.name}()   [not inferable${why ? `: ${why}` : ''}]`
+    }
+  }
   yield ''
   yield `Rules (${program.rules.length}):`
   for (let i = 0; i < program.rules.length; i++) {

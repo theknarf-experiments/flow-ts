@@ -143,3 +143,60 @@ describe('the whole program', () => {
     expect(t.types.get('Score')).toEqual(['Integer', 'Float'])
   })
 })
+
+describe('`any` in the widening lattice', () => {
+  const ANY = `\
+.in
+.decl Prop(entity: string, key: string, value: any)
+.input Prop.csv
+.decl Task(path: string, line: number)
+.input Task.csv
+
+.printsize
+`
+
+  it('is what a declaration says it is', () => {
+    const t = types(`${ANY}.decl V()\n\n.rule\nV(v) :- Prop(e, k, v).`)
+    expect(t.types.get('Prop')).toEqual(['String', 'String', 'Any'])
+    // Traced from the body position, like any other column.
+    expect(t.types.get('V')).toEqual(['Any'])
+  })
+
+  it('absorbs a concrete type when two rules meet', () => {
+    // One rule gives Any, the other Integer. `Any` holds both, so this is a
+    // widening rather than a disagreement.
+    const t = types(
+      `${ANY}.decl Mixed()\n\n.rule\nMixed(v) :- Prop(e, k, v).\nMixed(l) :- Task(p, l).`,
+    )
+    expect(t.types.get('Mixed')).toEqual(['Any'])
+    expect(t.unresolved.find((u) => u.rel === 'Mixed')).toBeUndefined()
+  })
+
+  it('is not what inference falls back on when two rules genuinely disagree', () => {
+    // String and Integer *do* both fit in `Any`, and reaching for it here would
+    // turn every real conflict into a silent success. It stays a conflict.
+    const t = types(
+      `${ANY}.decl Clash()\n\n.rule\nClash(p) :- Task(p, l).\nClash(l) :- Task(p, l).`,
+    )
+    expect(t.types.has('Clash')).toBe(false)
+    expect(t.unresolved.find((u) => u.rel === 'Clash')?.reason).toMatch(/disagree/i)
+  })
+
+  it('does not override an explicit `any` with the type it happens to see', () => {
+    const t = types(`${ANY}.decl V(v: any)\n\n.rule\nV(l) :- Task(p, l).`)
+    expect(t.types.get('V')).toEqual(['Any'])
+  })
+
+  it('carries through arithmetic, whose result type is not knowable statically', () => {
+    // The runtime requires a number here and says so if it doesn't get one;
+    // which *kind* of number depends on the value, so `Any` is the honest
+    // answer rather than a guess between Integer and Float.
+    const t = types(`${ANY}.decl Doubled()\n\n.rule\nDoubled(v * 2) :- Prop(e, k, v).`)
+    expect(t.types.get('Doubled')).toEqual(['Any'])
+  })
+
+  it('counts as an Integer however untyped its operand', () => {
+    const t = types(`${ANY}.decl N()\n\n.rule\nN(e, count(v)) :- Prop(e, k, v).`)
+    expect(t.types.get('N')).toEqual(['String', 'Integer'])
+  })
+})

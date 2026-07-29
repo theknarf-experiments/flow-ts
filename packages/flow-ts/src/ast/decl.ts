@@ -3,7 +3,17 @@
 import type { Const } from './constant.js'
 import { constToString } from './constant.js'
 
-export type DataType = 'Integer' | 'String' | 'Float'
+/** A column's declared type.
+ *
+ *  `Any` is the top of this lattice: a column that holds whichever of the
+ *  others turns up. It is the honest declaration for data whose shape is the
+ *  host's business rather than the program's — an id that is a number in one
+ *  source and a slug in another, a property bag, a CSV column nobody has
+ *  characterised yet — and it costs nothing at runtime, because the wire
+ *  encoding tags every field with its own type already (see
+ *  `reading/value.ts`). What it does not do is widen the *values*: `Any` still
+ *  means number or string, the two things a row cell can be. */
+export type DataType = 'Integer' | 'String' | 'Float' | 'Any'
 
 export const NULL_SENTINEL = -9223372036854775808n // i64::MIN as bigint
 
@@ -19,6 +29,8 @@ export function parseDataType(s: string): DataType {
       return 'String'
     case 'float':
       return 'Float'
+    case 'any':
+      return 'Any'
     default:
       throw new Error(`unknown data type: ${s}`)
   }
@@ -32,6 +44,8 @@ export function dataTypeToString(dt: DataType): string {
       return 'string'
     case 'Float':
       return 'float'
+    case 'Any':
+      return 'any'
   }
 }
 

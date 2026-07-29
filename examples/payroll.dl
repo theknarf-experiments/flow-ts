@@ -1,0 +1,39 @@
+// The same question twice: once written out, once as a query. Demonstrates:
+//   • `?-`, a rule that brings its own head declaration — no `.out` section,
+//     no `.decl`, no column types
+//   • that the two forms are the same program: `Payroll` and `PayrollQ` derive
+//     identical rows, and the second is what the first desugars to
+//   • two `?-` rules over one head, which is how a query writes a union
+//
+// The types of a query's columns are recovered by inference when something
+// needs them — `flow-ts inspect examples/payroll.dl` shows them.
+//
+// Run it:
+//     pnpm -F @flow-ts/cli run cli -- examples/payroll.dl --facts examples
+
+.in
+.decl Person(id: number, name: string, dept: string)
+.input Person2.csv
+
+.decl Salary(id: number, amount: number)
+.input Salary.csv
+
+.out
+.decl Payroll(dept: string, total: number)
+
+.rule
+Payroll(d, sum(s)) :- Person(i, n, d), Salary(i, s).
+
+// The same rule, without the four lines above it.
+?- PayrollQ(d, sum(s)) :- Person(i, n, d), Salary(i, s).
+
+// Two rules, one head: everyone in engineering or operations.
+?- Core(n) :- Person(i, n, "eng").
+?- Core(n) :- Person(i, n, "ops").
+
+// And with no head at all — a bare goal reports the variables its body binds,
+// in order, under a name generated for it (`Query1` here). Note that it reports
+// *every* bound variable, `i` included: a join key has to be named to do its
+// job, so it comes back too. `_` only drops a column nothing needs — when you
+// want to choose the columns, name the head, as `Core` does above.
+?- Person(i, n, d), Salary(i, s), s > 100.

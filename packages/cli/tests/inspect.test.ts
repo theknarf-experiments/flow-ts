@@ -123,3 +123,44 @@ describe('runInspect — planner knobs', () => {
     expect(a.join('\n')).not.toBe(b.join('\n'))
   })
 })
+
+describe('runInspect and relations whose schema is left to the rules', () => {
+  const QUERY = `\
+.in
+.decl Person(id: number, name: string, dept: string)
+.input Person.csv
+
+?- Payroll(d, count(n)) :- Person(i, n, d).
+`
+
+  // Two rules for one head that disagree about a column. Both are perfectly
+  // plannable — the disagreement is about types, which the planner has no
+  // opinion on — so this reaches the report, unlike an unsafe rule.
+  const CONFLICT = `\
+.in
+.decl Person(id: number, name: string, dept: string)
+.input Person.csv
+
+?- U(n) :- Person(i, n, d).
+?- U(i) :- Person(i, n, d).
+`
+
+  it('shows the types inference recovers, marked as recovered', () => {
+    // `Payroll()` on its own tells a reader nothing about what they will get.
+    const out = capture(write('query.dl', QUERY)).join('\n')
+    expect(out).toContain('Payroll(c0: string, c1: number)')
+    expect(out).toContain('[inferred]')
+  })
+
+  it('says so, and why, when the columns cannot be pinned down', () => {
+    const out = capture(write('conflict.dl', CONFLICT)).join('\n')
+    expect(out).toMatch(/U\(\)\s+\[not inferable: .+\]/)
+    expect(out).toMatch(/disagree/i)
+  })
+
+  it('leaves an explicitly declared relation exactly as declared', () => {
+    const out = capture(write('reach.dl', REACH)).join('\n')
+    expect(out).toContain('Reach(id: number)')
+    expect(out).not.toContain('[inferred]')
+  })
+})

@@ -43,6 +43,8 @@ type Builders = {
   atomArgConst: (value: Const) => AtomArg
   atomArgPlaceholder: () => AtomArg
   head: (name: string, args: HeadArg[]) => Head
+  headArgVar: (name: string) => HeadArg
+  bareQueryColumns: (rhs: Predicate[]) => string[]
   headArgAgg: (agg: Aggregation) => HeadArg
   headArgFromArithmic: (a: Arithmetic) => HeadArg
   aggregation: (op: AggregationOperator, a: Arithmetic) => Aggregation
@@ -80,6 +82,28 @@ const builders: Builders = {
   atomArgConst: (value) => ({ kind: 'Const', value }),
   atomArgPlaceholder: () => ({ kind: 'Placeholder' }),
   head: (name, args) => new Head(name, args),
+  headArgVar: (name) => ({ kind: 'Var', name }),
+  /** The columns of a bare `?- Body.` query: the distinct variables its
+   *  positive atoms bind, in order of first appearance.
+   *
+   *  Positive atoms only, which is the same set the safety rule guarantees is
+   *  bound — a variable that occurs solely in a negated atom or a comparison is
+   *  unbound, and reporting it would be reporting nothing. Placeholders (`_`)
+   *  bind nothing by construction, so `?- Person(_, n, _).` reports just `n`,
+   *  which is how a bare goal projects. */
+  bareQueryColumns: (rhs) => {
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const predicate of rhs) {
+      if (predicate.kind !== 'Atom') continue
+      for (const arg of predicate.atom.args) {
+        if (arg.kind !== 'Var' || seen.has(arg.name)) continue
+        seen.add(arg.name)
+        out.push(arg.name)
+      }
+    }
+    return out
+  },
   headArgAgg: (aggregation) => ({ kind: 'Aggregation', aggregation }),
   headArgFromArithmic: (a) =>
     a.isVar()

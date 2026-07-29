@@ -63,7 +63,15 @@ function checkRow(
     const want = cols[i]!
     const got = row[i]
     // Integer and Float are the same JS number at runtime, so they are
-    // interchangeable here; only the number/string split is real.
+    // interchangeable here; only the number/string split is real. `Any` is
+    // declared to have no opinion, so it checks nothing beyond arity.
+    if (want === 'Any') {
+      if (typeof got === 'string' || typeof got === 'number') continue
+      return (
+        `${rel} column ${i} is any, which is a number or a string, ` +
+        `but the ${what} has ${typeof got} (${JSON.stringify(got)})`
+      )
+    }
     const ok = want === 'String' ? typeof got === 'string' : typeof got === 'number'
     if (!ok) {
       return (

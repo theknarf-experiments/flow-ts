@@ -1,0 +1,39 @@
+// A property bag, where the value column has no single type. Demonstrates:
+//   • an `any` column, holding numbers and strings in the same position
+//   • joining an `any` column against a typed one — a text cell matches a
+//     `string` column, and a numeric cell does not, because 1 and "1" are
+//     different values (dave's city is the number 1 and joins nothing)
+//   • that a cell keeps its JS type: `Born` carries numbers, not "1991"
+//
+// This is the case `any` exists for. The subject/key/value shape comes from
+// somewhere that doesn't have a schema — a front-matter block, a JSON blob, a
+// spreadsheet column nobody has characterised — and forcing every value to
+// `string` would mean no arithmetic and no joins against typed relations.
+//
+// Run it:
+//     pnpm -F @flow-ts/cli run cli -- examples/props.dl --facts examples
+//
+// See examples/Prop.csv, examples/City.csv for the seed data.
+
+.in
+.decl Prop(subject: string, key: string, value: any)
+.input Prop.csv
+
+.decl City(name: string, country: string)
+.input City.csv
+
+.out
+.decl Born(subject: string, year: any)
+.decl Country(subject: string, country: string)
+.decl Adult(subject: string)
+
+.rule
+// The value column stays whatever it was — these are numbers.
+Born(s, v) :- Prop(s, "born", v).
+
+// An `any` cell joins a `string` column when it holds text.
+Country(s, c) :- Prop(s, "city", v), City(v, c).
+
+// …and takes part in arithmetic when it holds a number. A row whose `born`
+// value were text would fail here by name rather than being coerced.
+Adult(s) :- Prop(s, "born", v), 2026 - v >= 18.

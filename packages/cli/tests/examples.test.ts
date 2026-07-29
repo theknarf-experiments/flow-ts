@@ -30,6 +30,30 @@ describe('bundled example programs', () => {
     expect(counts.get('FoaF')).toBe(2)
   })
 
+  it('props.dl: an `any` column carries both kinds and joins by value', () => {
+    const counts = runExample('props')
+    // Two `born` rows, both numeric.
+    expect(counts.get('Born')).toBe(2)
+    // alice, bob and carol have a text city that matches City.name. dave's is
+    // the *number* 1 — read that way from the fact file — so it joins nothing.
+    expect(counts.get('Country')).toBe(3)
+    // 2026 - 1991 >= 18 for alice; bob was born in 2015. Arithmetic works on an
+    // `any` cell that happens to hold a number.
+    expect(counts.get('Adult')).toBe(1)
+  })
+
+  it('payroll.dl: a `?-` query derives the same rows as the long form', () => {
+    const counts = runExample('payroll')
+    // Three departments, and the query form agrees with the declared one.
+    expect(counts.get('Payroll')).toBe(3)
+    expect(counts.get('PayrollQ')).toBe(counts.get('Payroll'))
+    // Two `?-` rules over one head: eng (2) ∪ ops (1).
+    expect(counts.get('Core')).toBe(3)
+    // The bare goal lands in a generated relation, reporting every variable it
+    // binds. alice (140), bob (120) and dave (110) clear 100; carol is on 95.
+    expect(counts.get('Query1')).toBe(3)
+  })
+
   it('stocks.dl: head arithmetic over a float × int works', () => {
     const counts = runExample('stocks')
     expect(counts.get('MarketCap')).toBe(3)

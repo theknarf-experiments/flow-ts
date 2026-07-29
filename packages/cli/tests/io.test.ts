@@ -200,3 +200,43 @@ describe('appendCsvRow', () => {
     ])
   })
 })
+
+describe('an `any` column read from a fact file', () => {
+  // A CSV cell is text and nothing else, so this is the one place where `any`
+  // has to guess. The rule is "a cell that is wholly a finite number is one",
+  // which is also the rule the wire format's tag dispatch uses.
+  const decl = (type: 'Any' | 'String') =>
+    new RelDecl(
+      'Prop',
+      [new Attribute('entity', 'String'), new Attribute('value', type)],
+      'Prop.csv',
+    )
+
+  it('reads each cell as whichever kind it looks like', () => {
+    writeFacts('Prop.csv', 'alice,34\nbob,Oslo\ncarol,3.5\ndave,-2\n')
+    expect(readRowsForRelDecl(decl('Any'), tmpDir, ',')).toEqual([
+      ['alice', 34],
+      ['bob', 'Oslo'],
+      ['carol', 3.5],
+      ['dave', -2],
+    ])
+  })
+
+  it('keeps a quoted field containing the delimiter intact', () => {
+    writeFacts('Prop.csv', 'alice,"a,b"\n')
+    expect(readRowsForRelDecl(decl('Any'), tmpDir, ',')).toEqual([['alice', 'a,b']])
+  })
+
+  it('reads a blank cell as the empty string, not zero', () => {
+    writeFacts('Prop.csv', 'alice,\n')
+    expect(readRowsForRelDecl(decl('Any'), tmpDir, ',')).toEqual([['alice', '']])
+  })
+
+  it('takes the same column as text when it is declared string', () => {
+    // The escape hatch, and the reason inferring is safe to default to: a
+    // column whose shape you know says so, and `007` stays `007`.
+    writeFacts('Prop.csv', 'alice,007\n')
+    expect(readRowsForRelDecl(decl('Any'), tmpDir, ',')).toEqual([['alice', 7]])
+    expect(readRowsForRelDecl(decl('String'), tmpDir, ',')).toEqual([['alice', '007']])
+  })
+})

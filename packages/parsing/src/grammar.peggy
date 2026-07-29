@@ -13,20 +13,52 @@ Program
       const edbs = [];
       const idbs = [];
       const rules = [];
+      const queryIdbs = [];
+      const bareGoals = [];
       for (const s of sections) {
         if (s.edbs) for (const e of s.edbs) edbs.push(e);
         if (s.idbs) for (const i of s.idbs) idbs.push(i);
+        if (s.queryIdbs) for (const q of s.queryIdbs) queryIdbs.push(q);
+        if (s.bareGoals) for (const g of s.bareGoals) bareGoals.push(g);
         if (s.rules) for (const r of s.rules) rules.push(r);
+      }
+      // A `?-` query declares its own head. Skip one whose name is already
+      // declared — by an explicit `.decl`, or by an earlier query with the
+      // same head, which is how a query writes a union. The explicit
+      // declaration wins: it is a statement, and the query is shorthand for
+      // not having made one.
+      const declared = new Set();
+      for (const d of edbs) declared.add(d.name);
+      for (const d of idbs) declared.add(d.name);
+      for (const q of queryIdbs) {
+        if (declared.has(q.name)) continue;
+        declared.add(q.name);
+        idbs.push(q);
+      }
+      // A bare goal has no name, so one is made up here — after every declared
+      // name is known, so the throwaway can't shadow a real relation. Numbered
+      // in source order, and only over the bare goals, so a program's names are
+      // a function of its text and nothing else.
+      let seq = 0;
+      for (const g of bareGoals) {
+        let name;
+        do { name = "Query" + (++seq); } while (declared.has(name));
+        declared.add(name);
+        const args = options.b.bareQueryColumns(g.rhs).map(v => options.b.headArgVar(v));
+        idbs.push(options.b.relDecl(name, [], null));
+        rules.push(options.b.rule(options.b.head(name, args), g.rhs, g.planning, g.sip));
       }
       return options.b.program(edbs, idbs, rules);
     }
 
 // Each section is one of: (edb + idb), edb alone, or idb alone — optionally
-// followed by a rule block. Matches the pest main_grammar pattern.
+// followed by a rule block. Matches the pest main_grammar pattern. A run of
+// `?-` queries is a section of its own, since it brings its own declarations.
 Section
   = edbs:EdbDecl _ idbs:IdbDecl _ rules:RuleDecl? _ { return { edbs, idbs, rules: rules || [] }; }
   / edbs:EdbDecl _ rules:RuleDecl? _ { return { edbs, rules: rules || [] }; }
   / idbs:IdbDecl _ rules:RuleDecl? _ { return { idbs, rules: rules || [] }; }
+  / q:QueryDecl _ { return { queryIdbs: q.queryIdbs, rules: q.rules, bareGoals: q.bareGoals }; }
 
 EdbDecl
   = ".in" _ first:EdbRelationDecl rest:(_ EdbRelationDecl)* {
@@ -93,6 +125,59 @@ FileName
 
 RuleDecl
   = (".rule" _)? rules:Rule+ { return rules; }
+
+// A query: a rule that brings its own head declaration.
+//
+//     ?- Payroll(d, sum(s)) :- Person(i, n, d), Salary(i, s).
+//
+// Shorthand and nothing more — it desugars to `.decl Payroll()` plus the rule,
+// which is a declaration the language already had: `.decl Foo()` leaves the
+// schema to the rules, and `inferRelationTypes` recovers it when something
+// needs it. So a query is an ordinary IDB from the moment it is parsed, and
+// every later stage — planning, execution, write-back — sees a normal program.
+//
+// The sugar is not preserved by `programToDl`, which re-emits the declaration
+// and the rule. Nothing downstream distinguishes them, so there is nothing to
+// preserve.
+QueryDecl
+  = first:QueryRule rest:(_ QueryRule)* {
+      const items = [first, ...rest.map(r => r[1])];
+      const named = items.filter(i => i.kind === "named");
+      return {
+        rules: named.map(i => i.rule),
+        queryIdbs: named.map(i => options.b.relDecl(i.rule.head.name, [], null)),
+        bareGoals: items.filter(i => i.kind === "bare"),
+      };
+    }
+
+// Two forms. The named one gives the result a name; the bare one is Prolog's
+// "show me the answers", and its head is built in the `Program` action, where
+// the names already taken are known.
+QueryRule
+  = "?-" _ head:Head _ ":-" _ body:Predicates _ "." _ opt:Optimize? _ {
+      let planning = false;
+      let sip = false;
+      if (opt === ".plan") planning = true;
+      else if (opt === ".sip") sip = true;
+      else if (opt === ".optimize") { planning = true; sip = true; }
+      return { kind: "named", rule: options.b.rule(head, body, planning, sip) };
+    }
+  / "?-" _ body:Predicates _ "." _ opt:Optimize? _ {
+      let planning = false;
+      let sip = false;
+      if (opt === ".plan") planning = true;
+      else if (opt === ".sip") sip = true;
+      else if (opt === ".optimize") { planning = true; sip = true; }
+      // Reported here rather than in `Program` so the error points at the
+      // query rather than at the whole file.
+      if (options.b.bareQueryColumns(body).length === 0) {
+        error(
+          "a bare `?-` query reports the variables its body binds, and this one binds none — " +
+          "add a variable, or use the named form `?- Name(...) :- ...`"
+        );
+      }
+      return { kind: "bare", rhs: body, planning, sip };
+    }
 
 Rule
   = head:Head _ ":-" _ body:Predicates _ "." _ opt:Optimize? _ {
@@ -227,6 +312,7 @@ DataType
   = "number" { return "Integer"; }
   / "string" { return "String"; }
   / "float"  { return "Float"; }
+  / "any"    { return "Any"; }
 
 // Whitespace + comments. Skipped between every grammar token.
 _ "whitespace"

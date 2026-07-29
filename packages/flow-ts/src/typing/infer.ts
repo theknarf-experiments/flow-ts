@@ -165,8 +165,19 @@ function resolveHead(
   return out
 }
 
+/** The least type holding both, or null if there isn't one.
+ *
+ *  Two widenings, and the difference between them matters. Integer and Float
+ *  share a runtime representation, so a program that mixes them means the
+ *  float. `Any` absorbs anything, because that is what declaring it says.
+ *
+ *  What deliberately does *not* widen is String against Integer. There is a
+ *  type holding both — `Any` — and reaching for it here would turn every
+ *  genuine disagreement between two rules into a silent success. `Any` is a
+ *  thing you declare, not a thing inference falls back on. */
 function widen(a: DataType, b: DataType): DataType | null {
   if (a === b) return a
+  if (a === 'Any' || b === 'Any') return 'Any'
   if ((a === 'Integer' && b === 'Float') || (a === 'Float' && b === 'Integer')) return 'Float'
   return null
 }

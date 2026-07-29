@@ -109,10 +109,55 @@ const STRING_CODEC: ValueCodec<string> = {
 // stricter parsing or a different render — has a place to live.
 const FLOAT_CODEC: ValueCodec<number> = INTEGER_CODEC
 
+/** The codec for a column declared `any`: whichever of the others the value
+ *  turns out to want.
+ *
+ *  On the wire this is free. Fields are already self-describing — a string
+ *  carries a leading `'`, a number starts with a digit or `-` — which is why
+ *  `decodeRow` never needed the schema in the first place. So encoding and
+ *  decoding an `any` cell is just the existing dispatch, and an `any` column
+ *  joins, keys and compares exactly as a typed one does.
+ *
+ *  `fromText` is the one place a real decision has to be made, because a CSV
+ *  cell is text and text alone: `42` could be the number or the string. It is
+ *  read as a number when the *whole* cell parses as a finite one, and as a
+ *  string otherwise — the same rule the wire dispatch uses, applied to the
+ *  whole field rather than its first character.
+ *
+ *  That rule has a cost worth stating: a column of zero-padded codes read as
+ *  `any` gives the number 7 for `007`, not the string. Declaring it `string`
+ *  is how you say you meant the text. `any` is for when you don't know, not
+ *  for when you do and can't be bothered. */
+const ANY_CODEC: ValueCodec<Value> = {
+  fromConst(c) {
+    return constToValue(c)
+  },
+  fromText(s) {
+    // `Number('')` is 0 and `Number(' ')` is 0, so the emptiness check has to
+    // come first or blank cells would silently become zeroes.
+    if (s === '') return s
+    const n = Number(s)
+    return Number.isFinite(n) ? n : s
+  },
+  toText(v) {
+    return String(v)
+  },
+  encodeField(v) {
+    return typeof v === 'string' ? STRING_CODEC.encodeField(v) : INTEGER_CODEC.encodeField(v)
+  },
+  decodeField(field) {
+    return codecForFieldChar(field[0] ?? '0').decodeField(field)
+  },
+  matches(firstChar) {
+    return STRING_CODEC.matches(firstChar) || INTEGER_CODEC.matches(firstChar)
+  },
+}
+
 const CODECS_BY_DATATYPE: Record<DataType, ValueCodec<Value>> = {
   Integer: INTEGER_CODEC,
   String: STRING_CODEC,
   Float: FLOAT_CODEC,
+  Any: ANY_CODEC,
 }
 
 /** Codec for the cells of a given attribute. Throws on unknown types so
@@ -125,7 +170,11 @@ export function codecFor(dataType: DataType): ValueCodec<Value> {
 }
 
 /** Codec lookup by a field's first wire character. Used inside
- *  `decodeRow` / `decodeField` to recover the JS type without the schema. */
+ *  `decodeRow` / `decodeField` to recover the JS type without the schema.
+ *
+ *  Deliberately consults only the concrete codecs: `ANY_CODEC` matches both
+ *  tags, so including it here would make the dispatch ambiguous — and it has
+ *  nothing to add, since dispatching on the tag is all it does itself. */
 export function codecForFieldChar(firstChar: string): ValueCodec<Value> {
   if (STRING_CODEC.matches(firstChar)) return STRING_CODEC
   if (INTEGER_CODEC.matches(firstChar)) return INTEGER_CODEC

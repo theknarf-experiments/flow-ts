@@ -1,0 +1,64 @@
+name: Deploy docs
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# What Pages needs to accept an upload from this workflow.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time, and let a running one finish rather than cancelling it
+# half-published.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build the static site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # `mise.toml` pins the Node version; the pnpm action reads its own from
+      # the `packageManager` field in package.json.
+      - uses: jdx/mise-action@v4
+        with:
+          experimental: true
+      - uses: pnpm/action-setup@v6
+
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+
+      # The docs build imports the engine and the React bindings from source
+      # through the workspace, but the parser is generated — so the workspace
+      # has to be built first.
+      - name: Build packages
+        run: pnpm build --filter='!@flow-ts/docs'
+
+      - name: Build docs
+        run: pnpm --filter @flow-ts/docs run build
+        env:
+          # Pages serves this repo at /<repo>/, and everything that has to agree
+          # with that — the `<base href>` in each prerendered page, the router's
+          # basename, the asset URLs — reads it from Vite's `base`.
+          DOCS_BASE: /${{ github.event.repository.name }}/
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: packages/docs/dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

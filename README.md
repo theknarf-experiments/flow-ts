@@ -287,7 +287,7 @@ Rows cross the dataflow boundary as comma-joined strings (`"1,2,3,"`) rather tha
 
 ## Browser usage — and the docs
 
-`flow-ts` and the rest of the stack are filesystem-free, so the whole engine runs in the browser unchanged. `packages/docs/` is a Vite + React SPA that does exactly that, and it's where the language is documented:
+`flow-ts` and the rest of the stack are filesystem-free, so the whole engine runs in the browser unchanged. `packages/docs/` is a Vite + React + react-router site that does exactly that, and it's where the language is documented. It builds to static pages — one HTML file per route, with the derived tables already rendered — and deploys to GitHub Pages:
 
 ```bash
 pnpm -F @flow-ts/docs run dev     # http://localhost:5173

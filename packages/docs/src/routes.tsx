@@ -15,13 +15,21 @@
 //
 // `lazy` returns the route's component, and the router awaits it before
 // rendering, so there is no flash of a half-built page and no `Suspense`
-// boundary to place.
+// boundary to place. The static generator gets the same treatment for free:
+// `createStaticHandler` resolves the module before it renders, so a prerendered
+// page is complete rather than a shell.
 
-import { createBrowserRouter } from 'react-router'
+import type { RouteObject } from 'react-router'
 import { Shell } from './Shell.js'
 import { NotFound } from './pages/NotFound.js'
 
-export const router = createBrowserRouter([
+/** The route table itself, not a router built from it.
+ *
+ *  Two things consume this: the browser entry, which wraps it in a
+ *  `createBrowserRouter`, and the static generator, which walks it for the list
+ *  of pages to render and hands it to `createStaticHandler`. Exporting the
+ *  array is what lets those two agree by construction. */
+export const routes: RouteObject[] = [
   {
     // The sidebar and the theme, shared by everything — and the only thing
     // loaded eagerly.
@@ -77,4 +85,6 @@ export const router = createBrowserRouter([
       { path: '*', element: <NotFound /> },
     ],
   },
-])
+]
+
+export default routes

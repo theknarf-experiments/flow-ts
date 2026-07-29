@@ -109,14 +109,47 @@ this rule and see what happens" a reasonable thing to ask a reader to do.
 
 ## The stack
 
-Vite, React and `react-router` — a plain SPA, and deliberately plain. `index.html`
-at the package root is the entry, `src/main.tsx` mounts React into `#root`, and
-`src/routes.tsx` is the whole route table. There is no server and no prerender,
-because the demos hold stateful db-ivm sessions that don't serialise; this was
-always client-only, and saying so outright is less machinery than opting a
-framework out of the rendering it exists to do. (`@tanstack/react-table` stays —
-it's what gives the relation tables their sortable headers, and has nothing to
-do with routing.)
+Vite, React and `react-router`. `index.html` is the dev entry, `src/routes.tsx`
+is the route table, and `pnpm build` prerenders one HTML file per route.
+(`@tanstack/react-table` stays — it's what gives the relation tables their
+sortable headers, and has nothing to do with routing.)
+
+## Static pages
+
+`pnpm build` runs `./ssg.tsx` rather than `vite build`: a `vite-node` script that
+walks the route table, renders each page with react-router's
+`createStaticHandler`, and emits it as a Rollup chunk that Vite's own HTML
+pipeline finishes. `build:spa` is still the plain single-`index.html` build.
+
+The result is a directory of real files — `/learn/recursion/index.html` and so
+on, plus a `404.html` — so a deep link needs no server rewrite, and the content
+is there before any JavaScript runs. That last part is not just the prose: the
+engine runs at build time, so a lesson's *derived tables* are in the HTML.
+`e2e/static.spec.ts` checks that with scripting switched off entirely.
+
+Two details are load-bearing and easy to lose, both learned from the repo this
+was adapted from (`theknarf-experiments/modular-svg`):
+
+- Each page carries `<base href>` set to Vite's `base`, so relative asset URLs
+  resolve when published under a subpath.
+- The static render uses the same router `basename` the client hydrates with, so
+  the prerendered nav hrefs already carry that subpath. Without it, opening a
+  sidebar link in a new tab on Pages 404s.
+
+`DOCS_BASE` is what sets that base: `/` locally, `/flow-ts/` from the deploy
+workflow. Everything that has to agree with it reads it from Vite rather than
+repeating it.
+
+**Known issue: hydration falls back to a client render.** On pages carrying a
+relation table — the lessons, `/friends`, `/text`, `/mvr` — React reports a
+hydration mismatch and re-renders the tree instead of adopting the markup. The
+pages are correct either way and the whole suite passes; what is lost is the
+work the prerender was supposed to save on load. `/` and the vault pages hydrate
+cleanly. Two real mismatches were found and fixed on the way here (the theme
+toggle reading `matchMedia` during render, and the brand `NavLink` computing
+`active` differently under the static renderer); this is a third that has not
+been pinned down. `SSG_DEV=1 pnpm build` builds against development React,
+unminified, which is the only way to get a component name out of it.
 
 Two things are worth knowing before editing it.
 
@@ -140,7 +173,7 @@ e2e suite waits on it as a cheap "the app is up" signal.
 Per page, gzipped, from `pnpm build`:
 
 ```
-overview (/)                 92.5 kB js   3.8 kB css
+overview (/)                 92.7 kB js   3.8 kB css
 a lesson, or any demo       ~131 kB js   4.6 kB css
 ```
 

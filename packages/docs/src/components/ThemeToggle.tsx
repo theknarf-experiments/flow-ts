@@ -14,7 +14,7 @@ import {
   applyPreference,
   readPreference,
   resolveTheme,
-  systemTheme,
+  type Theme,
   type ThemePreference,
 } from '../theme.js'
 
@@ -33,12 +33,21 @@ const ICON: Record<ThemePreference, string> = {
 }
 
 export function ThemeToggle(): JSX.Element {
-  // Start at the SSR-safe default; the effect below corrects it on mount. The
-  // markup renders identically either way, so there's nothing to mismatch.
+  // Two pieces of state, and the split is what makes this page prerenderable.
+  // The pages are rendered in Node, where there is no `matchMedia` and no
+  // storage, so the first render has to be something the browser reproduces
+  // *exactly* — otherwise React finds the server guessed dark where the
+  // reader's machine says light, and throws the whole prerender away rather
+  // than patch one attribute. So nothing here reads the environment during
+  // render: the first pass is always `system` with the palette left unset, and
+  // the effect fills both in a moment later.
   const [preference, setPreference] = useState<ThemePreference>('system')
+  const [resolved, setResolved] = useState<Theme | null>(null)
 
   useEffect(() => {
-    setPreference(readPreference())
+    const stored = readPreference()
+    setPreference(stored)
+    setResolved(resolveTheme(stored))
   }, [])
 
   // While following the system, a change to the OS setting has to repaint. The
@@ -53,7 +62,6 @@ export function ThemeToggle(): JSX.Element {
   }, [preference])
 
   const next = ORDER[(ORDER.indexOf(preference) + 1) % ORDER.length]!
-  const resolved = resolveTheme(preference)
 
   return (
     <button
@@ -61,14 +69,16 @@ export function ThemeToggle(): JSX.Element {
       className="theme-toggle"
       data-testid="theme-toggle"
       data-preference={preference}
-      data-theme={resolved}
+      // Absent until mounted, rather than guessed — see above.
+      data-theme={resolved ?? undefined}
       title={`Theme: ${LABEL[preference]}${
-        preference === 'system' ? ` (${systemTheme()})` : ''
+        preference === 'system' && resolved ? ` (${resolved})` : ''
       } — click for ${LABEL[next].toLowerCase()}`}
       aria-label={`Theme: ${LABEL[preference]}. Switch to ${LABEL[next].toLowerCase()}.`}
       onClick={() => {
         applyPreference(next)
         setPreference(next)
+        setResolved(resolveTheme(next))
       }}
     >
       <span className="theme-toggle-icon" aria-hidden="true">

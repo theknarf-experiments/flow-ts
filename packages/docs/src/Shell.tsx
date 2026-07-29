@@ -8,7 +8,7 @@
 // belongs.
 
 import { useEffect, useState } from 'react'
-import { NavLink, Outlet } from 'react-router'
+import { Link, NavLink, Outlet } from 'react-router'
 import { ThemeToggle } from './components/ThemeToggle.js'
 import { lessonLabel, lessonOutline } from './lessons/lessons.js'
 
@@ -77,9 +77,14 @@ function SideNav() {
         data-open={open ? 'true' : 'false'}
       >
         <div className="sidenav-head">
-          <NavLink to="/" className="sidenav-brand" onClick={close}>
+          {/* `Link`, not `NavLink`: the brand is a logo, not a nav item. Given a
+              string className `NavLink` appends `active` to it, and `to="/"`
+              prefix-matches every page — so this silently carried an `active`
+              class everywhere, and computed it differently under the static
+              renderer than in the browser, which failed hydration outright. */}
+          <Link to="/" className="sidenav-brand" onClick={close}>
             flow-ts
-          </NavLink>
+          </Link>
           <ThemeToggle />
         </div>
 

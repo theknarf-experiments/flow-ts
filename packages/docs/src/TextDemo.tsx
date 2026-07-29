@@ -20,6 +20,13 @@ import {
   type ChangeEvent,
   type RefObject,
 } from 'react'
+
+/** `useLayoutEffect` in the browser, `useEffect` where there is no layout.
+ *
+ *  The pages are prerendered in Node. React's warning about layout effects
+ *  there is correct and not actionable, so match the environment rather than
+ *  silence it. */
+const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect
 import { Store, useLiveQuery, useProgram } from '@flow-ts/react'
 import { RelationTable } from './components/RelationTable.js'
 import { SyncLink, type ReplicaId } from './SyncLink.js'
@@ -199,7 +206,12 @@ function ReplicaPanel({
     visibleTailRef.current = text.tail
   }, [text])
 
-  useLayoutEffect(() => {
+  // A layout effect on purpose: the caret has to be restored before the browser
+  // paints, or typing mid-string visibly jumps to the end and back. It does
+  // nothing during the static prerender — there is no caret and no paint to
+  // beat — but React warns about layout effects on the server, so use the one
+  // that degrades where there is no layout.
+  useIsomorphicLayoutEffect(() => {
     const target = pendingCursorRef.current
     if (target === null) return
     pendingCursorRef.current = null

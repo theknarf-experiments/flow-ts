@@ -1,0 +1,156 @@
+/* A relation renders as a table and nothing else — no card, no fill, no outer
+ * border. A page here shows six or eight of them at once, and boxing each one
+ * turns a set of small facts into a wall of frames. What separates them is
+ * space; what structures them is one hairline under the header row.
+ *
+ * Colours come from the tokens in `../index.css`, so this follows the theme. */
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+/* <caption> keeps its default `display: table-caption` so the browser
+   positions it above the table; the flex layout lives on the inner span. */
+.caption {
+  caption-side: top;
+  text-align: left;
+}
+
+.captionInner {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0 0 0.4rem;
+}
+
+.relName {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.relSchema {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--text-faint);
+}
+
+.relCount {
+  margin-left: auto;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+
+.table th {
+  text-align: left;
+  padding: 0.25rem 0.6rem 0.25rem 0;
+  color: var(--text-dim);
+  font-weight: 500;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+
+.sortable {
+  cursor: pointer;
+}
+
+.sortable:hover {
+  color: var(--text-strong);
+}
+
+.sort {
+  margin-left: 0.25em;
+  color: var(--accent);
+}
+
+.table td {
+  padding: 0.28rem 0.6rem 0.28rem 0;
+  border-bottom: 1px solid var(--border-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.empty {
+  padding: 0.75rem 0 !important;
+  font-style: italic;
+  color: var(--text-faint);
+}
+
+/* Actions column: shrink to fit, no wrap. `width: 1%` is the standard CSS
+ * trick — with `white-space: nowrap` the column ends up exactly as wide as its
+ * widest cell. */
+.actionsCell {
+  width: 1%;
+  padding-right: 0 !important;
+  white-space: nowrap;
+  text-align: right;
+}
+
+/* The add-row sits in <tfoot>, held apart by space rather than a rule. */
+.addRow td {
+  padding-top: 0.45rem;
+  border-bottom: none;
+}
+
+/* Cell inputs read as text until you reach for them. A table of eight columns
+ * with a visible box around every value is a form; this is a table you can
+ * happen to edit. */
+.addInput {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.15rem 0.3rem;
+  margin-left: -0.3rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0.2rem;
+  color: inherit;
+  font: inherit;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.addInput:hover:not([readonly]) {
+  border-color: var(--border);
+}
+
+.addInput:focus {
+  outline: none;
+  background: var(--surface-inset);
+  border-color: var(--focus);
+}
+
+.addInput[readonly] {
+  color: var(--text-dim);
+  cursor: default;
+}
+
+.addInput::placeholder {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.addButton {
+  padding: 0.15rem 0.5rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 0.2rem;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.addButton:hover {
+  border-color: var(--focus);
+  color: var(--text-strong);
+}

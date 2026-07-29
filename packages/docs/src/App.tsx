@@ -10,10 +10,10 @@
 // others incrementally.
 
 import { useMemo, useState } from 'react'
-import { parseProgram } from '@flow-ts/parsing'
 import { Store, useLiveQuery, useProgram, useWritableQuery } from '@flow-ts/react'
-import type { Resolution } from 'flow-ts'
 import { program as initialProgram, SOURCE } from './program.js'
+import { ProgramPanel } from './components/ProgramPanel.js'
+import { describeResolution } from './components/WritableTable.js'
 import { RelationTable } from './components/RelationTable.js'
 
 // One store per app. Seeded outside the React tree so HMR / strict-mode
@@ -80,7 +80,7 @@ export function App() {
         </p>
       </header>
 
-      <ProgramPanel />
+      <ProgramPanel store={store} source={SOURCE} grammarSource="demo.dl" />
 
       <section className="grid">
         <PeoplePanel />
@@ -89,84 +89,6 @@ export function App() {
 
       <RelationInspector />
     </div>
-  )
-}
-
-// --- program source ------------------------------------------------
-
-function ProgramPanel() {
-  // Live-editable Datalog source. "Rebuild" parses the textarea, and if
-  // the new program parses cleanly, swaps it into the running store —
-  // existing EDB rows are captured and replayed against the new rules,
-  // so the demo's seed graph survives a rule edit.
-  const [draft, setDraft] = useState<string>(SOURCE.trim())
-  const [error, setError] = useState<string | null>(null)
-  const [status, setStatus] = useState<'idle' | 'dirty' | 'rebuilt'>('idle')
-
-  const onChange = (next: string) => {
-    setDraft(next)
-    setError(null)
-    setStatus(next.trim() === SOURCE.trim() ? 'idle' : 'dirty')
-  }
-
-  const rebuild = () => {
-    try {
-      const newProgram = parseProgram(draft, { grammarSource: 'live.dl' })
-      store.replaceProgram(newProgram)
-      setError(null)
-      setStatus('rebuilt')
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-      setStatus('dirty')
-    }
-  }
-
-  const reset = () => {
-    setDraft(SOURCE.trim())
-    setError(null)
-    try {
-      store.replaceProgram(parseProgram(SOURCE, { grammarSource: 'demo.dl' }))
-      setStatus('rebuilt')
-    } catch {
-      // The bundled SOURCE is known-good — this branch is unreachable.
-    }
-  }
-
-  return (
-    <section className="program">
-      <details open data-testid="program-panel">
-        <summary>Datalog program</summary>
-        <textarea
-          className="program-editor"
-          data-testid="program-source"
-          value={draft}
-          onChange={(e) => onChange(e.target.value)}
-          spellCheck={false}
-          rows={Math.min(20, draft.split('\n').length + 1)}
-        />
-        <div className="program-actions">
-          <button
-            data-testid="program-rebuild"
-            onClick={rebuild}
-            disabled={status === 'idle'}
-          >rebuild</button>
-          <button
-            data-testid="program-reset"
-            onClick={reset}
-            disabled={draft.trim() === SOURCE.trim()}
-          >reset to seed</button>
-          <span className="program-status" data-testid="program-status">
-            {error
-              ? <span className="program-error">{error}</span>
-              : status === 'dirty'
-                ? <span className="muted">unsaved changes — click rebuild to apply</span>
-                : status === 'rebuilt'
-                  ? <span className="muted">program rebuilt · EDB rows replayed</span>
-                  : <span className="muted">edit the rules above, then rebuild — current EDB rows replay automatically.</span>}
-          </span>
-        </div>
-      </details>
-    </section>
   )
 }
 
@@ -230,25 +152,6 @@ function PeoplePanel() {
       </ul>
     </div>
   )
-}
-
-/** Turn a resolution into something a person can read. */
-function describeResolution(what: string, r: Resolution): string {
-  switch (r.status) {
-    case 'ok': {
-      const where = [...new Set(r.changes.map((c) => c.rel))].join(', ')
-      const n = r.changes.length
-      return `${what}: ${n} change${n === 1 ? '' : 's'} to ${where}`
-    }
-    case 'ambiguous':
-      return `${what}: ambiguous — ${r.candidates.length} ways to do it (${[
-        ...new Set(r.candidates.map((c) => c.rel)),
-      ].join(', ')})`
-    case 'unsatisfied':
-      return `${what}: ${r.reason}`
-    case 'refused':
-      return `${what}: ${r.reason}`
-  }
 }
 
 function ReachablePanel() {

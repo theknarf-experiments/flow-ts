@@ -1,0 +1,1364 @@
+/* Every colour in the app comes from a token defined here, so light and dark
+ * are two palettes rather than two stylesheets. `<html data-theme>` is set by
+ * an inline script in `<head>` before first paint — see `src/theme.ts` — and
+ * the bare `:root` block is the fallback for the moment before it runs.
+ *
+ * The tokens are named for their role, not their colour, because "surface" and
+ * "text-muted" mean the same thing in both palettes and "#14171c" does not. */
+
+:root,
+:root[data-theme='dark'] {
+  --bg: #0f1115;
+  --surface: #14171c;
+  --surface-raised: #1a1e25;
+  --surface-inset: #0f1115;
+  --border: #2a2f37;
+  --border-soft: #1a1e25;
+
+  --text-strong: #e6e8eb;
+  --text: #cfd3d8;
+  --text-muted: #9aa0a6;
+  --text-dim: #6a6f78;
+  --text-faint: #4a4f57;
+
+  --accent: #7fb3e8;
+  --accent-text: #b9e3b9;
+  --accent-bg: #1c2a1c;
+  --focus: #3a5f8a;
+  --warn: #d4a44a;
+  --danger: #dd4444;
+
+  --control-bg: #2a2f37;
+  --control-border: #3a3f47;
+  --control-hover: #3a3f47;
+
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+}
+
+:root[data-theme='light'] {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-raised: #eef1f5;
+  --surface-inset: #f2f4f7;
+  --border: #d6dbe2;
+  --border-soft: #e8ebef;
+
+  --text-strong: #10141a;
+  --text: #2b313a;
+  --text-muted: #5b636e;
+  --text-dim: #7b838f;
+  --text-faint: #a8afb9;
+
+  --accent: #1d5fa8;
+  --accent-text: #216c2b;
+  --accent-bg: #e4f2e4;
+  --focus: #1d5fa8;
+  --warn: #8a5d0a;
+  --danger: #c0392b;
+
+  --control-bg: #eceff3;
+  --control-border: #ccd2da;
+  --control-hover: #dfe4ea;
+
+  --shadow: 0 1px 2px rgb(16 20 26 / 0.08);
+}
+
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --mono: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, ui-monospace, monospace;
+  background: var(--bg);
+  color: var(--text);
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* --- layout --------------------------------------------------------- */
+
+.layout {
+  display: grid;
+  grid-template-columns: 16rem minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.content {
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+  padding-bottom: 4rem;
+}
+
+.app {
+  width: 100%;
+  max-width: 60rem;
+  padding: 2rem;
+  box-sizing: border-box;
+}
+
+/* --- side navigation ------------------------------------------------ */
+
+.sidenav {
+  grid-row: 1;
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 1.25rem 1rem 3rem;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+
+.sidenav-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.sidenav-brand {
+  font-weight: 600;
+  font-size: 1.05rem;
+  letter-spacing: -0.01em;
+  color: var(--text-strong);
+  text-decoration: none;
+}
+
+.sidenav-tagline {
+  margin: 0.35rem 0 1.25rem;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+
+.sidenav-section {
+  margin-bottom: 1.5rem;
+}
+
+.sidenav-section h2 {
+  margin: 0 0 0.4rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.sidenav-section ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sidenav-section a {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.25rem 0.45rem;
+  border-radius: 0.25rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  line-height: 1.35;
+  font-size: 0.85rem;
+}
+
+.sidenav-section a:hover {
+  color: var(--text-strong);
+  background: var(--surface-raised);
+}
+
+.sidenav-section a.active {
+  color: var(--text-strong);
+  background: var(--surface-raised);
+  font-weight: 600;
+}
+
+/* The step number, hung in its own column so the titles line up whatever the
+ * numbers do. `min-width` rather than `width`: a refinement's "11.1" is twice
+ * as wide as a step's "4", and the two levels are indented apart anyway, so
+ * each only has to line up with its own kind. */
+.sidenav-num {
+  flex: none;
+  min-width: 1.1rem;
+  text-align: right;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.sidenav-section a.active .sidenav-num {
+  color: var(--accent);
+}
+
+/* Refinements of a lesson, indented under it. Less than the number column is
+ * wide, since their own numbers are wider and the two would otherwise drift
+ * far from the left edge. */
+.sidenav-sub {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 0.75rem;
+}
+
+.sidenav-sub a {
+  font-size: 0.8rem;
+}
+
+/* --- theme toggle --------------------------------------------------- */
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.5rem;
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.theme-toggle:hover {
+  background: var(--control-hover);
+  color: var(--text-strong);
+}
+
+.theme-toggle-icon {
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+/* --- off-canvas drawer, below the breakpoint ------------------------ */
+
+.sidenav-toggle,
+.sidenav-scrim {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sidenav-toggle {
+    position: fixed;
+    top: 0.75rem;
+    left: 0.75rem;
+    z-index: 30;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.35rem 0.7rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 0.35rem;
+    color: var(--text);
+    font: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+    box-shadow: var(--shadow);
+  }
+
+  .sidenav {
+    position: fixed;
+    z-index: 40;
+    top: 0;
+    left: 0;
+    width: 16rem;
+    transform: translateX(-100%);
+    transition: transform 0.15s ease;
+  }
+
+  .sidenav[data-open='true'] {
+    transform: translateX(0);
+  }
+
+  .sidenav-scrim[data-open='true'] {
+    display: block;
+    position: fixed;
+    z-index: 35;
+    inset: 0;
+    background: rgb(0 0 0 / 0.4);
+  }
+
+  .content {
+    padding-top: 3rem;
+  }
+
+  .app {
+    padding: 1.25rem;
+  }
+}
+
+/* --- typography ----------------------------------------------------- */
+
+header {
+  margin-bottom: 2rem;
+}
+
+header h1 {
+  margin: 0 0 0.4rem;
+  font-size: 1.75rem;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  color: var(--text-strong);
+}
+
+header p {
+  margin: 0 0 0.75rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.lede {
+  max-width: 42rem;
+  line-height: 1.65;
+  font-size: 0.95rem;
+}
+
+/* Section headings sit close to what they label — the gap above is what
+ * separates sections, so the gap below should be small. */
+h2 {
+  color: var(--text-strong);
+  letter-spacing: -0.01em;
+}
+
+a {
+  color: var(--accent);
+}
+
+code {
+  font-family: var(--mono);
+}
+
+.muted {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.muted code {
+  padding: 0 0.25em;
+  font-size: 0.9em;
+  color: var(--text-muted);
+}
+
+/* --- lessons -------------------------------------------------------- */
+
+.lesson-number {
+  margin: 0 0 0.3rem !important;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-faint);
+}
+
+.lesson-number a {
+  color: var(--text-dim);
+  text-decoration: none;
+}
+
+.lesson-number a:hover {
+  color: var(--accent);
+}
+
+.lesson-intro p {
+  max-width: 42rem;
+  margin: 0 0 0.8rem;
+  line-height: 1.7;
+  font-size: 0.95rem;
+  color: var(--text);
+}
+
+.lesson-intro p:last-child {
+  margin-bottom: 0;
+}
+
+/* Inline code in prose: tinted, not boxed. A paragraph with six relation names
+ * in it should still read as a paragraph. */
+.lesson-intro code,
+.try-this code,
+.notes code,
+.lesson-card-blurb code,
+.lesson-children code {
+  padding: 0 0.15em;
+  font-size: 0.88em;
+  color: var(--accent-text);
+}
+
+.lesson-intro em {
+  font-style: normal;
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
+/* Feature chips — what a lesson is the documentation for. */
+.chips {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.6rem;
+  margin: 0 0 1.1rem;
+  padding: 0;
+}
+
+.chips code {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+}
+
+.chips code::before {
+  content: '#';
+  margin-right: 0.1em;
+  opacity: 0.5;
+}
+
+/* The refinements of a lesson, listed on the lesson itself. */
+.lesson-children {
+  list-style: none;
+  margin: 1.25rem 0 0;
+  padding: 0.75rem 0 0;
+  border-top: 1px solid var(--border);
+  max-width: 42rem;
+}
+
+.lesson-children a {
+  display: flex;
+  gap: 0.6rem;
+  padding: 0.3rem 0;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.lesson-children a:hover {
+  color: var(--text-strong);
+}
+
+.lesson-children strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.lesson-children a:hover strong {
+  color: var(--accent);
+}
+
+.lesson-children-num {
+  flex: none;
+  min-width: 1.2rem;
+  text-align: right;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.try-this,
+.notes {
+  margin-top: 2.5rem;
+}
+
+.try-this h2,
+.notes h2 {
+  margin: 0 0 0.6rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-dim);
+}
+
+.try-this ol {
+  margin: 0;
+  padding-left: 1.1rem;
+  max-width: 42rem;
+}
+
+.try-this li {
+  margin-bottom: 0.45rem;
+  padding-left: 0.2rem;
+  line-height: 1.6;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.try-this li::marker {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.notes p {
+  max-width: 42rem;
+  margin: 0 0 0.7rem;
+  line-height: 1.65;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.lesson-nav {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 3.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.88rem;
+}
+
+.lesson-nav a {
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.lesson-nav a:hover {
+  color: var(--accent);
+}
+
+.lesson-next {
+  margin-left: auto;
+}
+
+/* --- overview ------------------------------------------------------- */
+
+.overview-section {
+  margin-top: 2.75rem;
+}
+
+.overview-section > h2 {
+  margin: 0 0 0.25rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-dim);
+}
+
+/* Lessons are a list, not a deck of cards. Hairlines between rows, a hover
+ * tint, and nothing else — eleven bordered boxes in a column is a lot of
+ * furniture for what is really a table of contents. */
+.lesson-list,
+.lesson-sublist {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+}
+
+.lesson-sublist {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.lesson-list > li {
+  border-top: 1px solid var(--border-soft);
+}
+
+.lesson-list > li:first-child {
+  border-top: none;
+}
+
+.lesson-sublist > li + li {
+  border-top: 1px solid var(--border-soft);
+}
+
+.lesson-card {
+  display: flex;
+  align-items: baseline;
+  gap: 0.85rem;
+  padding: 0.6rem 0.5rem 0.6rem 0;
+  margin-left: -0.5rem;
+  padding-left: 0.5rem;
+  border-radius: 0.25rem;
+  text-decoration: none;
+  color: inherit;
+}
+
+.lesson-card:hover {
+  background: var(--surface-raised);
+}
+
+.lesson-card-number {
+  flex: none;
+  min-width: 1.25rem;
+  text-align: right;
+  color: var(--text-faint);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.lesson-card-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.15rem 0.6rem;
+  min-width: 0;
+}
+
+.lesson-card-title {
+  font-weight: 600;
+  color: var(--text-strong);
+  font-size: 0.92rem;
+}
+
+.lesson-card:hover .lesson-card-title {
+  color: var(--accent);
+}
+
+.lesson-card-blurb {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+/* --- cards / grids -------------------------------------------------- */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  padding: 0.9rem 1rem;
+  background: var(--surface);
+}
+
+.card h2,
+.card h3 {
+  margin: 0 0 0.4rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.card-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.card-header h2 {
+  margin: 0;
+}
+
+.demo-link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+  transition: border-color 0.1s ease;
+}
+
+.demo-link:hover {
+  border-color: var(--focus);
+}
+
+.demo-link:hover h3 {
+  color: var(--accent);
+}
+
+.stat-line {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  gap: 0.6rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.stat-line li {
+  display: inline-flex;
+  gap: 0.25em;
+}
+
+.stat-line li + li::before {
+  content: '·';
+  margin-right: 0.4rem;
+  color: var(--text-faint);
+}
+
+.stat-line span {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* --- program panel -------------------------------------------------- */
+/*
+ * The program is the most-read thing on a lesson page, so it gets the least
+ * chrome: a small label, the source, and the controls. No card, no border, no
+ * background behind the whole assembly — the monospace block is already
+ * visually distinct from prose, and framing it as well says the same thing
+ * twice.
+ */
+
+.program {
+  margin: 1.5rem 0;
+}
+
+.program summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-dim);
+}
+
+.program summary:hover {
+  color: var(--text);
+}
+
+.program summary::-webkit-details-marker {
+  display: none;
+}
+
+/* The disclosure marker rides with the label rather than sitting in a column
+ * of its own — at this size a hanging glyph reads as a stray bullet. */
+.program summary::after {
+  content: ' ▾';
+  color: var(--text-faint);
+  font-size: 0.85em;
+}
+
+.program details:not([open]) summary::after {
+  content: ' ▸';
+}
+
+.program pre,
+.program-editor {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0.5rem 0 0.4rem;
+  padding: 0.75rem 0.9rem;
+  background: var(--surface-inset);
+  border: 1px solid transparent;
+  border-radius: 0.35rem;
+  font-family: var(--mono);
+  font-size: 0.79rem;
+  line-height: 1.6;
+  color: var(--text);
+  overflow-x: auto;
+}
+
+.program-editor {
+  resize: vertical;
+  min-height: 5rem;
+}
+
+.program-editor:focus {
+  outline: none;
+  border-color: var(--focus);
+}
+
+.program-actions {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.program-actions button {
+  padding: 0.15rem 0.55rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 0.2rem;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.program-actions button:hover:not(:disabled) {
+  border-color: var(--focus);
+  color: var(--text-strong);
+}
+
+.program-actions button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.program-status {
+  font-size: 0.78rem;
+  color: var(--text-faint);
+}
+
+.program-status .muted {
+  font-size: inherit;
+  color: var(--text-faint);
+}
+
+.program-error {
+  color: var(--danger);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+}
+
+/* --- relation inspector --------------------------------------------- */
+
+.inspector {
+  margin-top: 2.25rem;
+}
+
+.inspector > h2 {
+  margin: 0 0 0.2rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-dim);
+}
+
+/* Tables are unboxed, so the column gap has to do the separating that a border
+ * used to. Generous on purpose. */
+.inspector .tables {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+  gap: 1.5rem 2.5rem;
+  margin-top: 1rem;
+  align-items: start;
+}
+
+.row-action {
+  padding: 0 0.3em;
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+  font-size: 0.95em;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.row-action:hover {
+  color: var(--danger);
+}
+
+/* --- writable views ------------------------------------------------- */
+
+.writable-badge {
+  margin-left: auto;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+
+.resolution {
+  margin: 0.6rem 0 0;
+  padding-left: 0.6rem;
+  border-left: 2px solid var(--border);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+/* --- query console -------------------------------------------------- */
+
+.console {
+  margin-top: 2.25rem;
+}
+
+.console h2 {
+  margin: 0 0 0.2rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-dim);
+}
+
+.console .program-editor {
+  margin-top: 0.5rem;
+}
+
+.console-results {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 1.25rem 2.5rem;
+  margin-top: 1rem;
+}
+
+.console-result h3 {
+  margin: 0 0 0.35rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.console-result h3 .muted {
+  font-weight: 400;
+  font-size: 0.7rem;
+}
+
+.console-result ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.console-result li {
+  padding: 0.2rem 0;
+  border-bottom: 1px solid var(--border-soft);
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.console-result li:last-child {
+  border-bottom: none;
+}
+
+/* --- friend-graph demo ---------------------------------------------- */
+
+ul.nodes,
+ul.reachable {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+ul.nodes li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.25rem 0.5rem;
+  background: var(--surface-inset);
+  border-radius: 0.25rem;
+  font-variant-numeric: tabular-nums;
+}
+
+ul.nodes li.reachable {
+  background: var(--accent-bg);
+  color: var(--accent-text);
+}
+
+ul.reachable li {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.5rem;
+  background: var(--accent-bg);
+  border-radius: 0.25rem;
+  font-variant-numeric: tabular-nums;
+}
+
+ul.reachable input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.15rem 0.35rem;
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+  border-radius: 0.2rem;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+ul.reachable button {
+  padding: 0.15rem 0.5rem;
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: 0.2rem;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+ul.nodes button {
+  padding: 0 0.4em;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 1.1em;
+  cursor: pointer;
+}
+
+ul.nodes button:hover {
+  color: var(--danger);
+}
+
+/* --- text CRDT demo -------------------------------------------------- */
+
+.text-editor {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  padding: 0.75rem 1rem;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--text);
+  font-family: var(--mono);
+  resize: vertical;
+}
+
+.text-editor:focus {
+  outline: none;
+  border-color: var(--focus);
+}
+
+.text-hint {
+  font-size: 0.8rem;
+}
+
+.replica-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  flex-wrap: wrap;
+}
+
+.replica-online {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  cursor: pointer;
+}
+
+.replica-online input {
+  margin: 0;
+}
+
+.replica-delay {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.replica-delay input[type='range'] {
+  width: 6rem;
+  accent-color: var(--focus);
+}
+
+.replica-delay-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  min-width: 3rem;
+  display: inline-block;
+  text-align: right;
+}
+
+.replica-panel .stat-line {
+  margin-top: 0.5rem;
+}
+
+.sync-status {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--surface);
+}
+
+.sync-status h2 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.sync-status .stat-line {
+  font-size: 0.85rem;
+}
+
+.network-status-partitioned {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+/* --- MVR demo -------------------------------------------------------- */
+
+.variant-toggle {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+  flex-wrap: wrap;
+}
+
+.variant-toggle-label {
+  color: var(--text-muted);
+}
+
+.variant-toggle label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  cursor: pointer;
+}
+
+.mvr-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.mvr-table th {
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  color: var(--text-muted);
+  font-weight: 500;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border);
+}
+
+.mvr-table td {
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--border-soft);
+  vertical-align: middle;
+}
+
+.mvr-table tr:last-child td {
+  border-bottom: none;
+}
+
+.mvr-key {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+.mvr-conflict {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.mvr-write-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.25rem 0.4rem;
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.mvr-write-input:focus {
+  outline: none;
+  border-color: var(--focus);
+}
+
+.mvr-add-button {
+  padding: 0.25rem 0.7rem;
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: 0.25rem;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.mvr-add-button:hover {
+  background: var(--control-hover);
+}
+
+/* --- vault demo ------------------------------------------------------ */
+
+.vault-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .vault-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.vault-views {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.note {
+  display: block;
+  margin-bottom: 0.75rem;
+}
+
+.note-path {
+  display: block;
+  font: 600 0.8rem/1.6 var(--mono);
+  color: var(--text-muted);
+}
+
+.note textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: 0.85rem/1.5 var(--mono);
+  padding: 0.5rem;
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  color: var(--text);
+  resize: vertical;
+}
+
+.tasks,
+.outline {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.tasks li,
+.outline li {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.tasks .done {
+  text-decoration: line-through;
+  color: var(--text-dim);
+}
+
+.agenda {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.agenda th {
+  text-align: left;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.agenda td {
+  padding: 0.15rem 0.3rem 0.15rem 0;
+}
+
+.agenda input,
+.task-add input {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.2rem 0.35rem;
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+  border-radius: 0.2rem;
+  color: var(--text);
+}
+
+.agenda input[readonly] {
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+.task-add {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+
+.task-add input {
+  flex: 1;
+}
+
+.choice {
+  margin-top: 0.6rem;
+  padding: 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-inset);
+}
+
+.choice button {
+  display: block;
+  margin: 0.3rem 0;
+  text-align: left;
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: 0.2rem;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.2rem 0.5rem;
+  cursor: pointer;
+}
+
+/* Sub-navigation between the vault's three pages. */
+.subnav {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  font-size: 0.9rem;
+}
+
+.subnav a {
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  text-decoration: none;
+  color: var(--text-muted);
+}
+
+.subnav a.active {
+  color: var(--text-strong);
+  background: var(--surface-raised);
+}
+
+/* The views × channels pickers on the opt-in page. */
+.opt-in-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.opt-in-controls fieldset {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 0.7rem;
+}
+
+.opt-in-controls legend {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.opt-in-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-right: 0.6rem;
+  font-size: 0.9rem;
+}

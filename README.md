@@ -13,8 +13,88 @@ flow-ts is a port of the Rust [FlowLog](https://www.flowlog-rs.com/) engine (VLD
 ## Status
 
 - 17 of 18 upstream FlowLog example programs match the Rust engine row-for-row on synthetic test data. The one mismatch (`cc.dl`) is a semantic divergence around how aggregation logs are written under recursion, not a bug.
-- Datalog features supported: stratified recursion, negation, head arithmetic, `min`/`max`/`sum`/`count` aggregations, sideways info passing (SIP, `-O 1`), planning optimisation (`-O 2`).
+- Datalog features supported: stratified recursion, negation, head arithmetic, `min`/`max`/`sum`/`count` aggregations, sideways info passing (SIP, `-O 1`), planning optimisation (`-O 2`), and backward propagation (editing a derived row and having it land on the facts behind it).
 - Property-based + integration tests in `packages/flow-ts/tests/`.
+
+## Queries: `?-`
+
+A rule can bring its own head declaration:
+
+```datalog
+?- Payroll(dept, sum(s)) :- Person(i, n, dept), Salary(i, s).
+```
+
+No `.out` section, no `.decl`, no column types. It is shorthand for
+`.decl Payroll()` plus the rule — a declaration the language already had, since
+`.decl Foo()` leaves the schema to the rules and the type inference in
+`packages/flow-ts/src/typing/` recovers it when something needs it (the
+backward-propagation path does). So a query is an ordinary IDB from the moment
+it parses: it plans, executes, recurses, and can be written back through like
+any other relation, and the CLI prints it like any other output.
+
+Drop the head as well and you have Prolog's bare goal:
+
+```datalog
+?- Person(i, n, dept), Salary(i, s), s > 100.
+```
+
+Its columns are the variables its body binds, in order of first appearance —
+here `(i, n, dept, s)`, the join key included, because a key has to be named to
+join. `_` drops a column nothing needs, but not one doing work; when you want to
+choose the columns, name the head. It still needs a relation to land in, so one
+is named for you: `Query1`, `Query2`, in source order, stepping past any name
+the program already uses. That is the right answer for a name nothing outlives,
+and the reason to accept the goal form rather than insist a throwaway be
+christened.
+
+A bare goal has to bind at least one variable, since the columns *are* the
+variables; `?- Person(1, "alice", "eng").` is a yes/no question with nothing to
+show and is refused by saying so.
+
+Give two `?-` rules the same head and you have written a union. An explicit
+`.decl` of the same name wins, since a declaration is a statement and the query
+is shorthand for not having made one.
+
+## Column types
+
+Four, declared per column in a `.decl`:
+
+| type | holds | notes |
+|---|---|---|
+| `number` | integer | float64, so the safe-integer range |
+| `float` | decimal | same JS representation as `number`; they widen together |
+| `string` | text | stored inline, not interned |
+| `any` | either of the above | for a column whose shape is the data's business, not the program's |
+
+`any` is a departure from upstream FlowLog, and it is here because this engine
+runs where the data often isn't characterised: a property bag whose values are
+numbers for some keys and strings for others, an id that is numeric in one
+source and a slug in another. It costs nothing at runtime — rows cross the
+dataflow boundary as self-describing fields, so a cell has always carried its
+own type and `any` simply declines to constrain it:
+
+```datalog
+.in
+.decl Prop(entity: string, key: string, value: any)
+
+.out
+.decl Age(entity: string, value: any)
+
+Age(e, v) :- Prop(e, "age", v).
+```
+
+What `any` does *not* do is widen what a cell can be — it is still a number or
+a string, the two things a row cell is — or relax the operations. Arithmetic and
+`sum`/`min`/`max` still need a number and say so by name when they don't get
+one; a comparison compares the values it actually finds. And a numeric-looking
+string stays a string: `"1"` and `1` are different values and do not join.
+
+Two rules that disagree about a column are still a conflict rather than being
+quietly widened to `any` — `any` is something you declare, not something
+inference falls back on. The one place a real decision is made is reading a
+column from a fact file, where a cell is text and nothing else: a cell that
+parses wholly as a finite number is read as one, so `007` arrives as `7`. If you
+know the column is text, `string` says so.
 
 ## Install
 
@@ -196,22 +276,29 @@ packages/
   db-ivm/       Vendored Tanstack db-ivm + a queue-based `iterate` operator
   cli/          flow-ts binary, argv parsing (commander+zod), fact CSV I/O
   react/        React bindings: Store / Collection / useLiveQuery
-  example-web/  Tanstack-Start SPA demo (friend-graph, text CRDT, MVR k/v)
+  docs/         Documentation site: a Tanstack-Start SPA running the engine in
+                the browser — a per-feature tutorial plus four larger demos
 ```
 
 The executor compiles a parsed `Program` into a db-ivm dataflow graph, one stratum at a time. Recursive strata get a queue-driven `iterate` operator (defined in `packages/db-ivm/src/operators/iterate.ts`) that's the moral equivalent of differential-dataflow's `scope.iterative` but without the time-tracking machinery — operators are stateful, so each iteration's body sees only the new diff, and convergence is detected by db-ivm's standard "no pending work" loop.
 
 Rows cross the dataflow boundary as comma-joined strings (`"1,2,3,"`) rather than `number[]`: db-ivm uses JS `Map` for its top-level indexes, which means object identity matters, but JS hashes strings natively. The string boundary sidesteps both that and `JSON.stringify`'s aversion to `bigint`. Inside operators we project columns at the string level when possible, falling back to `number[]` only for arithmetic / compare evaluation.
 
-## Browser usage
+## Browser usage — and the docs
 
-`flow-ts` and the rest of the stack are filesystem-free, so the whole engine runs in the browser unchanged. There's a working React demo in `packages/example-web/` with a Tanstack-DB-inspired pattern: one `Store` wraps a session, `Collection<T>` is a typed EDB handle, and `useLiveQuery(store, idb)` is a React hook that subscribes to an IDB head. Multiple components can subscribe to the same store and re-render incrementally as you edit the EDBs.
+`flow-ts` and the rest of the stack are filesystem-free, so the whole engine runs in the browser unchanged. `packages/docs/` is a Tanstack-Start SPA that does exactly that, and it's where the language is documented:
 
 ```bash
-pnpm -F @flow-ts/example-web run dev
+pnpm -F @flow-ts/docs run dev     # http://localhost:5173
 ```
 
-The whole pipeline (parser, planner, db-ivm runtime, React glue) ships in ~74 kB gzipped.
+It's in two halves. The **tutorial** is eleven lessons, one per language feature, ordered so each only uses what came before — facts and rules, joins, filters, arithmetic, union, recursion, negation, aggregation, incremental retraction, ad-hoc queries, and writing back. The last splits into three parts (11.1–11.3), one per `.put` policy that supplies what the rules leave open: `insert`, `spread`, and `into`/`none`. Every page is live: edit a fact, or edit the rules themselves, and watch the derived tables update. The **demos** are the same engine at a larger size — a friend graph, a markdown vault that writes edits back into the source text, and two CRDTs from Stewen 2025 expressed as Datalog queries.
+
+The lessons are data (`src/lessons/lessons.ts`), and every one of them is executed against its seed facts by `packages/docs/tests/lessons.test.ts`, which asserts the rows the prose claims and checks that between them the lessons still cover the language. Documentation that stops being true fails the build.
+
+The React glue is a Tanstack-DB-inspired pattern: one `Store` wraps a session, `Collection<T>` is a typed EDB handle, `useLiveQuery(store, idb)` subscribes to an IDB head, `useWritableQuery` adds the write-back operations, and `useAdHocQuery` runs a one-off program over the facts a store already holds. Multiple components can subscribe to the same store and re-render incrementally as the EDBs change.
+
+The whole pipeline (parser, planner, db-ivm runtime, shadow compiler, router, table and React glue) ships in about 100 kB gzipped.
 
 ## Tests
 

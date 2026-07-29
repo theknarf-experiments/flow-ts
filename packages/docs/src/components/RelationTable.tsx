@@ -205,6 +205,7 @@ function AddRow({
                 className={styles.addInput}
                 type={inputType}
                 step={isFloat ? 'any' : undefined}
+                size={Math.max(attr.name.length, (values[i] ?? '').length)}
                 inputMode={isFloat ? 'decimal' : isInt ? 'numeric' : undefined}
                 value={values[i] ?? ''}
                 onChange={(e) => {

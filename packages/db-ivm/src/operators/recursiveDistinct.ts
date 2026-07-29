@@ -56,6 +56,9 @@ export class RecursiveStringDistinctOperator extends UnaryOperator<string> {
   /** Retracted on suspicion of having lost its only well-founded support, and
    *  owed a second look once the retraction has finished propagating. */
   readonly #suspect = new Set<string>()
+  /** Assertions held back so they cannot cancel against the retractions going
+   *  out in the same breath. See the note in `run`. */
+  readonly #held: Array<[string, number]> = []
 
   run(): void {
     if (this.inputs[0]!.isEmpty()) return
@@ -115,13 +118,34 @@ export class RecursiveStringDistinctOperator extends UnaryOperator<string> {
       }
     }
 
+    // A batch carrying both signs is the one thing that must not leave here
+    // together. A join downstream sees `-A` and `+B`, produces the loss of a
+    // derivation of C and the arrival of a replacement, and the two cancel
+    // inside one message — after which nothing records that C's support was
+    // swapped for one that might be leaning on C itself. Retractions go now;
+    // assertions wait until the retraction has finished propagating, which is
+    // the same moment a suspect gets its verdict.
+    //
+    // Only when both signs are present. A batch of one sign — every load, and
+    // most edits — goes out whole, so the loop keeps its usual number of passes.
+    const negatives: Array<[string, number]> = []
+    let positives = 0
+    for (const entry of result) {
+      if (entry[1] < 0) negatives.push(entry)
+      else positives++
+    }
+    if (negatives.length > 0 && positives > 0) {
+      for (const entry of result) if (entry[1] > 0) this.#held.push(entry)
+      this.output.sendData(new MultiSet(negatives))
+      return
+    }
     if (result.length > 0) this.output.sendData(new MultiSet(result))
   }
 
   /** The re-derive half. Anything still counted once the retraction has stopped
    *  propagating was standing on its own after all. */
   settle(): boolean {
-    if (this.#suspect.size === 0) return false
+    if (this.#suspect.size === 0 && this.#held.length === 0) return false
     const result: Array<[string, number]> = []
     for (const value of this.#suspect) {
       if ((this.#count.get(value) ?? 0) <= 0) continue
@@ -129,6 +153,10 @@ export class RecursiveStringDistinctOperator extends UnaryOperator<string> {
       result.push([value, 1])
     }
     this.#suspect.clear()
+    // Both halves are assertions, so releasing them together is safe — it is
+    // only against a retraction that they could cancel.
+    result.push(...this.#held)
+    this.#held.length = 0
     if (result.length === 0) return false
     this.output.sendData(new MultiSet(result))
     return true

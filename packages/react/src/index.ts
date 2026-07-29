@@ -20,11 +20,12 @@ import { openSession, type Program, type ProgramSession } from 'flow-ts'
 import { encodeRow, type Row } from 'flow-ts'
 import {
   type BackwardRequest,
+  type BackwardSession,
   type PutPolicy,
   type Resolution,
   type ShadowChannel,
   compileShadow,
-  resolveBackward,
+  openBackwardSession,
 } from 'flow-ts'
 import { parseProgram } from '@flow-ts/parsing'
 
@@ -128,6 +129,9 @@ export class Store {
   readonly #writable: ReadonlySet<string>
   readonly #put: Record<string, PutPolicy>
   readonly #channels: readonly ShadowChannel[] | undefined
+  /** The maintained backward graph. Null until the first write, so a store
+   *  nobody writes through pays nothing for the option. */
+  #backward: BackwardSession | null = null
   /** Per-view writable columns, computed once per program. */
   #writableColumns: Record<string, number[]> | null = null
 
@@ -183,6 +187,8 @@ export class Store {
     } catch {
       // session already closed — ignore
     }
+    // The shadow rules are compiled from the program, so they go with it.
+    this.#closeBackward()
 
     // 3. Wipe every mirror so subscribers don't see stale rows post-
     //    swap. Remember which ones had a non-empty snapshot so we can
@@ -293,6 +299,16 @@ export class Store {
       bucket.delete(key)
     }
     this.#queueDiff(relation, row, diff)
+    // Keep the backward graph in step. It only exists once somebody has
+    // written, and an unknown relation there is one this program does not
+    // declare — the same rows `replaceProgram` parks for a later rebuild.
+    if (this.#backward) {
+      try {
+        this.#backward.update(relation, row, diff)
+      } catch {
+        // not an EDB of this program — ignore, as the forward path does
+      }
+    }
     this.#schedule()
   }
 
@@ -304,12 +320,65 @@ export class Store {
 
   // --- writing back ----------------------------------------------------
   //
-  // Each edit resolves against a freshly compiled shadow program and throws it
-  // away, rather than holding a maintained backward session. That costs more
-  // per write and nothing per read, which is the right way round for a UI; it
-  // scopes itself to the relation being edited; and it costs nothing to hold
-  // open. A maintained session is the other trade, and no longer a narrower
-  // one: it used to refuse recursive programs and now handles them.
+  // One graph over `program + shadow(program)`, opened on the first write and
+  // kept in step from then on. A request costs the delta rather than a re-run:
+  // measured against building and loading a graph per request, that is ~100x
+  // at 200 rows and ~1700x at 4000, and the gap widens with the data because
+  // one side scales with the database and the other with the request.
+  //
+  // Nothing is opened until an edit is actually made, so listing a view in
+  // `writable` still costs nothing on its own — the trade only starts once
+  // somebody writes. After that the shadow rules are maintained on every
+  // forward change, which is about 1.8x to stand the graph up and about 3x per
+  // incremental step, the latter on a base of a few microseconds and flat in
+  // data size (`pnpm -F flow-ts run bench`). A constant factor on the cheap
+  // operation, buying an asymptotic one on the dear operation.
+  //
+  // The session never commits. Changes come back as data and are applied
+  // through this store's ordinary update path, which mirrors them straight
+  // back into the session — so there is one way rows enter the graph, and the
+  // EDB mirror, the live queries and the batching all behave exactly as they
+  // do for a direct collection write.
+
+  /** The backward graph, opened and back-filled on demand. */
+  #backwardSession(): BackwardSession | null {
+    if (this.#backward) return this.#backward
+    if (this.#writable.size === 0) return null
+    const session = openBackwardSession(this.#program, {
+      views: [...this.#writable],
+      put: this.#put,
+      channels: this.#channels,
+      parse: (src) => parseProgram(src, { grammarSource: 'shadow.dl' }),
+    })
+    // Back-fill from the authoritative rows rather than replaying history:
+    // `#edbRows` is what a `replaceProgram` replays from, and is exactly the
+    // state the forward session is already in.
+    for (const [relation, bucket] of this.#edbRows) {
+      for (const row of bucket.values()) {
+        try {
+          session.update(relation, row, +1)
+        } catch {
+          // Not an EDB of this program — the same rows `replaceProgram` parks
+          // for a future rebuild. Skip rather than poison the rest.
+        }
+      }
+    }
+    session.advance()
+    this.#backward = session
+    return session
+  }
+
+  /** Drop the backward graph. It rebuilds itself from `#edbRows` on the next
+   *  write, so this is how a program swap takes effect. */
+  #closeBackward(): void {
+    if (!this.#backward) return
+    try {
+      this.#backward.close()
+    } catch {
+      // already closed — ignore
+    }
+    this.#backward = null
+  }
 
   /** True if edits to this view were opted into. */
   canWrite(relation: string): boolean {
@@ -360,18 +429,20 @@ export class Store {
           'opt in. Shadow rules are only compiled for views that ask for them.',
       }
     }
-    // Resolve against the authoritative EDB rows, which is what the session was
-    // built from and what a write has to land on.
-    const facts: Record<string, Row[]> = {}
-    for (const edb of this.#program.edbs) {
-      facts[edb.name] = [...(this.#edbRows.get(edb.name)?.values() ?? [])]
-    }
+    // Any queued EDB writes have to reach the backward graph before it is
+    // asked, or the request resolves against a state the store has already
+    // moved on from.
+    this.#flushNow()
+    const session = this.#backwardSession()
+    /* c8 ignore next */
+    if (!session) return { status: 'refused', reason: `"${relation}" is not writable` }
 
-    const resolution = resolveBackward(this.#program, facts, request, {
-      ...options,
-      put: this.#put,
-      channels: this.#channels,
-      parse: (src) => parseProgram(src, { grammarSource: 'shadow.dl' }),
+    const resolution = session.resolve(request, {
+      requireUnambiguous: options.requireUnambiguous,
+      minimize: options.minimize,
+      // Applied below through the ordinary path, which mirrors back into this
+      // very session — committing here as well would count them twice.
+      commit: false,
     })
     if (resolution.status !== 'ok' || options.dryRun) return resolution
 
@@ -409,6 +480,7 @@ export class Store {
   #flushNow(): void {
     this.#scheduled = false
     this.#session.advance()
+    this.#backward?.advance()
     // Apply the diffs gathered by the sink, then notify listeners for
     // each relation whose row set actually changed.
     const changed = new Set<string>()

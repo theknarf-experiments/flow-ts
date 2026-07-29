@@ -398,3 +398,118 @@ describe('properties', () => {
     )
   })
 })
+
+
+describe('resolving without keeping it', () => {
+  // A session commits on success, which is what keeps it mirroring the store
+  // the caller is about to write. A caller whose source of truth is not the
+  // EDB — a file, a database — needs the same verification and none of the
+  // commit: it will apply the changes there and let the result flow back in
+  // through the ordinary read path, and applying them here as well would count
+  // them twice.
+  const SRC = `\
+.in
+.decl Task(path: string, status: string, text: string, line: number)
+.input Task.csv
+
+.printsize
+.decl Open(p: string, t: string)
+
+.rule
+Open(p, t) :- Task(p, "open", t, l).
+`
+  const ROWS: Row[] = [
+    ['a.md', 'open', 'milk', 3],
+    ['a.md', 'open', 'bread', 7],
+  ]
+
+  const opened = () => {
+    const session = openBackwardSession(parseProgram(SRC, { grammarSource: 'c.dl' }), {
+      parse: (src) => parseProgram(src, { grammarSource: 's.dl' }),
+      views: ['Open'],
+    })
+    for (const row of ROWS) session.update('Task', row, 1)
+    session.advance()
+    return session
+  }
+  const snapshot = (s: ReturnType<typeof opened>) =>
+    ['Task', 'Open'].map((r) => `${r}:${s.rows(r).map((x) => x.join(',')).sort().join('|')}`).join(' ')
+
+  it('gives the same answer as committing', () => {
+    const a = opened()
+    const b = opened()
+    const kept = a.resolve({ rel: 'Open', row: ['a.md', 'milk'] })
+    const dry = b.resolve({ rel: 'Open', row: ['a.md', 'milk'] }, { commit: false })
+    expect(dry).toEqual(kept)
+    a.close()
+    b.close()
+  })
+
+  it('and leaves the session exactly as it found it', () => {
+    const s = opened()
+    const before = snapshot(s)
+    const r = s.resolve({ rel: 'Open', row: ['a.md', 'milk'] }, { commit: false })
+    expect(r.status).toBe('ok')
+    expect(snapshot(s)).toBe(before)
+    s.close()
+  })
+
+  it('including when the search minimised first', () => {
+    // Minimisation applies and reverts candidates as it goes and then re-applies
+    // the winner, so there is more to undo than the plain path.
+    const s = opened()
+    const before = snapshot(s)
+    const r = s.resolve({ rel: 'Open', row: ['a.md', 'milk'] }, { commit: false, minimize: true })
+    expect(r.status).toBe('ok')
+    expect(snapshot(s)).toBe(before)
+    s.close()
+  })
+
+  it('so a run of them is as idempotent as asking once', () => {
+    const s = opened()
+    const before = snapshot(s)
+    const answers = Array.from({ length: 4 }, () =>
+      JSON.stringify(s.resolve({ rel: 'Open', row: ['a.md', 'bread'] }, { commit: false })),
+    )
+    expect(new Set(answers).size).toBe(1)
+    expect(snapshot(s)).toBe(before)
+    s.close()
+  })
+
+  it('while committing does move it', () => {
+    const s = opened()
+    const before = snapshot(s)
+    s.resolve({ rel: 'Open', row: ['a.md', 'milk'] })
+    expect(snapshot(s)).not.toBe(before)
+    s.close()
+  })
+
+  it('and per-request options override the session\'s own', () => {
+    const JOIN = `\
+.in
+.decl A(x: number)
+.input A.csv
+.decl B(x: number)
+.input B.csv
+
+.printsize
+.decl H(x: number)
+
+.rule
+H(x) :- A(x), B(x).
+`
+    // Opened permissive; one request asks for the strict answer.
+    const s = openBackwardSession(parseProgram(JOIN, { grammarSource: 'j.dl' }), {
+      parse: (src) => parseProgram(src, { grammarSource: 's.dl' }),
+      views: ['H'],
+    })
+    s.update('A', [1], 1)
+    s.update('B', [1], 1)
+    s.advance()
+    expect(s.resolve({ rel: 'H', row: [1] }, { commit: false }).status).toBe('ok')
+    expect(
+      s.resolve({ rel: 'H', row: [1] }, { commit: false, requireUnambiguous: true }).status,
+    ).toBe('ambiguous')
+    s.close()
+  })
+})

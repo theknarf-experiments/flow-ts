@@ -759,6 +759,50 @@ I0(a, s) :- I0(a, t), E0(s).`
   })
 })
 
+describe('a negated atom in a lower stratum flipping', () => {
+  // The mixed-sign case again, but with the two signs generated *inside* the
+  // graph rather than handed in. One fact arrives; it makes a negated atom
+  // false, which retracts the base rule's rows, and at the same time gives the
+  // recursive rule a new row to build on. The staging in `openSession` cannot
+  // help — the EDB delta is a single insertion.
+  //
+  // Found by the model-based session test, at roughly one seed in seven.
+  const NEG = `.in
+.decl E0(c0: string, c1: number)
+.input E0.csv
+
+.printsize
+.decl I0(c0: string, c1: number)
+
+.rule
+I0(t, b) :- E0(t, b), E0(t, a), !E0("x", 1).
+I0(t, b) :- I0(s, b), E0(t, b).`
+
+  it('retracts the rows the negation killed', () => {
+    // With only ("y",1) the negation holds and the base rule fires. Adding
+    // ("x",1) turns it false: nothing derives any more, and the recursive rule
+    // has nothing left to stand on.
+    expect(agrees(NEG, 'E0', 'I0', [['y', 1]], ['x', 1], true)).toBe(true)
+  })
+
+  it('rather than leaving the recursive rows holding each other up', () => {
+    const c = new Map<string, number>()
+    const s = openSession(program(NEG), {}, (r, row, d) => {
+      if (r === 'I0') c.set(row.join(','), (c.get(row.join(',')) ?? 0) + d)
+    })
+    s.update('E0', ['y', 1], 1)
+    s.advance()
+    expect(live(c)).toEqual(['y,1'])
+    s.update('E0', ['x', 1], 1)
+    s.advance()
+    s.close()
+    // It used to report both rows: the base was retracted and the replacement
+    // asserted in one message, so they cancelled at the join and nothing was
+    // left recording that the support had been swapped.
+    expect(live(c)).toEqual([])
+  })
+})
+
 // -- mixing signs in one tick --------------------------------------------
 //
 // A join inside the loop can produce a tuple from an antecedent that the same

@@ -12,12 +12,17 @@
 // (`pnpm bench`). A UI reads constantly and writes occasionally, so paying that
 // continuously would be exactly the wrong trade.
 //
-// And it resolves **per edit**, with `resolveBackward`, rather than holding a
-// maintained backward session. That costs more per write and nothing at all per
-// read, which matches how a UI behaves; it scopes itself to the relation being
-// edited; and it works on recursive programs, which a maintained session
-// refuses. The demo program here is recursive, so that last point is not
-// hypothetical.
+// And it holds a **maintained backward session** rather than resolving each
+// edit from scratch. A request costs the delta instead of a re-run — ~100x at
+// 200 rows, ~1700x at 4000, widening with the data because one side scales
+// with the database and the other with the request.
+//
+// It used to be the other way round, on the grounds that a maintained session
+// refused recursive programs, and the demo program here is recursive. That is
+// no longer true, so what was left was a trade between a constant factor on
+// reads and an asymptotic one on writes — and the graph is not opened until
+// somebody actually writes, so a store nobody writes through still pays
+// nothing.
 
 import { describe, expect, it } from 'vitest'
 import { parseProgram } from '@flow-ts/parsing'
@@ -268,5 +273,110 @@ Task(p, t) :- MdTask(p, l, t).
       { writable: ['Task'] },
     )
     expect(store.insertRow('Task', ['a.md', 'milk']).status).toBe('ok')
+  })
+})
+
+
+describe('the backward graph is maintained, not rebuilt', () => {
+  // The observable consequences of holding one graph rather than building one
+  // per edit. None of these is about speed: what matters is that a maintained
+  // thing cannot drift from the store it is mirroring.
+
+  it('is not opened until something is actually written', () => {
+    // Listing a view in `writable` is a statement of intent, not a cost. The
+    // proxy for "nothing was compiled" is that a store which only ever reads
+    // behaves identically whether or not views were listed.
+    const bare = seeded([])
+    const armed = seeded(['ICanReach'])
+    const read = (s: ReturnType<typeof seeded>) =>
+      [...s.snapshot('ICanReach')].map((r) => String(r[0])).sort()
+    expect(read(armed)).toEqual(read(bare))
+    expect(armed.canWrite('ICanReach')).toBe(true)
+    expect(bare.canWrite('ICanReach')).toBe(false)
+  })
+
+  it('follows source edits made after the first write', () => {
+    const store = seeded()
+    // Open the graph.
+    expect(store.removeRow('ICanReach', ['bob'], { dryRun: true }).status).toBe('ok')
+    // Now change the sources underneath it and ask again. A stale graph would
+    // still believe bob is reachable.
+    store.collection('Friend').delete([2, 3] as never)
+    store.flush()
+    const after = store.removeRow('ICanReach', ['bob'], { dryRun: true })
+    expect(after.status).toBe('refused')
+    if (after.status !== 'refused') return
+    expect(after.reason).toMatch(/not derived/i)
+  })
+
+  it('and follows edits made through it', () => {
+    const store = seeded()
+    const first = store.removeRow('ICanReach', ['bob'])
+    expect(first.status).toBe('ok')
+    store.flush()
+    // The row is gone, so asking again is a stale request rather than a repeat.
+    expect(store.removeRow('ICanReach', ['bob']).status).toBe('refused')
+  })
+
+  it('a dry run leaves the store exactly where it was', () => {
+    const store = seeded()
+    const before = [...store.snapshot('Friend')].map((r) => r.join(',')).sort()
+    for (let i = 0; i < 3; i++) {
+      expect(store.removeRow('ICanReach', ['bob'], { dryRun: true }).status).toBe('ok')
+    }
+    store.flush()
+    expect([...store.snapshot('Friend')].map((r) => r.join(',')).sort()).toEqual(before)
+    // And the real write still works afterwards, so the dry runs left nothing
+    // behind for it to trip over.
+    expect(store.removeRow('ICanReach', ['bob']).status).toBe('ok')
+  })
+
+  it('a run of dry runs gives the same answer every time', () => {
+    const store = seeded()
+    const answers = Array.from({ length: 4 }, () =>
+      JSON.stringify(store.removeRow('ICanReach', ['bob'], { dryRun: true })),
+    )
+    expect(new Set(answers).size).toBe(1)
+  })
+
+  it('rebuilds when the program is swapped', () => {
+    const store = seeded()
+    expect(store.removeRow('ICanReach', ['bob'], { dryRun: true }).status).toBe('ok')
+
+    // Same rules, but `ICanReach` now only reports direct friends, so bob is
+    // no longer derived at all. A graph compiled from the old rules would say
+    // otherwise.
+    store.replaceProgram(
+      parseProgram(
+        SOURCE.replace(
+          'ICanReach(name) :- Me(me), Reach(me, id), Person(id, name).',
+          'ICanReach(name) :- Me(me), Friend(me, id), Person(id, name).',
+        ),
+        { grammarSource: 'demo.dl' },
+      ),
+    )
+    store.flush()
+    expect([...store.snapshot('ICanReach')].map((r) => String(r[0])).sort()).toEqual(['ann'])
+    expect(store.removeRow('ICanReach', ['bob'], { dryRun: true }).status).toBe('refused')
+    expect(store.removeRow('ICanReach', ['ann'], { dryRun: true }).status).toBe('ok')
+  })
+
+  it('per-edit options are per edit, not fixed when the graph opened', () => {
+    const store = seeded()
+    // Removing `bob` reaches one relation by two rows — ambiguous only if the
+    // caller asks for that to be reported.
+    const loose = store.removeRow('ICanReach', ['bob'], { dryRun: true })
+    const strict = store.removeRow('ICanReach', ['bob'], {
+      dryRun: true,
+      requireUnambiguous: true,
+    })
+    expect(loose.status).toBe('ok')
+    // Whichever it is, the two came from the same graph and disagree only
+    // because the request differed.
+    expect(['ok', 'ambiguous']).toContain(strict.status)
+    const minimal = store.removeRow('ICanReach', ['bob'], { dryRun: true, minimize: true })
+    expect(minimal.status).toBe('ok')
+    if (minimal.status !== 'ok' || loose.status !== 'ok') return
+    expect(minimal.changes.length).toBeLessThanOrEqual(loose.changes.length)
   })
 })

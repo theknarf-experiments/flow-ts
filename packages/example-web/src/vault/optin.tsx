@@ -188,9 +188,10 @@ export function CompiledPanel() {
 // constant: warm stays flat as the vault grows, cold does not.
 //
 // `resolveBackward` is the cold path by construction — it compiles, runs and
-// throws the graph away per request. The store uses it, and this panel is the
-// honest accounting of what that costs. Growing the vault is the point: one
-// number stays still and the other doesn't.
+// throws the graph away per request. The store used to work that way and now
+// holds the warm one, opened on the first write; this panel is the accounting
+// that decided it. Growing the vault is the point: one number stays still and
+// the other doesn't.
 
 const SIZES = [2, 10, 40] as const
 
@@ -301,8 +302,9 @@ export function SessionPanel() {
       </p>
       <p className="muted">
         Below: the same eight edits at three vault sizes, counted in emissions, which is work
-        done rather than a clock. <code>resolveBackward</code> — what every edit on the other
-        pages uses — is the cold column.
+        done rather than a clock. The cold column is <code>resolveBackward</code>, which
+        builds a graph per request; the warm one is what every edit on the other pages now
+        goes through, opened the first time you write and kept in step after.
       </p>
       <button type="button" data-testid="session-run" onClick={run}>
         measure both ways
@@ -344,7 +346,8 @@ export function SessionPanel() {
         standing cost is the other side: carrying shadow rules makes loading the graph about
         1.8× dearer and an incremental step about 3× dearer, on a base of a few microseconds
         and flat in data size (<code>pnpm bench</code>). A constant factor on the cheap thing,
-        buying an asymptotic one on the dear thing.
+        buying an asymptotic one on the dear thing — which is why the store takes that trade,
+        and why it waits until you write before taking it at all.
       </p>
       <p className="muted">
         A session used to refuse recursive programs outright — retraction through a

@@ -65,6 +65,28 @@ export interface BackwardSessionOptions extends ResolveOptions {
   noSharing?: boolean
 }
 
+/** Knobs that belong to one request rather than to the session.
+ *
+ *  They were always per-request — `resolveBackward` took them per call — and
+ *  the session only fixed them at open time because it was written second. A UI
+ *  wants `requireUnambiguous` on a delete and not on a rewrite, from the same
+ *  session. Anything omitted falls back to what the session was opened with. */
+export interface RequestOptions {
+  /** Report `ambiguous` rather than applying every candidate when the request
+   *  reaches more than one source relation. */
+  requireUnambiguous?: boolean
+  /** Shrink the result to a set with no redundant member. */
+  minimize?: boolean
+  /** Keep the changes on success. On by default, which is what makes the
+   *  session go on mirroring the store the caller is about to write.
+   *
+   *  Off verifies and then rolls back, for a caller whose source of truth is
+   *  not the EDB — a file, a database — and who will apply the changes there
+   *  and let the result flow back in through the ordinary read path. Applying
+   *  them here as well would count them twice. */
+  commit?: boolean
+}
+
 export interface BackwardSession {
   /** Queue an EDB delta, mirroring a change to the real store. */
   update(relation: string, row: Row, diff?: number): void
@@ -76,9 +98,9 @@ export interface BackwardSession {
   /** Candidate changes for a request, with the session left untouched. */
   propose(request: BackwardRequest): Change[]
   /** The full protocol. On `ok` the changes are applied to the session, so it
-   *  keeps mirroring the store the caller is about to write. On anything else
-   *  the session is exactly as it was. */
-  resolve(request: BackwardRequest): Resolution
+   *  keeps mirroring the store the caller is about to write — unless
+   *  `commit: false`. On anything else the session is exactly as it was. */
+  resolve(request: BackwardRequest, options?: RequestOptions): Resolution
   /** Sink emissions so far — the cost measure, since it counts work done
    *  rather than time taken. */
   emissions(): number
@@ -241,7 +263,11 @@ export function openBackwardSession(
   const policyFor = (rel: string) =>
     options.put?.[rel] ?? program.idbs.find((d) => d.name === rel)?.put
 
-  const resolve = (request: BackwardRequest): Resolution => {
+  const resolve = (request: BackwardRequest, per: RequestOptions = {}): Resolution => {
+    const minimize = per.minimize ?? options.minimize
+    const requireUnambiguous = per.requireUnambiguous ?? options.requireUnambiguous
+    const commit = per.commit ?? true
+
     const malformed = validateRequest(program, inferred, shadow.seeds, request)
     if (malformed) return { status: 'refused', reason: malformed }
 
@@ -292,7 +318,7 @@ export function openBackwardSession(
         }
       }
       if (rounds === 1) {
-        const ambiguity = checkAmbiguous(changes, options)
+        const ambiguity = checkAmbiguous(changes, { ...options, requireUnambiguous })
         if (ambiguity) return ambiguity
       }
 
@@ -307,7 +333,10 @@ export function openBackwardSession(
           ? isLive(request.rel, request.row)
           : !isLive(request.rel, request.row)
       if (achieved) {
-        if (!options.minimize) return { status: 'ok', changes: applied, rounds }
+        if (!minimize) {
+          if (!commit) applyChanges(applied, -1)
+          return { status: 'ok', changes: applied, rounds }
+        }
         // Roll back to where we started, then rebuild the smallest set that
         // still works. Each trial is an apply/advance/rollback on the live
         // graph, which is what makes trying n of them affordable.
@@ -322,7 +351,7 @@ export function openBackwardSession(
           applyChanges(subset, -1)
           return stillWorks
         })
-        applyChanges(kept)
+        if (commit) applyChanges(kept)
         return { status: 'ok', changes: kept, rounds }
       }
 

@@ -513,3 +513,87 @@ H(x) :- A(x), B(x).
     s.close()
   })
 })
+
+
+describe('forwarding emissions to a caller', () => {
+  // `rows()` is a snapshot and suffices for most callers. One maintaining its
+  // own projection wants the diffs as they arrive — flow-md accumulates a
+  // result set per query — and without a sink it would need a second forward
+  // graph alongside this one purely to get them.
+  const SRC = `\
+.in
+.decl Task(path: string, status: string, text: string, line: number)
+.input Task.csv
+
+.printsize
+.decl Open(p: string, t: string)
+
+.rule
+Open(p, t) :- Task(p, "open", t, l).
+`
+  const opened = (sink?: Parameters<typeof openBackwardSession>[2]) =>
+    openBackwardSession(
+      parseProgram(SRC, { grammarSource: 'f.dl' }),
+      { parse: (src) => parseProgram(src, { grammarSource: 's.dl' }), views: ['Open'] },
+      sink,
+    )
+
+  it('delivers the same rows the graph ends up holding', () => {
+    const seen = new Map<string, number>()
+    const session = opened((rel, row, diff) => {
+      if (rel !== 'Open') return
+      const k = row.join(',')
+      seen.set(k, (seen.get(k) ?? 0) + diff)
+    })
+    session.update('Task', ['a.md', 'open', 'milk', 3], 1)
+    session.update('Task', ['a.md', 'closed', 'eggs', 4], 1)
+    session.advance()
+
+    const live = [...seen].filter(([, n]) => n > 0).map(([k]) => k).sort()
+    expect(live).toEqual(session.rows('Open').map((r) => r.join(',')).sort())
+    expect(live).toEqual(['a.md,milk'])
+    session.close()
+  })
+
+  it('and the retraction when a fact goes', () => {
+    const diffs: Array<[string, number]> = []
+    const session = opened((rel, row, diff) => {
+      if (rel === 'Open') diffs.push([row.join(','), diff])
+    })
+    session.update('Task', ['a.md', 'open', 'milk', 3], 1)
+    session.advance()
+    session.update('Task', ['a.md', 'open', 'milk', 3], -1)
+    session.advance()
+    expect(diffs).toEqual([
+      ['a.md,milk', 1],
+      ['a.md,milk', -1],
+    ])
+    session.close()
+  })
+
+  it('a proposal is still state-neutral as far as the sink can tell', () => {
+    // The seed goes in and comes back out, so anything derived from it is
+    // emitted and then retracted. The net is zero, which is what a caller
+    // accumulating diffs needs to be true.
+    const net = new Map<string, number>()
+    const session = opened((rel, row, diff) => {
+      const k = `${rel}|${row.join(',')}`
+      net.set(k, (net.get(k) ?? 0) + diff)
+    })
+    session.update('Task', ['a.md', 'open', 'milk', 3], 1)
+    session.advance()
+    const before = [...net].filter(([, n]) => n !== 0).map(([k]) => k).sort()
+
+    session.propose({ rel: 'Open', row: ['a.md', 'milk'] })
+    expect([...net].filter(([, n]) => n !== 0).map(([k]) => k).sort()).toEqual(before)
+    session.close()
+  })
+
+  it('and a session with no sink behaves exactly as before', () => {
+    const session = opened()
+    session.update('Task', ['a.md', 'open', 'milk', 3], 1)
+    session.advance()
+    expect(session.rows('Open').map((r) => r.join(','))).toEqual(['a.md,milk'])
+    session.close()
+  })
+})

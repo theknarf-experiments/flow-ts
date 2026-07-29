@@ -113,6 +113,20 @@ export interface ShadowProgram {
    *  several rules this is the union: a column one rule can rewrite is listed,
    *  because hiding it would deny the edit on rows that *can* take it. */
   writableColumns: Record<string, number[]>
+  /** Per view, per writable column, the source relation and position an update
+   *  to it ultimately rewrites — following through however many rules sit in
+   *  between.
+   *
+   *  `writableColumns` answers "can this be written"; a consumer that also
+   *  polices *what* may be written needs to know where it lands. flow-md's
+   *  plugins declare writability per attribute — a task's text can be
+   *  rewritten, the line it sits on cannot — and that is a fact about the
+   *  writer, not about the rules, so it cannot be inferred here. Naming the
+   *  endpoint is what lets it be applied on top.
+   *
+   *  Usually one entry. Several means several rules reach the same column
+   *  through different sources, and the caller decides what that means. */
+  writeTargets: Record<string, Record<number, Array<{ rel: string; column: number }>>>
 }
 
 interface ShadowRule {
@@ -147,10 +161,26 @@ export function compileShadow(
   let helperSeq = 0
   // Head relation → head column indices for which an update rule was emitted.
   const writableCols = new Map<string, Set<number>>()
-  const noteWritable = (rel: string, column: number): void => {
+  // …and where each of those columns writes to: the body position the update
+  // rule rewrites. Immediate, so it may name an IDB; resolved to source
+  // relations below.
+  const targets = new Map<string, Map<number, Array<{ rel: string; column: number }>>>()
+  const noteWritable = (
+    rel: string,
+    column: number,
+    target: { rel: string; column: number } | null = null,
+  ): void => {
     let set = writableCols.get(rel)
     if (!set) writableCols.set(rel, (set = new Set()))
     set.add(column)
+    if (!target) return
+    let byColumn = targets.get(rel)
+    if (!byColumn) targets.set(rel, (byColumn = new Map()))
+    const list = byColumn.get(column) ?? []
+    if (!list.some((t) => t.rel === target.rel && t.column === target.column)) {
+      list.push(target)
+    }
+    byColumn.set(column, list)
   }
 
   const edbNames = new Set(program.edbs.map((d) => d.name))
@@ -268,8 +298,23 @@ export function compileShadow(
         rules,
       )
       if (emitted) {
-        // `spread` inverts the aggregate column, which is the last one.
-        noteWritable(rule.head.name, rule.head.headArguments.length - 1)
+        // `spread` inverts the aggregate column, which is the last one. It
+        // writes to wherever the aggregated variable sits in the rule's single
+        // positive atom — `compileSpread` has already checked there is exactly
+        // one of each.
+        const agg = rule.head.headArguments[rule.head.headArguments.length - 1]
+        const only = rule.rhs.find((p) => p.kind === 'Atom')
+        const at =
+          agg?.kind === 'Aggregation' && only?.kind === 'Atom'
+            ? only.atom.args.findIndex(
+                (a) => a.kind === 'Var' && agg.aggregation.vars().includes(a.name),
+              )
+            : -1
+        noteWritable(
+          rule.head.name,
+          rule.head.headArguments.length - 1,
+          at >= 0 && only?.kind === 'Atom' ? { rel: only.atom.name, column: at } : null,
+        )
         continue
       }
       refusals.push({
@@ -350,11 +395,10 @@ export function compileShadow(
       // invert, `/` and `%` are not injective, and a multi-step expression
       // would need helper relations because arithmetic here is flat.
       if (ha.kind === 'Arith') {
-        if (
-          emitComputedUpdate(rule, ha.arithmetic, headArgs, k, headFilters, only, rules, refusals)
-        ) {
-          noteWritable(rule.head.name, k)
-        }
+        const target = emitComputedUpdate(
+          rule, ha.arithmetic, headArgs, k, headFilters, only, rules, refusals,
+        )
+        if (target) noteWritable(rule.head.name, k, target)
         return
       }
       if (ha.kind !== 'Var') return
@@ -383,7 +427,7 @@ export function compileShadow(
         ...headFilters,
       ].join(', ')
 
-      noteWritable(rule.head.name, k)
+      noteWritable(rule.head.name, k, { rel: atom.name, column: argIndex })
       rules.push({
         headRel: UPD_PREFIX + atom.name,
         needs: [UPD_PREFIX + rule.head.name],
@@ -450,8 +494,40 @@ export function compileShadow(
     if (!liveHeads.has(UPD_PREFIX + rel)) continue
     writableColumns[rel] = [...set].sort((a, b) => a - b)
   }
+
+  // Follow each column's immediate target until it lands on a source relation.
+  // One hop is not enough: a query over a view over a rule is three bodies
+  // deep, and the caller's question — may this column be written, given what
+  // the *source* allows — is about the far end.
+  const resolveTargets = (
+    rel: string,
+    column: number,
+    seen: Set<string>,
+  ): Array<{ rel: string; column: number }> => {
+    const key = `${rel}/${column}`
+    if (seen.has(key)) return [] // a cycle through recursion; no source endpoint
+    seen.add(key)
+    const immediate = targets.get(rel)?.get(column) ?? []
+    const out: Array<{ rel: string; column: number }> = []
+    for (const t of immediate) {
+      for (const r of edbNames.has(t.rel) ? [t] : resolveTargets(t.rel, t.column, seen)) {
+        if (!out.some((x) => x.rel === r.rel && x.column === r.column)) out.push(r)
+      }
+    }
+    return out
+  }
+  const writeTargets: Record<string, Record<number, Array<{ rel: string; column: number }>>> = {}
+  for (const rel of Object.keys(writableColumns)) {
+    const byColumn: Record<number, Array<{ rel: string; column: number }>> = {}
+    for (const column of writableColumns[rel]!) {
+      const found = resolveTargets(rel, column, new Set())
+      if (found.length > 0) byColumn[column] = found
+    }
+    if (Object.keys(byColumn).length > 0) writeTargets[rel] = byColumn
+  }
   return {
     writableColumns,
+    writeTargets,
     source: render(
       program,
       live,
@@ -486,10 +562,10 @@ function emitComputedUpdate(
   only: string | null,
   out: ShadowRule[],
   refusals: ShadowRefusal[],
-): boolean {
+): { rel: string; column: number } | null {
   const subject = rule.toString()
   const vars = arith.vars()
-  if (vars.length === 0) return false // a bare constant: nothing to write back to
+  if (vars.length === 0) return null // a bare constant: nothing to write back to
   if (new Set(vars).size > 1 || vars.length > 1) {
     refusals.push({
       subject,
@@ -497,7 +573,7 @@ function emitComputedUpdate(
         `the computed column of "${rule.head.name}" depends on more than one variable ` +
         `(${[...new Set(vars)].join(', ')}), so a new value does not determine a new input`,
     })
-    return false
+    return null
   }
   if (arith.rest.length !== 1) {
     refusals.push({
@@ -506,14 +582,14 @@ function emitComputedUpdate(
         `the computed column of "${rule.head.name}" is not a single operation, and flat ` +
         'arithmetic cannot express its inverse without helper relations',
     })
-    return false
+    return null
   }
 
   const v = vars[0]!
   const [op, operand] = arith.rest[0]!
   const varIsInit = arith.init.kind === 'Var'
   const other = varIsInit ? factorToString(operand) : factorToString(arith.init)
-  if (!varIsInit && operand.kind !== 'Var') return false
+  if (!varIsInit && operand.kind !== 'Var') return null
 
   // `y = x op c` undoes as `x = y op⁻¹ c`; `y = c op x` needs the operation
   // rearranged instead, which only works when it can be.
@@ -534,16 +610,16 @@ function emitComputedUpdate(
         `the computed column of "${rule.head.name}" uses ${op}, which is not injective — ` +
         'many inputs give the same output, so nothing says which to write back',
     })
-    return false
+    return null
   }
 
   const sites = occurrencesOf(v, rule.rhs)
-  if (sites.length !== 1) return false
+  if (sites.length !== 1) return null
   const { atomIndex, argIndex } = sites[0]!
   const pred = rule.rhs[atomIndex]!
-  if (pred.kind !== 'Atom') return false
+  if (pred.kind !== 'Atom') return null
   const atom = pred.atom
-  if (only !== null && atom.name !== only) return false
+  if (only !== null && atom.name !== only) return null
 
   const fresh = `${headArgs[k]}_n`
   const request = headArgs.map((a, j) => (j === k ? [a, fresh] : [a, a]))
@@ -561,7 +637,7 @@ function emitComputedUpdate(
         ...request.map((r) => r[1]),
       ].join(', ')}), ${body}.`,
   })
-  return true
+  return { rel: atom.name, column: argIndex }
 }
 
 /** Insert rules for one forward rule: what has to become true for its head to

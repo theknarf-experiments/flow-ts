@@ -36,7 +36,7 @@
 // with the rollback made cheap by the same mechanism as everything else.
 
 import type { Program } from '../ast/index.js'
-import { type ProgramSession, openSession } from '../executing/dataflow.js'
+import { type IdbSink, type ProgramSession, openSession } from '../executing/dataflow.js'
 import type { Row } from '../reading/row.js'
 import { inferRelationTypes } from '../typing/index.js'
 import { SEED_INS_PREFIX, SEED_PREFIX, SEED_UPD_PREFIX, compileShadow } from './compile.js'
@@ -110,6 +110,15 @@ export interface BackwardSession {
 export function openBackwardSession(
   program: Program,
   options: BackwardSessionOptions,
+  /** Emissions, forwarded as `openSession` would deliver them.
+   *
+   *  `rows()` already exposes what the graph holds, and for most callers that
+   *  is enough. One maintaining its own projection — a server accumulating a
+   *  result set per query, say — wants the diffs as they arrive rather than a
+   *  snapshot to re-read, and without this it would have to keep a second
+   *  forward graph to get them. The shadow channels come through too; filter by
+   *  relation name as the forward session's callers already do. */
+  sink?: IdbSink,
 ): BackwardSession {
   // A session carries its graph for as long as it is open, so the scope of the
   // shadow rules is a standing cost rather than a per-request one — about 1.8x
@@ -139,6 +148,7 @@ export function openBackwardSession(
 
   const session: ProgramSession = openSession(shadowProgram, options, (rel, row, diff) => {
     emissions++
+    sink?.(rel, row, diff)
     let m = state.get(rel)
     if (!m) state.set(rel, (m = new Map()))
     const k = keyOf(row)

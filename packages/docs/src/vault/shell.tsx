@@ -32,7 +32,11 @@ import {
   useRef,
   useState,
 } from 'react'
-import { Link, Outlet } from '@tanstack/react-router'
+import { NavLink, Outlet } from 'react-router'
+
+/** `NavLink` hands its className a function; the subnav only wants `active`. */
+const subnavClass = ({ isActive }: { isActive: boolean }) =>
+  isActive ? 'active' : undefined
 import { Store, useProgram } from '@flow-ts/react'
 import type { Resolution } from 'flow-ts'
 import { parseProgram } from '@flow-ts/parsing'
@@ -177,15 +181,15 @@ export function VaultShell() {
             that fact is rewritten in the markdown on the left.
           </p>
           <nav className="subnav" data-testid="vault-subnav">
-            <Link to="/vault" activeOptions={{ exact: true }} activeProps={{ className: 'active' }}>
+            <NavLink to="/vault" end className={subnavClass}>
               Tracing
-            </Link>
-            <Link to="/vault/shapes" activeProps={{ className: 'active' }}>
+            </NavLink>
+            <NavLink to="/vault/shapes" className={subnavClass}>
               Shapes
-            </Link>
-            <Link to="/vault/opt-in" activeProps={{ className: 'active' }}>
+            </NavLink>
+            <NavLink to="/vault/opt-in" className={subnavClass}>
               Opt-in
-            </Link>
+            </NavLink>
           </nav>
         </header>
 

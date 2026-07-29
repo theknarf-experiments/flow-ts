@@ -12,7 +12,7 @@
 // comes back finds their edits where they left them.
 
 import { useMemo } from 'react'
-import { Link } from '@tanstack/react-router'
+import { Link } from 'react-router'
 import { parseProgram } from '@flow-ts/parsing'
 import { Store, useProgram } from '@flow-ts/react'
 import { RelationTable } from '../components/RelationTable.js'
@@ -67,9 +67,7 @@ export function Lesson({ lesson }: { lesson: LessonData }): JSX.Element {
             <>
               Lesson {lessonLabel(lesson)}
               {' · '}
-              <Link to="/learn/$slug" params={{ slug: parent.slug }}>
-                {parent.title}
-              </Link>
+              <Link to={`/learn/${parent.slug}`}>{parent.title}</Link>
             </>
           ) : (
             <>
@@ -92,7 +90,7 @@ export function Lesson({ lesson }: { lesson: LessonData }): JSX.Element {
           <ul className="lesson-children" data-testid="lesson-children">
             {children.map((child) => (
               <li key={child.slug}>
-                <Link to="/learn/$slug" params={{ slug: child.slug }}>
+                <Link to={`/learn/${child.slug}`}>
                   <span className="lesson-children-num">{lessonLabel(child)}</span>
                   <span>
                     <strong>{child.title}</strong> — {child.blurb}
@@ -201,7 +199,7 @@ export function Lesson({ lesson }: { lesson: LessonData }): JSX.Element {
 
       <nav className="lesson-nav" data-testid="lesson-nav">
         {previous ? (
-          <Link to="/learn/$slug" params={{ slug: previous.slug }} className="lesson-prev">
+          <Link to={`/learn/${previous.slug}`} className="lesson-prev">
             ← {previous.title}
           </Link>
         ) : (
@@ -210,7 +208,7 @@ export function Lesson({ lesson }: { lesson: LessonData }): JSX.Element {
           </Link>
         )}
         {next && (
-          <Link to="/learn/$slug" params={{ slug: next.slug }} className="lesson-next">
+          <Link to={`/learn/${next.slug}`} className="lesson-next">
             {next.title} →
           </Link>
         )}

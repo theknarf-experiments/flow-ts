@@ -276,8 +276,9 @@ packages/
   db-ivm/       Vendored Tanstack db-ivm + a queue-based `iterate` operator
   cli/          flow-ts binary, argv parsing (commander+zod), fact CSV I/O
   react/        React bindings: Store / Collection / useLiveQuery
-  docs/         Documentation site: a Tanstack-Start SPA running the engine in
-                the browser — a per-feature tutorial plus four larger demos
+  docs/         Documentation site: a Vite + React + react-router SPA running
+                the engine in the browser — a per-feature tutorial plus four
+                larger demos
 ```
 
 The executor compiles a parsed `Program` into a db-ivm dataflow graph, one stratum at a time. Recursive strata get a queue-driven `iterate` operator (defined in `packages/db-ivm/src/operators/iterate.ts`) that's the moral equivalent of differential-dataflow's `scope.iterative` but without the time-tracking machinery — operators are stateful, so each iteration's body sees only the new diff, and convergence is detected by db-ivm's standard "no pending work" loop.
@@ -286,7 +287,7 @@ Rows cross the dataflow boundary as comma-joined strings (`"1,2,3,"`) rather tha
 
 ## Browser usage — and the docs
 
-`flow-ts` and the rest of the stack are filesystem-free, so the whole engine runs in the browser unchanged. `packages/docs/` is a Tanstack-Start SPA that does exactly that, and it's where the language is documented:
+`flow-ts` and the rest of the stack are filesystem-free, so the whole engine runs in the browser unchanged. `packages/docs/` is a Vite + React SPA that does exactly that, and it's where the language is documented:
 
 ```bash
 pnpm -F @flow-ts/docs run dev     # http://localhost:5173

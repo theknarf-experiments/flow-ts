@@ -1,19 +1,15 @@
-// `/learn/$slug` — every tutorial lesson, through one route.
+// `/learn/:slug` — every tutorial lesson, through one route.
 //
 // The lessons are data, so there is nothing per-lesson to register here: adding
 // an entry to `LESSONS` adds a page and a sidebar link.
 
-import { Link, createFileRoute } from '@tanstack/react-router'
+import { Link, useParams } from 'react-router'
 import { Lesson } from '../lessons/Lesson.js'
 import { LESSONS, lessonBySlug } from '../lessons/lessons.js'
 
-export const Route = createFileRoute('/learn/$slug')({
-  component: LessonRoute,
-})
-
-function LessonRoute() {
-  const { slug } = Route.useParams()
-  const lesson = lessonBySlug(slug)
+export function LessonPage(): JSX.Element {
+  const { slug } = useParams()
+  const lesson = slug ? lessonBySlug(slug) : undefined
 
   if (!lesson) {
     return (
@@ -27,9 +23,7 @@ function LessonRoute() {
         <ul>
           {LESSONS.map((l) => (
             <li key={l.slug}>
-              <Link to="/learn/$slug" params={{ slug: l.slug }}>
-                {l.title}
-              </Link>
+              <Link to={`/learn/${l.slug}`}>{l.title}</Link>
             </li>
           ))}
         </ul>

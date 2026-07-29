@@ -5,13 +5,9 @@
 // this work", and a reader who arrives with the second question should not have
 // to reverse-engineer an RGA CRDT to get an answer.
 
-import { Link, createFileRoute } from '@tanstack/react-router'
+import { Link } from 'react-router'
 import { Inline } from '../components/Prose.js'
 import { lessonLabel, lessonOutline, type Lesson } from '../lessons/lessons.js'
-
-export const Route = createFileRoute('/')({
-  component: Landing,
-})
 
 const DEMOS = [
   {
@@ -47,8 +43,7 @@ const DEMOS = [
 function LessonCard({ lesson }: { lesson: Lesson }) {
   return (
     <Link
-      to="/learn/$slug"
-      params={{ slug: lesson.slug }}
+      to={`/learn/${lesson.slug}`}
       className="lesson-card"
       data-testid={`lesson-link-${lesson.slug}`}
     >
@@ -63,7 +58,7 @@ function LessonCard({ lesson }: { lesson: Lesson }) {
   )
 }
 
-function Landing() {
+export function Overview(): JSX.Element {
   return (
     <div className="app">
       <header>

@@ -11,17 +11,16 @@
     "test": "vitest run && playwright test",
     "test:unit": "vitest run",
     "test:ui": "playwright test --ui",
-    "clean": "rm -rf dist .vite .tanstack test-results"
+    "clean": "rm -rf dist .vite test-results"
   },
   "dependencies": {
     "@flow-ts/parsing": "workspace:*",
     "@flow-ts/react": "workspace:*",
-    "@tanstack/react-router": "^1.95.0",
-    "@tanstack/react-start": "^1.95.0",
     "@tanstack/react-table": "^8.21.3",
     "flow-ts": "workspace:*",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-router": "^7.18.2"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",

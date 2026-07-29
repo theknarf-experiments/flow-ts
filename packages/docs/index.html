@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>flow-ts • docs</title>
+    <!--
+      The theme, applied before anything paints.
+
+      This has to be inline and it has to be here: a module script runs after
+      the stylesheet has been applied, so the page would paint in the default
+      palette and flip a frame later. That flash is the whole reason this
+      exists.
+
+      It is deliberately terse and dependency-free, since nothing can be
+      imported into it. `src/theme.ts` holds the same logic for the runtime
+      toggle, and the two are kept in step by hand — if they drift, the only
+      symptom is the one frame this is here to prevent.
+    -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('flow-ts-theme')
+          var pref = stored === 'light' || stored === 'dark' ? stored : 'system'
+          var theme =
+            pref === 'system'
+              ? matchMedia('(prefers-color-scheme: light)').matches
+                ? 'light'
+                : 'dark'
+              : pref
+          var root = document.documentElement
+          root.dataset.theme = theme
+          root.dataset.themePreference = pref
+          root.style.colorScheme = theme
+        } catch (e) {
+          /* private mode, blocked storage — fall through to the CSS default */
+        }
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

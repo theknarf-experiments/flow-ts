@@ -1,10 +1,13 @@
 import { defineConfig, devices } from '@playwright/test'
 
 // Playwright runs against the *production preview* (`pnpm build && pnpm
-// preview`). Tanstack Start's dev server has an unresolved code-splitter
-// interaction that injects a duplicate `hot` declaration during HMR;
-// the production bundle is unaffected. Testing the preview also matches
-// what users actually deploy. Build time is a few seconds.
+// preview`) rather than the dev server.
+//
+// This used to be forced: Tanstack Start's dev server injected a duplicate
+// `hot` declaration during HMR that the production bundle didn't have. That is
+// gone with the framework, and the dev server would work fine now — but the
+// preview is what users actually get, including the route chunking, and the
+// build costs a few seconds. So it stays, by choice this time.
 
 export default defineConfig({
   testDir: './e2e',

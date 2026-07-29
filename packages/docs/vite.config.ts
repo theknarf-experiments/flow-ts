@@ -1,21 +1,16 @@
 import { defineConfig } from 'vite'
-import { tanstackStart } from '@tanstack/react-start/plugin/vite'
 import react from '@vitejs/plugin-react'
 
-// Tanstack Start in SPA mode — no SSR, no server entry. The store
-// holds a stateful db-ivm session that can't serialise across the
-// wire, so the whole demo stays on the client.
+// A plain Vite SPA. `index.html` at the package root is the entry, React mounts
+// into `#root`, and `react-router`'s `createBrowserRouter` takes it from there.
 //
-// Note: we deliberately do NOT install the standalone
-// `@tanstack/router-plugin/vite`. Tanstack Start already includes its
-// own internal router-plugin (`tanStackStartRouter`); adding the
-// standalone one on top runs the code-splitter twice over the same
-// route files and trips a duplicate-`hot` declaration during HMR.
+// Nothing here opts out of server rendering, because nothing offers it. The
+// demos hold stateful db-ivm sessions that don't serialise, so this was always
+// client-only; the previous setup spent a framework and a code-generation step
+// arriving at the same place.
+//
+// Vite's default `appType: 'spa'` gives history fallback in both `dev` and
+// `preview`, which is what makes `/learn/recursion` work as a deep link.
 export default defineConfig({
-  plugins: [
-    tanstackStart({
-      spa: { enabled: true },
-    }),
-    react(),
-  ],
+  plugins: [react()],
 })

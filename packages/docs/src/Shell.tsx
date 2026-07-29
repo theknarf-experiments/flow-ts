@@ -1,24 +1,16 @@
-// Root route. In Tanstack Start, the root route renders the *entire*
-// HTML document (including `<html>` and `<body>`) so the framework can
-// hydrate `document` directly on the client and serialise the same
-// tree to a `_shell.html` template at build time.
+// The layout every page sits inside: the sidebar, which is where the tutorial's
+// ordering lives, and the outlet the router fills.
 //
-// It also owns the two things every page shares: the sidebar, which is where
-// the tutorial's ordering lives, and the theme, which is applied by an inline
-// script in `<head>` so the first paint is already the right colour.
+// This used to render the entire HTML document — `<html>`, `<head>`, `<body>` —
+// because the framework hydrated `document` directly. It doesn't any more:
+// `index.html` is an ordinary Vite entry, React mounts into `#root`, and the
+// theme script that has to beat the first paint lives in the HTML where it
+// belongs.
 
-import {
-  HeadContent,
-  Link,
-  Outlet,
-  Scripts,
-  createRootRoute,
-} from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
-import { ThemeToggle } from '../components/ThemeToggle.js'
-import { lessonLabel, lessonOutline } from '../lessons/lessons.js'
-import { INIT_SCRIPT } from '../theme.js'
-import '../index.css'
+import { NavLink, Outlet } from 'react-router'
+import { ThemeToggle } from './components/ThemeToggle.js'
+import { lessonLabel, lessonOutline } from './lessons/lessons.js'
 
 const DEMOS = [
   { to: '/friends', label: 'Friend graph' },
@@ -27,45 +19,35 @@ const DEMOS = [
   { to: '/mvr', label: 'MVR CRDT' },
 ] as const
 
-export const Route = createRootRoute({
-  head: () => ({
-    meta: [
-      { charSet: 'utf-8' },
-      { name: 'viewport', content: 'width=device-width, initial-scale=1.0' },
-      { title: 'flow-ts • docs' },
-    ],
-    scripts: [{ children: INIT_SCRIPT }],
-  }),
-  component: RootDocument,
-})
+/** `NavLink`'s className takes a function; this is the only styling it needs. */
+const active = ({ isActive }: { isActive: boolean }) => (isActive ? 'active' : undefined)
 
-function RootDocument() {
-  // Imperatively flip `data-hydrated` on <body> once React has mounted.
-  // Setting this via React state would cause the entire root document
-  // to re-render, and re-rendering <html>/<body> during hydration
-  // blows up with "Maximum call stack size exceeded". The e2e suite
-  // waits on this attribute before clicking — without it, clicks
-  // against the prerendered DOM fire before handlers are attached.
+export function Shell(): JSX.Element {
+  return (
+    <>
+      <div className="layout">
+        <SideNav />
+        <main className="content">
+          <Outlet />
+        </main>
+      </div>
+      <Hydrated />
+    </>
+  )
+}
+
+/** Flips `data-hydrated` on `<body>` once React has mounted.
+ *
+ *  The e2e suite waits on this before clicking. It mattered more when the DOM
+ *  was prerendered and a click could land before the handlers were attached;
+ *  with an empty `#root` there is nothing to click early, but it is still the
+ *  cheapest "the app is up" signal a test can wait on, and cheaper than
+ *  waiting on some particular element per page. */
+function Hydrated(): null {
   useEffect(() => {
     document.body.setAttribute('data-hydrated', 'true')
   }, [])
-
-  return (
-    <html lang="en">
-      <head>
-        <HeadContent />
-      </head>
-      <body>
-        <div className="layout">
-          <SideNav />
-          <main className="content">
-            <Outlet />
-          </main>
-        </div>
-        <Scripts />
-      </body>
-    </html>
-  )
+  return null
 }
 
 function SideNav() {
@@ -95,9 +77,9 @@ function SideNav() {
         data-open={open ? 'true' : 'false'}
       >
         <div className="sidenav-head">
-          <Link to="/" className="sidenav-brand" onClick={close}>
+          <NavLink to="/" className="sidenav-brand" onClick={close}>
             flow-ts
-          </Link>
+          </NavLink>
           <ThemeToggle />
         </div>
 
@@ -107,14 +89,9 @@ function SideNav() {
           <h2>Start</h2>
           <ul>
             <li>
-              <Link
-                to="/"
-                activeOptions={{ exact: true }}
-                activeProps={{ className: 'active' }}
-                onClick={close}
-              >
+              <NavLink to="/" end className={active} onClick={close}>
                 Overview
-              </Link>
+              </NavLink>
             </li>
           </ul>
         </div>
@@ -128,28 +105,18 @@ function SideNav() {
           <ul data-testid="sidenav-lessons">
             {lessonOutline().map(({ lesson, children }) => (
               <li key={lesson.slug}>
-                <Link
-                  to="/learn/$slug"
-                  params={{ slug: lesson.slug }}
-                  activeProps={{ className: 'active' }}
-                  onClick={close}
-                >
+                <NavLink to={`/learn/${lesson.slug}`} className={active} onClick={close}>
                   <span className="sidenav-num">{lessonLabel(lesson)}</span>
                   {lesson.title}
-                </Link>
+                </NavLink>
                 {children.length > 0 && (
                   <ul className="sidenav-sub">
                     {children.map((child) => (
                       <li key={child.slug}>
-                        <Link
-                          to="/learn/$slug"
-                          params={{ slug: child.slug }}
-                          activeProps={{ className: 'active' }}
-                          onClick={close}
-                        >
+                        <NavLink to={`/learn/${child.slug}`} className={active} onClick={close}>
                           <span className="sidenav-num">{lessonLabel(child)}</span>
                           {child.title}
-                        </Link>
+                        </NavLink>
                       </li>
                     ))}
                   </ul>
@@ -164,9 +131,9 @@ function SideNav() {
           <ul>
             {DEMOS.map((demo) => (
               <li key={demo.to}>
-                <Link to={demo.to} activeProps={{ className: 'active' }} onClick={close}>
+                <NavLink to={demo.to} className={active} onClick={close}>
                   {demo.label}
-                </Link>
+                </NavLink>
               </li>
             ))}
           </ul>

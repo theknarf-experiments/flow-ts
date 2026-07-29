@@ -1,7 +1,7 @@
 # @flow-ts/docs
 
-The documentation site: a Tanstack Start SPA that runs the whole flow-ts engine
-in the browser, so every example on it is live rather than a code block.
+The documentation site: a Vite + React SPA that runs the whole flow-ts engine in
+the browser, so every example on it is live rather than a code block.
 
 ```bash
 pnpm install
@@ -107,27 +107,44 @@ against the new rules and replays them. Rule edits aren't incremental — the
 graph rebuilds from scratch — but the facts survive, which is what makes "edit
 this rule and see what happens" a reasonable thing to ask a reader to do.
 
-## Tanstack Start notes
+## The stack
 
-SPA-only: `vite.config.ts` opts in with `spa: { enabled: true }`, so the build
-prerenders a `_shell.html` and the client hydrates the full document. There is
-no server runtime — the demo holds a stateful db-ivm session that doesn't
-serialise. `src/routes/__root.tsx` sets `data-hydrated="true"` on `<body>` once
-React mounts, which the e2e suite waits on before driving interactions.
+Vite, React and `react-router` — a plain SPA, and deliberately plain. `index.html`
+at the package root is the entry, `src/main.tsx` mounts React into `#root`, and
+`src/routes.tsx` is the whole route table. There is no server and no prerender,
+because the demos hold stateful db-ivm sessions that don't serialise; this was
+always client-only, and saying so outright is less machinery than opting a
+framework out of the rendering it exists to do. (`@tanstack/react-table` stays —
+it's what gives the relation tables their sortable headers, and has nothing to
+do with routing.)
 
-We deliberately do *not* install the standalone `@tanstack/router-plugin/vite`:
-Start already includes its own, and adding the standalone one on top runs the
-code-splitter twice over the same route files and trips a duplicate-`hot`
-declaration during HMR. Playwright therefore runs against the production
-preview, which is unaffected and also what users actually deploy.
+Two things are worth knowing before editing it.
+
+Everything below the shell is loaded with React Router's `lazy`, which is doing
+real work rather than being a reflex: the overview needs no engine at all, and
+each demo pulls its own program, seed data and — for the CRDTs — a simulated
+network. Left eager they are one 530 kB chunk that every visitor downloads to
+read a sentence about Datalog.
+
+And the theme script is inline in `index.html`, not imported. A module script
+runs after the stylesheet has been applied, so the page would paint in the
+default palette and flip a frame later — which is the exact flash the script
+exists to prevent. `src/theme.ts` holds the same logic for the runtime toggle
+and the two are kept in step by hand.
+
+`src/Shell.tsx` sets `data-hydrated="true"` on `<body>` once React mounts. The
+e2e suite waits on it as a cheap "the app is up" signal.
 
 ## Bundle size
 
+Per page, gzipped, from `pnpm build`:
+
 ```
-dist/client/assets/index-*.css     16.33 kB    3.7 kB gzipped
-dist/client/assets/index-*.js     301.78 kB   99.6 kB gzipped
+overview (/)                 92.5 kB js   3.8 kB css
+a lesson, or any demo       ~131 kB js   4.6 kB css
 ```
 
-That's the whole pipeline — parsing, stratification, planning, the db-ivm
-operator runtime, the shadow compiler, Tanstack Router and Table, and the React
-glue — in about 100 kB gzipped.
+The difference is the engine — parsing, stratification, planning, the db-ivm
+operator runtime, the shadow compiler — plus Tanstack Table, which are a shared
+chunk fetched by the pages that actually run a program. The overview carries the
+shell, the router and the tutorial index and nothing else.

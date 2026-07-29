@@ -184,58 +184,51 @@ describe('a session agrees with recomputation after every operation', () => {
     )
   })
 
-  // Not over recursive programs, and the reason changed. It used to be that
-  // retraction through a recursive stratum did not fully propagate, so a
-  // proposal left residue for the next one. That is fixed — see
-  // tests/executing/recursive-retraction.test.ts, and the pinned program below,
-  // whose *executor* agrees with recomputation across two hundred fuzzed
-  // retractions.
-  //
-  // This layer still drifts on some of them. Lifting the refusal on the
-  // strength of the executor fix was tried and this test caught it, twice in
-  // three seeds, which is the whole reason it exists.
-  it('and refuses recursive programs outright, rather than drifting', () => {
-    let refused = 0
+  // And over recursive ones, which this test is the reason we can say. It found
+  // the disagreement that made the session refuse them in the first place, then
+  // found the second one after the executor was fixed: a join inside the loop
+  // producing a tuple from an antecedent the same batch was retracting, so the
+  // removal of one derivation and the arrival of a circular replacement
+  // cancelled before anything could notice. Both are fixed; this is what says
+  // so.
+  it('over recursive programs, which it used to refuse', () => {
+    let recursive = 0
     fc.assert(
-      fc.property(recursiveProgramGen, (p) => {
-        const program = parseProgram(p.source, { grammarSource: 'g.dl' })
-        const strata = Strata.fromParser(program)
-        if (!strata.isRecursiveStrataBitmap.some(Boolean)) return true
-        refused++
-        try {
-          openBackwardSession(program, PARSE)
-          return false
-        } catch (e) {
-          return /recursive stratum/i.test((e as Error).message)
-        }
-      }),
+      fc.property(
+        recursiveProgramGen,
+        fc.array(opGen, { minLength: 1, maxLength: 12 }),
+        (p, ops) => {
+          const program = parseProgram(p.source, { grammarSource: 'g.dl' })
+          if (!Strata.fromParser(program).isRecursiveStrataBitmap.some(Boolean)) return true
+          recursive++
+          runSequence(p, ops, false)
+          return true
+        },
+      ),
       { numRuns: 150 },
     )
-    expect(refused).toBeGreaterThan(30)
+    // The generator does not always produce a recursive stratum, so assert the
+    // interesting case was reached rather than skipped past.
+    expect(recursive).toBeGreaterThan(30)
   })
 
-  // The counterexample, kept so the next attempt starts from a known-hard case
-  // rather than waiting for a seed to rediscover it. The recursive rule takes
-  // one column from itself and the other from an unrelated relation, so the
-  // derived set grows by cross product rather than by following a path.
-  it('the shape that drifts, so the next attempt has somewhere to start', () => {
-    const source = `.in
-.decl E0(c0: string)
-.input E0.csv
-.decl E1(c0: number, c1: string, c2: number)
-.input E1.csv
-.printsize
-.decl I0(c0: number, c1: string)
-.rule
-I0(a, s) :- E1(a, s, _), E0("x"), E0(s), s < "y".
-I0(a, s) :- I0(a, t), E0(s).`
-    const program = parseProgram(source, { grammarSource: 'g.dl' })
-    expect(Strata.fromParser(program).isRecursiveStrataBitmap.some(Boolean)).toBe(true)
-    expect(() => openBackwardSession(program, PARSE)).toThrow(/recursive stratum/i)
-    // With the refusal overridden it opens, and that is where the drift is.
-    const session = openBackwardSession(program, { ...PARSE, allowRecursive: true })
-    expect(session).toBeDefined()
-    session.close()
+  it('and with minimisation on, which applies and reverts candidates as it searches', () => {
+    let recursive = 0
+    fc.assert(
+      fc.property(
+        recursiveProgramGen,
+        fc.array(opGen, { minLength: 1, maxLength: 10 }),
+        (p, ops) => {
+          const program = parseProgram(p.source, { grammarSource: 'g.dl' })
+          if (!Strata.fromParser(program).isRecursiveStrataBitmap.some(Boolean)) return true
+          recursive++
+          runSequence(p, ops, true)
+          return true
+        },
+      ),
+      { numRuns: 120 },
+    )
+    expect(recursive).toBeGreaterThan(20)
   })
 
   it('with minimisation on, which applies and reverts candidates as it searches', () => {

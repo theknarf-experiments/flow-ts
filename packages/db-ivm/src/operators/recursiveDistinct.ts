@@ -60,12 +60,18 @@ export class RecursiveStringDistinctOperator extends UnaryOperator<string> {
   run(): void {
     if (this.inputs[0]!.isEmpty()) return
 
+    // Net *and* whether anything was taken away. Netting alone hides the case
+    // this operator exists for: a tick that both retracts a derivation and adds
+    // one nets to zero, and the one it added can be circular. Suspicion has to
+    // be raised by the retraction, not by the balance.
     const tick = new Map<string, number>()
+    const lost = new Set<string>()
     for (const message of this.inputMessages() as Array<MultiSet<string>>) {
       const inner = message.getInner()
       for (let i = 0; i < inner.length; i++) {
         const entry = inner[i]!
         tick.set(entry[0], (tick.get(entry[0]) ?? 0) + entry[1])
+        if (entry[1] < 0) lost.add(entry[0])
       }
     }
 
@@ -93,7 +99,7 @@ export class RecursiveStringDistinctOperator extends UnaryOperator<string> {
       // a tuple that had been counted all along.
       if (this.#suspect.has(value)) continue
 
-      if (delta < 0 && this.#present.has(value)) {
+      if (lost.has(value) && this.#present.has(value)) {
         // Still counted, but one of the things counting it has gone. Whether
         // the rest are real or are leaning on this very tuple is not knowable
         // here, so assume the worst and let the cascade answer.

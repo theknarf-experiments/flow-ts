@@ -30,6 +30,7 @@ import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 import { parseProgram } from '@flow-ts/parsing'
 import { executeProgram, openSession } from '../../src/executing/index.js'
+import { guardRecursiveRules } from '../../src/strata/index.js'
 import type { Row } from '../../src/reading/index.js'
 
 /** Programs are parsed once per source. The property tests below recompute a
@@ -635,5 +636,183 @@ describe('order does not matter', () => {
       ),
       { numRuns: 80 },
     )
+  })
+})
+
+// -- what is still not fixed --------------------------------------------
+//
+// One recursive shape remains, and it is worth being exact about because the
+// boundary is not "recursion".
+//
+//   I0(t) :- I0(s), E0(t).
+//
+// The head shares no variable with `I0(s)`, so the recursive atom is a guard:
+// it asserts that some `I0` exists and contributes nothing else. The planner
+// projects it down to the join key — nothing, here — and that projection is
+// where every distinct derivation of a row collapses into one. A row derived
+// once from `I0("y")` and again from `I0("x")` arrives as a single fact about
+// existence, so retracting `I0("y")` produces no delta and `I0("x")` is left
+// deriving itself.
+//
+// Nothing downstream can recover it: the information is gone before any dedup
+// sees it. That needs the derivation to stay distinguishable through the join,
+// which is what differential-dataflow's product timestamps are for.
+
+describe('guard recursion: the shape that is still wrong', () => {
+  const GUARD = `.in
+.decl E0(c0: string)
+.input E0.csv
+.decl E1(c0: string, c1: number, c2: string)
+.input E1.csv
+
+.printsize
+.decl I0(c0: string)
+
+.rule
+I0(s) :- E1(s, _, "x").
+I0(t) :- I0(s), E0(t).`
+
+  it('is detected statically, by name', () => {
+    const found = guardRecursiveRules(program(GUARD))
+    expect(found).toHaveLength(1)
+    expect(found[0]!.atom).toBe('I0')
+    expect(found[0]!.rule).toContain('I0(t) :- I0(s), E0(t)')
+  })
+
+  it('and the recursion people actually write is not', () => {
+    expect(guardRecursiveRules(program(TC))).toEqual([])
+    expect(guardRecursiveRules(program(REACH))).toEqual([])
+    // One head column from the recursive atom is enough to keep derivations
+    // distinguishable, so half-and-half is fine.
+    const HALF = `.in
+.decl E0(c0: string)
+.input E0.csv
+.decl E1(c0: number, c1: string)
+.input E1.csv
+
+.printsize
+.decl I0(a: number, s: string)
+
+.rule
+I0(a, s) :- E1(a, s).
+I0(a, s) :- I0(a, t), E0(s).`
+    expect(guardRecursiveRules(program(HALF))).toEqual([])
+  })
+
+  it('a program with no recursion at all reports nothing', () => {
+    const FLAT = `.in
+.decl A(x: number)
+.input A.csv
+
+.printsize
+.decl B(x: number)
+
+.rule
+B(x) :- A(x).`
+    expect(guardRecursiveRules(program(FLAT))).toEqual([])
+  })
+
+  it.fails('and retracting through it still disagrees with recomputation', () => {
+    // Kept failing rather than deleted: this is the thing left to fix, and a
+    // test that starts passing is how we find out it was.
+    const c = new Map<string, number>()
+    const s = openSession(program(GUARD), {}, (r, row, d) => {
+      if (r === 'I0') c.set(String(row[0]), (c.get(String(row[0])) ?? 0) + d)
+    })
+    s.update('E0', ['x'], 1)
+    s.update('E1', ['x', 0, 'y'], 1)
+    s.update('E1', ['y', 0, 'x'], 1)
+    s.advance()
+    s.update('E1', ['y', 0, 'x'], -1)
+    s.advance()
+    s.close()
+    // Recomputing gives nothing; incrementally, I0("x") derives itself.
+    expect(live(c)).toEqual([])
+  })
+
+  it('which is what it does instead', () => {
+    const c = new Map<string, number>()
+    const s = openSession(program(GUARD), {}, (r, row, d) => {
+      if (r === 'I0') c.set(String(row[0]), (c.get(String(row[0])) ?? 0) + d)
+    })
+    s.update('E0', ['x'], 1)
+    s.update('E1', ['x', 0, 'y'], 1)
+    s.update('E1', ['y', 0, 'x'], 1)
+    s.advance()
+    s.update('E1', ['y', 0, 'x'], -1)
+    s.advance()
+    s.close()
+    expect(live(c)).toEqual(['x'])
+  })
+
+  it('and batch evaluation is right, as it always is', () => {
+    expect(
+      batch(GUARD, 'E1', 'I0', [['x', 0, 'y']]),
+    ).toEqual([])
+  })
+})
+
+// -- mixing signs in one tick --------------------------------------------
+//
+// A join inside the loop can produce a tuple from an antecedent that the same
+// batch is retracting, and then emit the loss of that derivation and the
+// arrival of a replacement in one message — where they cancel. Found by the
+// model-based session test, which rewrites a view and so retracts one fact and
+// inserts another in a single operation.
+//
+// A recursive stratum has no negation, so deletions only ever produce
+// deletions and insertions only insertions. `openSession` runs the two halves
+// separately when a tick carries both, and then there is nothing to cancel.
+
+describe('a tick that both retracts and inserts', () => {
+  const SWAP = `.in
+.decl E0(c0: string)
+.input E0.csv
+.decl E1(c0: number, c1: string, c2: number)
+.input E1.csv
+
+.printsize
+.decl I0(c0: number, c1: string)
+
+.rule
+I0(a, s) :- E1(a, s, _), E0("x"), E0(s), s < "y".
+I0(a, s) :- I0(a, t), E0(s).`
+
+  const swap = (): string[] => {
+    const c = new Map<string, number>()
+    const s = openSession(program(SWAP), {}, (r, row, d) => {
+      if (r === 'I0') c.set(row.join(','), (c.get(row.join(',')) ?? 0) + d)
+    })
+    s.update('E0', ['x'], 1)
+    for (const r of [[0, 'y', 0], [1, 'x', 0], [0, 'x', 0]] as Row[]) s.update('E1', r, 1)
+    s.advance()
+    // Both signs, one advance: rewriting the only value E0 holds.
+    s.update('E0', ['x'], -1)
+    s.update('E0', ['x~n'], 1)
+    s.advance()
+    s.close()
+    return live(c)
+  }
+
+  it('agrees with recomputation', () => {
+    // Rule 1 needs the constant E0("x"), which is gone, so nothing derives —
+    // and the tuples rule 2 built from the new value are left self-supporting.
+    expect(swap()).toEqual([])
+  })
+
+  it('and the same edit split across two ticks always did', () => {
+    const c = new Map<string, number>()
+    const s = openSession(program(SWAP), {}, (r, row, d) => {
+      if (r === 'I0') c.set(row.join(','), (c.get(row.join(',')) ?? 0) + d)
+    })
+    s.update('E0', ['x'], 1)
+    for (const r of [[0, 'y', 0], [1, 'x', 0], [0, 'x', 0]] as Row[]) s.update('E1', r, 1)
+    s.advance()
+    s.update('E0', ['x'], -1)
+    s.advance()
+    s.update('E0', ['x~n'], 1)
+    s.advance()
+    s.close()
+    expect(live(c)).toEqual([])
   })
 })

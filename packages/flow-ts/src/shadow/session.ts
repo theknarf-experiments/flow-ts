@@ -19,16 +19,16 @@
 // everything derived from it — and `a proposal leaves the session exactly as it
 // found it` holds that to account over generated programs.
 //
-// It holds for non-recursive programs, and the session refuses the rest. The
-// original reason — retraction through a recursive stratum did not fully
-// propagate, so a proposal left residue — is fixed, in db-ivm's
-// `recursiveDistinct`. Lifting the refusal on the strength of that turned out
-// to be premature: the model-based test still finds programs where the
-// session's own view drifts after an operation, while the *executor* on the
-// same program agrees with recomputation across two hundred fuzzed
-// retractions. So whatever is left is in this layer, not underneath it, and it
-// is a separate piece of work. The counterexample is pinned in
-// tests/shadow/stateful.test.ts.
+// That used to hold only for non-recursive programs, because retraction through
+// a recursive stratum did not fully propagate and a proposal left residue for
+// the next one. Fixed in db-ivm's `recursiveDistinct` and in the delete-before-
+// insert staging in `openSession`, so recursion is no longer the dividing line.
+//
+// One shape is still refused, and it is a narrow one: a recursive atom sharing
+// no variable with its head, which collapses every derivation of a row into a
+// single fact about existence before anything downstream can count them. See
+// strata/guard-recursion.ts. Transitive closure, reachability and ancestry all
+// carry a variable out of the recursive atom and are fine.
 //
 // Speculation works the same way. Apply the proposed EDB changes, advance, ask
 // whether the view moved; if it didn't, apply the inverse and the session is
@@ -37,7 +37,7 @@
 
 import type { Program } from '../ast/index.js'
 import { type ProgramSession, openSession } from '../executing/dataflow.js'
-import { Strata } from '../strata/index.js'
+import { guardRecursiveRules } from '../strata/index.js'
 import type { Row } from '../reading/row.js'
 import { inferRelationTypes } from '../typing/index.js'
 import { SEED_INS_PREFIX, SEED_PREFIX, SEED_UPD_PREFIX, compileShadow } from './compile.js'
@@ -58,13 +58,11 @@ export interface BackwardSessionOptions extends ResolveOptions {
    *  highly selective row, so it is exactly the case SIP is for. */
   optLevel?: number | null
   noSharing?: boolean
-  /** Open a session over a recursive program anyway.
+  /** Open a session over a guard-recursive program anyway.
    *
-   *  It will drift. Retraction through a recursive stratum is sound as of
-   *  db-ivm's `recursiveDistinct`, and that was the original reason for the
-   *  refusal, but the model-based test still finds this layer disagreeing with
-   *  recomputation on some recursive programs. The escape hatch exists so that
-   *  gap can be worked on. */
+   *  It will drift, and not because of anything in this file: the derivations
+   *  collapse in the planner's join key, before any of this sees them. The
+   *  escape hatch exists so the gap can be worked on. */
   allowRecursive?: boolean
 }
 
@@ -107,22 +105,20 @@ export function openBackwardSession(
     )
   }
 
-  // Refuse rather than answer wrongly.
-  //
-  // Not for the reason it used to be. Retraction through a recursive stratum
-  // is sound now, and the executor agrees with recomputation on exactly the
-  // programs this used to reject. But the model-based test still catches this
-  // session drifting over some of them, and a drifting session is worse than
-  // an absent one — `resolveBackward` recomputes per request and is correct
-  // over recursive programs today.
+  // Refuse the one recursive shape a maintained graph cannot undo: a recursive
+  // atom that shares no variable with its head, and so collapses every
+  // derivation of a row into a single fact about existence. See
+  // strata/guard-recursion.ts. Everything else — transitive closure,
+  // reachability, ancestry, anything that carries a variable out of the
+  // recursive atom — is fine, and used to be refused along with it.
   if (!options.allowRecursive) {
-    const strata = Strata.fromParser(program)
-    if (strata.isRecursiveStrataBitmap.some(Boolean)) {
+    const guards = guardRecursiveRules(program)
+    if (guards.length > 0) {
       throw new Error(
-        'openBackwardSession: this program has a recursive stratum, and a session over one ' +
-          'still drifts from recomputation — see tests/shadow/stateful.test.ts. The executor ' +
-          'itself is sound here; this is a gap in the session layer. Use resolveBackward, ' +
-          'which recomputes per request, or pass allowRecursive to override.',
+        `openBackwardSession: ${guards[0]!.rule} has a recursive atom (${guards[0]!.atom}) ` +
+          'that shares no variable with its head, so its derivations collapse into one and ' +
+          'retracting them incrementally is unsound. Use resolveBackward, which recomputes ' +
+          'per request, or pass allowRecursive to override.',
       )
     }
   }

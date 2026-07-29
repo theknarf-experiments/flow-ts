@@ -347,14 +347,14 @@ export function SessionPanel() {
         buying an asymptotic one on the dear thing.
       </p>
       <p className="muted">
-        What a session will not do is a recursive program — it refuses rather than risk
-        being subtly wrong. That used to be because retraction through a recursive stratum
-        did not fully propagate, which a session cannot live with since it retracts
-        constantly: every proposal un-seeds itself, every speculation rolls back. The
-        engine retracts correctly through recursion now; this layer is still caught
-        drifting by the model-based tests, so the refusal stays until that is closed.{' '}
-        <code>resolveBackward</code> recomputes per request and is unaffected, which is the
-        one place the cold path is not simply the slower option.
+        A session used to refuse recursive programs outright — retraction through a
+        recursive stratum did not fully propagate, and a session cannot live with that
+        since it retracts constantly: every proposal un-seeds itself, every speculation
+        rolls back. That is fixed, so recursion is no longer the dividing line. What is
+        left is one narrow shape: a recursive atom sharing no variable with anything else
+        in its rule, whose derivations collapse into a single fact about existence before
+        anything can count them. <code>resolveBackward</code> recomputes per request and is
+        unaffected, which is the one place the cold path is not simply the slower option.
       </p>
     </section>
   )

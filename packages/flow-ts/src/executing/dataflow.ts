@@ -211,6 +211,24 @@ export function openSession(
   const pending = new Map<string, Array<[EncodedRow, number]>>()
   let closed = false
 
+  // Recursion needs its deletions and its insertions kept apart. A join inside
+  // the loop can produce a tuple from an antecedent that the same batch is
+  // retracting, and then emit the removal of that derivation and the arrival of
+  // a replacement in one message — where they cancel. The dedup downstream sees
+  // a net of zero and never learns that the derivation holding a tuple up was
+  // swapped for one leaning on the tuple itself.
+  //
+  // Nothing survives that cancellation to be reasoned about later, so it has to
+  // not happen. A recursive stratum cannot contain negation, so a batch of
+  // deletions can only ever produce deletions and a batch of insertions only
+  // insertions: run the two separately and there is nothing for the netting to
+  // destroy. This is the staging differential-dataflow gets from entering a
+  // nested scope, and DRed's delete-then-rederive order by another name.
+  //
+  // Only when a tick actually carries both signs, which is not the common one —
+  // an edit is usually all additions or all removals.
+  const staged = strata.isRecursiveStrataBitmap.some(Boolean)
+
   return {
     update(relation, row, diff = 1) {
       if (closed) throw new Error('session closed')
@@ -226,6 +244,26 @@ export function openSession(
     },
     advance() {
       if (closed) throw new Error('session closed')
+      let signs = 0
+      if (staged) {
+        for (const queue of pending.values()) {
+          for (const [, diff] of queue) signs |= diff < 0 ? 1 : 2
+        }
+      }
+      if (signs === 3) {
+        for (const sign of [-1, 1]) {
+          let sent = false
+          for (const [relation, queue] of pending) {
+            const half = queue.filter(([, diff]) => (diff < 0 ? -1 : 1) === sign)
+            if (half.length === 0) continue
+            edbInputs.get(relation)!.sendData(half)
+            sent = true
+          }
+          if (sent) graph.run()
+        }
+        pending.clear()
+        return
+      }
       for (const [relation, queue] of pending) {
         if (queue.length === 0) continue
         edbInputs.get(relation)!.sendData(queue)

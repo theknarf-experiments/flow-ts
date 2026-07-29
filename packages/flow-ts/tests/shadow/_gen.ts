@@ -259,7 +259,17 @@ export function buildProgram(pool: readonly number[], recursive = false): GenPro
       // (tests/executing/recursive-retraction.test.ts), but generating it would
       // still spend the budget on a shape no real program writes.
       const tautological = headVars.every((v, j) => v === carried[j])
-      if (headVars.every((v) => v !== null) && !tautological) {
+      // A recursive atom none of whose variables are observed anywhere else —
+      // not in the head, not joined against the link atom — is a guard, and
+      // guard recursion is the one shape a maintained graph still cannot
+      // retract (strata/guard-recursion.ts). The session refuses it outright,
+      // so generating it here would only ever test the refusal.
+      const observed = new Set([
+        ...headVars.filter((v): v is string => v !== null),
+        ...link.vars,
+      ])
+      const guard = !carried.some((v) => observed.has(v))
+      if (headVars.every((v) => v !== null) && !tautological && !guard) {
         texts.push(
           `${self.name}(${headVars.join(', ')}) :- ${self.name}(${carried.join(', ')}), ${render(link)}.`,
         )

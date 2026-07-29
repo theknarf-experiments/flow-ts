@@ -126,11 +126,8 @@ Open(p, t) :- Task(p, "open", t).
 })
 
 describe('sessions minimise too', () => {
-  // Not over `Path`: a session refuses recursive programs, because incremental
-  // this layer still drifts there (tests/shadow/stateful.test.ts).
-  // Over-collection isn't unique to recursion, though — an existence test
-  // gathers every row of the witness relation, and only one candidate is
-  // actually load-bearing.
+  // Over-collection isn't unique to recursion — an existence test gathers every
+  // row of the witness relation, and only one candidate is load-bearing.
   const EXISTS = parseProgram(
     `\
 .in
@@ -166,9 +163,63 @@ H(x) :- A(x), C(y).
     s.close()
   })
 
-  it('refuses a recursive program rather than answering from stale residue', () => {
-    expect(() => openBackwardSession(PATH, { ...PARSE, minimize: true })).toThrow(
-      /recursive stratum/i,
+  it('and over a recursive program, which it used to refuse outright', () => {
+    // Minimisation is the hardest thing to ask of a session over recursion: it
+    // applies a candidate, asks whether the target survived, and reverts —
+    // repeatedly. Every one of those reverts is a retraction into a recursive
+    // stratum, which is precisely what used to leave residue.
+    const facts: Facts = { Arc: [[0, 1], [1, 2], [2, 1]] }
+    const session = openBackwardSession(PATH, { ...PARSE, minimize: true })
+    for (const row of facts.Arc!) session.update('Arc', row, 1)
+    session.advance()
+
+    const before = session.rows('Path').map((r) => r.join(',')).sort()
+    const r = session.resolve({ rel: 'Path', row: [0, 2] })
+    expect(r.status).toBe('ok')
+    if (r.status !== 'ok') return
+    // One arc, not the whole support set. Which arc is not pinned: the result
+    // is irreducible rather than minimum, and cutting 0→1 or 1→2 both work.
+    expect(r.changes).toHaveLength(1)
+    expect(r.changes[0]!.kind).toBe('del')
+    expect(r.changes[0]!.rel).toBe('Arc')
+
+    // And the session moved to exactly where recomputation says it should be —
+    // which is the part that used to fail, since every revert during the search
+    // was a retraction into a recursive stratum.
+    const cut = r.changes[0]!.row.join(',')
+    const remaining = facts.Arc!.filter((a) => a.join(',') !== cut)
+    const after = session.rows('Path').map((r2) => r2.join(',')).sort()
+    expect(after).toEqual(
+      [...liveRows(PATH_SRC, { Arc: remaining }, 'Path').values()]
+        .map((r2) => r2.join(','))
+        .sort(),
+    )
+    expect(after).not.toContain('0,2')
+    expect(before).not.toEqual(after)
+    session.close()
+  })
+
+  it('but still refuses a recursive atom that is only a guard', () => {
+    // The one shape left — see strata/guard-recursion.ts. `s` appears nowhere
+    // but the recursive atom, so its derivations collapse into one before any
+    // of this can count them.
+    const GUARD = parseProgram(
+      `\
+.in
+.decl E(x: number)
+.input E.csv
+
+.printsize
+.decl G(x: number)
+
+.rule
+G(x) :- E(x).
+G(t) :- G(s), E(t).
+`,
+      { grammarSource: 'g.dl' },
+    )
+    expect(() => openBackwardSession(GUARD, { ...PARSE, minimize: true })).toThrow(
+      /shares no variable with its head/i,
     )
   })
 })

@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react'
 import { Link, NavLink, Outlet } from 'react-router'
 import { ThemeToggle } from './components/ThemeToggle.js'
 import { lessonLabel, lessonOutline } from './lessons/lessons.js'
+import { SITE_NAME } from './site.js'
 
 const DEMOS = [
   { to: '/friends', label: 'Friend graph' },
@@ -83,7 +84,7 @@ function SideNav() {
               class everywhere, and computed it differently under the static
               renderer than in the browser, which failed hydration outright. */}
           <Link to="/" className="sidenav-brand" onClick={close}>
-            flow-ts
+            {SITE_NAME}
           </Link>
           <ThemeToggle />
         </div>

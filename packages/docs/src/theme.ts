@@ -12,7 +12,7 @@
 export type Theme = 'light' | 'dark'
 export type ThemePreference = Theme | 'system'
 
-export const STORAGE_KEY = 'flow-ts-theme'
+export const STORAGE_KEY = 'docs-theme'
 
 /** The stored preference, or `system` when there isn't one (or when we're
  *  running somewhere without a DOM, as the prerender is). */

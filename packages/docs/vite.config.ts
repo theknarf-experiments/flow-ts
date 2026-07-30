@@ -4,6 +4,13 @@ import { defineConfig, type Plugin, type ResolvedConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { INIT_SCRIPT } from './src/theme.js'
 
+/** What the site calls the thing it documents.
+ *
+ *  The one place the name is written. The landing heading, the sidebar brand and
+ *  both `<title>`s read it from here — through `define` for TSX, through
+ *  `%SITE_NAME%` for HTML — so changing it is this line or `VITE_SITE_NAME`. */
+export const SITE_NAME = process.env.VITE_SITE_NAME || 'flow-ts'
+
 // A plain Vite SPA that also builds to static pages. `index.html` is the entry
 // for `dev` and `build:spa`; `pnpm build` runs `./ssg.tsx`, which prerenders one
 // page per route (see `ssg-for-vite.tsx`).
@@ -14,7 +21,12 @@ import { INIT_SCRIPT } from './src/theme.js'
 // from Vite rather than repeating it.
 export default defineConfig({
   base: process.env.DOCS_BASE || '/',
-  plugins: [react(), themeScript(), directoryIndex()],
+  // TSX reads the name as `import.meta.env.VITE_SITE_NAME` (see `src/site.ts`).
+  // Defined here rather than left to a `.env` file so the default below is the
+  // only default: an undefined env var would otherwise reach the browser as the
+  // string "undefined" in the page's own title.
+  define: { 'import.meta.env.VITE_SITE_NAME': JSON.stringify(SITE_NAME) },
+  plugins: [react(), themeScript(), siteName(), directoryIndex()],
 })
 
 /** Inlines the pre-paint theme script into `index.html`.
@@ -36,6 +48,27 @@ function themeScript() {
           injectTo: 'head-prepend' as const,
         },
       ]
+    },
+  }
+}
+
+/** Substitutes `%SITE_NAME%` in generated HTML.
+ *
+ *  `define` covers TSX but not `<title>`, which is HTML in `index.html` and a
+ *  literal string in the prerendered pages. `transformIndexHtml` sees both —
+ *  Vite runs it over `ssg-for-vite.tsx`'s output exactly as it does over
+ *  `index.html` — so one substitution here serves the SPA and all 20 static
+ *  pages, and neither has to import anything to say the site's name.
+ *
+ *  The `%NAME%` form is Vite's own convention for env in HTML. This does the
+ *  replacement itself rather than relying on it, because Vite's version reads
+ *  the `.env` files and would leave the placeholder verbatim in the title when
+ *  there aren't any. */
+function siteName(): Plugin {
+  return {
+    name: 'site-name',
+    transformIndexHtml(html) {
+      return html.replaceAll('%SITE_NAME%', SITE_NAME)
     },
   }
 }

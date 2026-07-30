@@ -102,7 +102,7 @@ async function renderPage(
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>flow-ts • docs</title>
+        <title>%SITE_NAME% • docs</title>
         {/* Relative asset and script URLs resolve against this, which is what
             makes a subpath deploy work without rewriting anything. */}
         <base href={base} />

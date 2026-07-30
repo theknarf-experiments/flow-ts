@@ -8,6 +8,7 @@
 import { Link } from 'react-router'
 import { Inline } from '../components/Prose.js'
 import { lessonLabel, lessonOutline, type Lesson } from '../lessons/lessons.js'
+import { SITE_NAME } from '../site.js'
 
 const DEMOS = [
   {
@@ -62,7 +63,7 @@ export function Overview(): JSX.Element {
   return (
     <div className="app">
       <header>
-        <h1>flow-ts</h1>
+        <h1>{SITE_NAME}</h1>
         <p className="lede">
           A Datalog engine in TypeScript, on top of incremental dataflow. It parses
           a program, stratifies and plans it, and runs it as a dataflow graph whose

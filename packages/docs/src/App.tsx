@@ -6,7 +6,7 @@
 // reach" list) plus a generic `RelationInspector` that renders one
 // `<RelationTable>` per declared relation. Edits in the inspector
 // (add/delete rows) and in the bespoke panels (remove a person)
-// ripple through the underlying flow-ts session and re-render the
+// ripple through the underlying session and re-render the
 // others incrementally.
 
 import { useMemo, useState } from 'react'

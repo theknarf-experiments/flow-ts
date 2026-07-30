@@ -2,7 +2,7 @@
 // `reading::reader` (CSV-into-rows) and the fs portion of `reading::inspect`
 // (CSV-output for IDB heads + partition merging).
 //
-// Keeping these here, rather than in `@flow-ts/reading`, lets the executor
+// Keeping these here, rather than in the engine's `reading` module, lets it
 // and reading packages stay browser-compatible.
 
 import * as fs from 'node:fs'

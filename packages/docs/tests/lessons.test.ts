@@ -288,7 +288,7 @@ describe('incremental', () => {
     // The claim the lesson makes in prose: cutting one of the two paths to
     // `api` changes nothing, cutting both takes `api` and `guide` with it.
     // Asserted here against smaller fact sets rather than by feeding deltas —
-    // the delta path is `packages/flow-ts`'s to test, and this is about the
+    // the delta path is the engine package's to test, and this is about the
     // answers the reader is told to expect.
     const lesson = lessonBySlug('incremental')!
     const links = lesson.facts.Link!

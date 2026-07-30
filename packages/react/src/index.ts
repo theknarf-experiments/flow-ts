@@ -1,4 +1,4 @@
-// React bindings for the flow-ts Datalog runtime, inspired by Tanstack
+// React bindings for the Datalog engine, inspired by Tanstack
 // DB's Collection / live-query split.
 //
 // One `Store` wraps a single `openSession` from `flow-ts`.

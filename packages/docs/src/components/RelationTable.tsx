@@ -1,4 +1,4 @@
-// Generic, schema-driven table view for any flow-ts relation (EDB or
+// Generic, schema-driven table view for any relation (EDB or
 // IDB). Drives its column headers from the program's `.decl Foo(a, b)`
 // declaration, subscribes to the live row set via `useLiveQuery`, and
 // renders through Tanstack Table so it gets sortable columns for free.

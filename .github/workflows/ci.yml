@@ -28,9 +28,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install playwright browser (chromium)
-        # docs's e2e suite runs against headless chromium. ubuntu
+        # The docs e2e suite runs against headless chromium. ubuntu
         # runners ship the system libs already; just pull the browser.
-        run: pnpm -F @flow-ts/docs exec playwright install chromium
+        run: pnpm -F ./packages/docs exec playwright install chromium
 
       - name: Build packages
         run: pnpm build

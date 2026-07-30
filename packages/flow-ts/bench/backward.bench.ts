@@ -271,7 +271,7 @@ it('4. scaling with program size', () => {
 
 it('5. forward evaluation is unchanged by any of this', () => {
   // A sanity check on the framing: batch evaluation of the original program is
-  // what flow-ts did before any of this existed, and it should be untouched.
+  // what the engine did before any of this existed, and it should be untouched.
   const program = parseProgram(vault(0), { grammarSource: 'v.dl' })
   const rows: string[][] = []
   for (const n of [200, 1000, 4000]) {

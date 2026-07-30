@@ -27,7 +27,7 @@ import type { Row } from '../../src/reading/index.js'
 import { compileShadow, resolveBackward } from '../../src/shadow/index.js'
 
 // Copied from flow-md's `packages/plugin-markdown/src/rules.ts` and its
-// schema. Copied rather than imported: flow-ts cannot depend on a consumer,
+// schema. Copied rather than imported: the engine cannot depend on a consumer,
 // and pinning the text is the point — if it drifts there, this still tests the
 // shape it had when it was the thing being checked.
 const MARKDOWN = `\

@@ -11,7 +11,7 @@
 //
 // String encoding sidesteps d2ts's two limitations on bigint-bearing
 // row arrays (JS Map identity + JSON.stringify in delta tracking). The
-// wire format (see `@flow-ts/reading/encoding.ts`) is type-tagged per
+// wire format (see `../reading/encoding.ts`) is type-tagged per
 // field, so string columns survive the encode/decode round-trip
 // alongside numbers; see `evalCompare`'s fast path below for how the
 // runtime stays oblivious to the value type for equality/ordering.

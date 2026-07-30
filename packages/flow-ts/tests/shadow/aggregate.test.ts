@@ -5,7 +5,7 @@
 // writes "the minimum-norm delta" — the pseudoinverse. That isn't a policy
 // choice: over the reals, minimising Σδᵢ² subject to Σδᵢ = Δ gives δᵢ = Δ/n
 // uniquely. So for a linear aggregate the inverse looked *determined*, and the
-// only question was whether flow-ts could express it.
+// only question was whether this engine could express it.
 //
 // It can't, quite, and the reason is interesting. Three constraints in the
 // language shape the answer:

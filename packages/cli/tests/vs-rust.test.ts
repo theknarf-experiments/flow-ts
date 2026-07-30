@@ -1,5 +1,5 @@
 // Correctness oracle: for each upstream `.dl` example, run both the Rust
-// `executing` binary and our TS `flow-ts` binary on identical synthetic
+// `executing` binary and our own TS binary on identical synthetic
 // EDB facts and diff their IDB CSV outputs.
 //
 // Rust binary is expected at $RUST_FLOWLOG (or auto-discovered under

@@ -25,7 +25,7 @@ import {
 } from '../db-ivm/index.js'
 import type { MultiSet } from '../db-ivm/index.js'
 
-/** Mirrors db-ivm's own FeedbackOperator. Re-declared here so flow-ts
+/** Mirrors db-ivm's own FeedbackOperator. Re-declared here so the engine
  *  can wire one per recursive head without exposing internal classes. */
 class TeeFeedbackOperator<T> extends UnaryOperator<T> {
   #feedback: DifferenceStreamWriter<T>

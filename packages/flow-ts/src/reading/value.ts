@@ -1,6 +1,6 @@
 // Value typing for relation cells.
 //
-// flow-ts originally collapsed every row cell into a JS `number` for perf
+// The engine originally collapsed every row cell into a JS `number` for perf
 // (see `row.ts`). To support `.decl Foo(name: string)` without re-litigating
 // the row representation, this module introduces a tagged-union `Value`
 // type plus a `ValueCodec` registry keyed by the parser-level `DataType`.

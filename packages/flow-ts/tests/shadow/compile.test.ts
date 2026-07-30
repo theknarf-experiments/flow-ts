@@ -174,7 +174,7 @@ S(x + 1) :- R(x).
   })
 
   it('but a body *filter* needs no inversion — replay re-checks it', () => {
-    // Comparisons in flow-ts are filters over already-bound variables, not
+    // Comparisons here are filters over already-bound variables, not
     // bindings (`S(y) :- R(x), y = x + 1.` is rejected by the planner — see
     // tests/executing/comparisons.test.ts). A filter needs no inverse at all:
     // the shadow rule replays it, so candidates are drawn only from the rows

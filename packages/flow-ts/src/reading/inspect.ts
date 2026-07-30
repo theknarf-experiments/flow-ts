@@ -1,7 +1,7 @@
 // Port of flowlog/src/reading/src/inspect.rs (the in-process printers only).
 //
 // File-output helpers (writeRel, writeRelSize, mergeRelationPartitions) live
-// in `@flow-ts/cli`'s `io.ts` so this module stays browser-compatible.
+// in the CLI's `io.ts` so this module stays browser-compatible.
 
 import { distinct, map, output } from '../db-ivm/index.js'
 import { type Rel, type DoubleRel } from './rel.js'

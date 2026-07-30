@@ -1,4 +1,4 @@
-// Simulated network sync between two flow-ts `Store` instances.
+// Simulated network sync between two `Store` instances.
 //
 // Each store owns its own session and EDB state. The sync link
 // subscribes to a configured set of EDB relations on both sides; when

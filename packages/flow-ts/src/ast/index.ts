@@ -1,6 +1,6 @@
 // AST types and small helpers, shared by the executor (this package)
 // and the parser (`../parsing`). Lives here because the executor
-// is the primary consumer; the parser depends on flow-ts to obtain it.
+// is the primary consumer, and the parser builds what it reads.
 
 export * from './aggregation.js'
 export * from './arithmetic.js'

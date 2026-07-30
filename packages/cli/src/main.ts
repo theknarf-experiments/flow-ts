@@ -1,5 +1,5 @@
 // CLI orchestration. Reads the program source + EDB CSVs from disk and
-// invokes `executeProgram` / `openSession` from `@flow-ts/executing`.
+// invokes `executeProgram` / `openSession` from the engine.
 // Mirrors the Rust `main.rs` flow.
 
 import * as fs from 'node:fs'

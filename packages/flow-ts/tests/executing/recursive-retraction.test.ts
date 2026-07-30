@@ -615,6 +615,14 @@ C(x, count(y)) :- R(x, y).`
   it('the sequences generated actually retract into populated graphs', () => {
     // A generator that only ever grew would pass everything above while
     // testing nothing, so assert the shape of what is being produced.
+    //
+    // The floor is deliberately far below what this actually produces. Sampled
+    // over 300 seeds the count runs 189 to 289 with a median of 233, so the
+    // `> 200` it used to assert failed about one run in sixty — which is how it
+    // eventually took CI down, having passed for months. The check exists to
+    // catch a generator that stopped retracting altogether, and any number in
+    // this order of magnitude does that; picking one close to the median only
+    // made it a lottery. Do not tighten it without re-measuring.
     let retractionsWithEdgesLeft = 0
     fc.assert(
       fc.property(fc.array(editGen, { minLength: 8, maxLength: 24 }), (edits) => {
@@ -632,7 +640,7 @@ C(x, count(y)) :- R(x, y).`
       }),
       { numRuns: 200 },
     )
-    expect(retractionsWithEdgesLeft).toBeGreaterThan(200)
+    expect(retractionsWithEdgesLeft).toBeGreaterThan(100)
   })
 })
 

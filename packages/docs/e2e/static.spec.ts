@@ -22,8 +22,32 @@ test.describe('prerendered pages', () => {
     await context.close()
   })
 
-  test('every route is a file, so a deep link needs no server', async ({ request }) => {
-    for (const path of ['/', '/learn/facts/', '/learn/put-into/', '/friends/', '/vault/shapes/']) {
+  // Deep-linked *without* a trailing slash, which is the form every link on the
+  // site generates. This is the test that was missing: written with trailing
+  // slashes it passed while `preview` was serving the overview page for every
+  // one of these, because the extensionless path matched no file and fell
+  // through to the SPA fallback. The client then rendered the right page over
+  // the wrong markup, which looked exactly like a hydration bug in the app.
+  test('a deep link serves its own page, with no trailing slash', async ({ request }) => {
+    const expected: Array<[string, string]> = [
+      ['/', 'flow-ts'],
+      ['/learn/facts', 'Facts and rules'],
+      ['/learn/put-into', 'Joins and refusals: .put into, .put none'],
+      ['/friends', 'flow-ts • friend-graph demo'],
+      ['/vault', 'Markdown vault'],
+      ['/vault/shapes', 'Markdown vault'],
+    ]
+    for (const [path, heading] of expected) {
+      const response = await request.get(path)
+      expect(response.status(), path).toBe(200)
+      // The heading is in the HTML, so this checks *which* page was served —
+      // a 200 alone would have been satisfied by the fallback.
+      expect(await response.text(), path).toContain(`<h1>${heading}</h1>`)
+    }
+  })
+
+  test('and with one, which is what GitHub Pages redirects to', async ({ request }) => {
+    for (const path of ['/learn/facts/', '/friends/', '/vault/shapes/']) {
       const response = await request.get(path)
       expect(response.status(), path).toBe(200)
     }
@@ -42,4 +66,32 @@ test.describe('prerendered pages', () => {
     expect(html).toContain('aria-current="page"')
     expect(html).toMatch(/aria-current="page"[^>]*href="\/learn\/joins"/)
   })
+})
+
+// Hydration, which is the point of prerendering: React has to *adopt* the markup
+// rather than discard it and render again. It does that silently when it works
+// and complains when it doesn't, so the assertion is simply that nothing was
+// logged. Without it, a mismatch costs only performance — the page still ends up
+// correct — which is precisely why it went unnoticed.
+test.describe('hydration', () => {
+  const PAGES = ['/', '/learn/facts', '/learn/put-spread', '/friends', '/text', '/mvr', '/vault', '/vault/shapes']
+
+  for (const path of PAGES) {
+    test(`adopts the prerendered markup at ${path}`, async ({ page }) => {
+      const complaints: string[] = []
+      page.on('console', (message) => {
+        if (message.type() === 'error' || message.type() === 'warning') {
+          complaints.push(`${message.type()}: ${message.text().split('\n')[0]}`)
+        }
+      })
+      page.on('pageerror', (error) => complaints.push(`threw: ${error.message.split('\n')[0]}`))
+
+      await page.goto(path)
+      await page.waitForSelector('body[data-hydrated="true"]')
+      // Long enough for the effects that follow hydration to settle.
+      await page.waitForTimeout(300)
+
+      expect(complaints, `${path} logged during hydration`).toEqual([])
+    })
+  }
 })

@@ -138,20 +138,14 @@ was adapted from (`theknarf-experiments/modular-svg`):
 
 `DOCS_BASE` is what sets that base: `/` locally, `/flow-ts/` from the deploy
 workflow. Everything that has to agree with it reads it from Vite rather than
-repeating it.
+repeating it — including `preview`, which resolves its own config, so checking a
+subpath build locally means setting it for both:
 
-**Known issue: hydration falls back to a client render.** On pages carrying a
-relation table — the lessons, `/friends`, `/text`, `/mvr` — React reports a
-hydration mismatch and re-renders the tree instead of adopting the markup. The
-pages are correct either way and the whole suite passes; what is lost is the
-work the prerender was supposed to save on load. `/` and the vault pages hydrate
-cleanly. Two real mismatches were found and fixed on the way here (the theme
-toggle reading `matchMedia` during render, and the brand `NavLink` computing
-`active` differently under the static renderer); this is a third that has not
-been pinned down. `SSG_DEV=1 pnpm build` builds against development React,
-unminified, which is the only way to get a component name out of it.
+```bash
+DOCS_BASE=/flow-ts/ pnpm build && DOCS_BASE=/flow-ts/ pnpm preview
+```
 
-Two things are worth knowing before editing it.
+Three more things are worth knowing before editing it.
 
 Everything below the shell is loaded with React Router's `lazy`, which is doing
 real work rather than being a reflex: the overview needs no engine at all, and
@@ -159,14 +153,46 @@ each demo pulls its own program, seed data and — for the CRDTs — a simulated
 network. Left eager they are one 530 kB chunk that every visitor downloads to
 read a sentence about Datalog.
 
-And the theme script is inline in `index.html`, not imported. A module script
-runs after the stylesheet has been applied, so the page would paint in the
-default palette and flip a frame later — which is the exact flash the script
-exists to prevent. `src/theme.ts` holds the same logic for the runtime toggle
-and the two are kept in step by hand.
+The theme script is injected into `<head>`, not imported. A module script runs
+after the stylesheet has been applied, so the page would paint in the default
+palette and flip a frame later — which is the exact flash the script exists to
+prevent. `src/theme.ts` is the single copy; a plugin puts it in `index.html` and
+the generated pages get it from the same `transformIndexHtml` pass.
 
 `src/Shell.tsx` sets `data-hydrated="true"` on `<body>` once React mounts. The
 e2e suite waits on it as a cheap "the app is up" signal.
+
+Hydration is checked, not assumed: `e2e/static.spec.ts` asserts that no page
+logs anything while hydrating. A mismatch costs only performance — the page still
+ends up correct — so it goes unnoticed otherwise. It did once; see below.
+
+## The trailing-slash trap
+
+`vite preview` does not resolve an extensionless path to its directory index, so
+`/learn/facts` matched no file and fell through to the SPA fallback, which serves
+`dist/index.html` — the *overview* page — for every deep link. The client router
+then rendered the right page over the wrong markup, and React discarded the
+prerender and re-rendered. It presented as a hydration bug in the app, and the
+symptoms pointed inward: it looked content-dependent, because the pages whose
+markup differs most from the overview complained loudest.
+
+The `directoryIndex` plugin in `vite.config.ts` fixes it, rewriting rather than
+redirecting so the URL stays the one the page was rendered for. GitHub Pages
+resolves directory indexes itself, so this only ever mattered locally — which is
+exactly what made it worth fixing, since preview is where the static build gets
+checked and it was the one place that couldn't check it.
+
+Two things kept it hidden, and both are tests now. The deep-link test used
+trailing slashes, which *do* hit a file, so it passed against a preview server
+that was serving the wrong page for every other form. And nothing asserted that
+hydration was clean. Both live in `e2e/static.spec.ts`, and both fail if the
+plugin is removed.
+
+Rendering in Node did surface two genuine mismatches on the way, fixed and kept:
+the theme toggle read `matchMedia` during render, so the server guessed dark
+where a reader's machine says light; and the brand link was a `NavLink` with a
+string className, which react-router appends `active` to — with `to="/"`
+prefix-matching every page, it silently carried the class everywhere.
 
 ## Bundle size
 

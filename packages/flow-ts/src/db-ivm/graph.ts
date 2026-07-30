@@ -96,7 +96,7 @@ export abstract class UnaryOperator<Tin, Tout = Tin> extends Operator<
   Tin | Tout
 > {
   constructor(
-    public id: number,
+    public override id: number,
     inputA: DifferenceStreamReader<Tin>,
     output: DifferenceStreamWriter<Tout>,
   ) {
@@ -114,7 +114,7 @@ export abstract class UnaryOperator<Tin, Tout = Tin> extends Operator<
  */
 export abstract class BinaryOperator<T> extends Operator<T> {
   constructor(
-    public id: number,
+    public override id: number,
     inputA: DifferenceStreamReader<T>,
     inputB: DifferenceStreamReader<T>,
     output: DifferenceStreamWriter<T>,

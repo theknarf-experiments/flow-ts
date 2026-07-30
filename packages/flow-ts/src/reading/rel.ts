@@ -7,8 +7,8 @@
 // the TS port collapses both `Rel<G>` and `DoubleRel<G>` to single classes
 // carrying their arity at the value level.
 
-import type { IStreamBuilder } from '@flow-ts/db-ivm'
-import { concat, distinct, map, negate } from '@flow-ts/db-ivm'
+import type { IStreamBuilder } from '../db-ivm/index.js'
+import { concat, distinct, map, negate } from '../db-ivm/index.js'
 import { decodeRow, encodeRow } from './encoding.js'
 import { isFatArity } from './row.js'
 import type { Row } from './row.js'

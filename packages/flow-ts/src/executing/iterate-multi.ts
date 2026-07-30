@@ -1,4 +1,4 @@
-// Multi-variable iteration on top of `@flow-ts/db-ivm`. The vendored
+// Multi-variable iteration on top of the vendored dataflow layer. The
 // db-ivm has no version machinery, so we don't need ingress / egress
 // scope wrappers — db-ivm operators maintain their own state across
 // `run()` calls (joins keep their indexes, distinct keeps its hash
@@ -22,8 +22,8 @@ import {
   type IStreamBuilder,
   StreamBuilder,
   UnaryOperator,
-} from '@flow-ts/db-ivm'
-import type { MultiSet } from '@flow-ts/db-ivm'
+} from '../db-ivm/index.js'
+import type { MultiSet } from '../db-ivm/index.js'
 
 /** Mirrors db-ivm's own FeedbackOperator. Re-declared here so flow-ts
  *  can wire one per recursive head without exposing internal classes. */
@@ -32,7 +32,7 @@ class TeeFeedbackOperator<T> extends UnaryOperator<T> {
 
   constructor(
     id: number,
-    input: import('@flow-ts/db-ivm').DifferenceStreamReader<T>,
+    input: import('../db-ivm/index.js').DifferenceStreamReader<T>,
     forward: DifferenceStreamWriter<T>,
     feedback: DifferenceStreamWriter<T>,
   ) {

@@ -144,7 +144,7 @@ export class RecursiveStringDistinctOperator extends UnaryOperator<string> {
 
   /** The re-derive half. Anything still counted once the retraction has stopped
    *  propagating was standing on its own after all. */
-  settle(): boolean {
+  override settle(): boolean {
     if (this.#suspect.size === 0 && this.#held.length === 0) return false
     const result: Array<[string, number]> = []
     for (const value of this.#suspect) {

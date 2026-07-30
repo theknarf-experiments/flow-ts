@@ -1,6 +1,6 @@
 // Integration test wiring a db-ivm graph with our Rel + InputSession.
 
-import { D2, MultiSet, map, output } from '@flow-ts/db-ivm'
+import { D2, MultiSet, map, output } from '../../src/db-ivm/index.js'
 import { describe, expect, it } from 'vitest'
 import { InputSessionGeneric, Rel, type Row } from '../../src/reading/index.js'
 

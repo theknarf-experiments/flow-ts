@@ -25,7 +25,8 @@
     "build:grammar": "peggy src/parsing/grammar.peggy --format es -o src/parsing/__generated__/grammar.js --dts"
   },
   "dependencies": {
-    "@flow-ts/db-ivm": "workspace:*"
+    "fractional-indexing": "^3.2.0",
+    "sorted-btree": "^1.8.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

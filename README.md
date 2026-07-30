@@ -272,7 +272,8 @@ packages/
                   reading/     Row type, encoding, in-memory rels (no I/O)
                   executing/   Dataflow assembly + executor (executeProgram, openSession)
                   parsing/     Datalog grammar (peggy) → parseProgram
-  db-ivm/       Vendored Tanstack db-ivm + a queue-based `iterate` operator
+                  db-ivm/      Vendored fork of Tanstack DB's ivm (MIT, see its
+                               LICENSE) + a queue-driven `iterate` operator
   cli/          flow-ts binary, argv parsing (commander+zod), fact CSV I/O
   react/        React bindings: Store / Collection / useLiveQuery
   docs/         Documentation site: a Vite + React + react-router SPA running
@@ -280,7 +281,7 @@ packages/
                 larger demos
 ```
 
-The executor compiles a parsed `Program` into a db-ivm dataflow graph, one stratum at a time. Recursive strata get a queue-driven `iterate` operator (defined in `packages/db-ivm/src/operators/iterate.ts`) that's the moral equivalent of differential-dataflow's `scope.iterative` but without the time-tracking machinery — operators are stateful, so each iteration's body sees only the new diff, and convergence is detected by db-ivm's standard "no pending work" loop.
+The executor compiles a parsed `Program` into a db-ivm dataflow graph, one stratum at a time. Recursive strata get a queue-driven `iterate` operator (defined in `packages/flow-ts/src/db-ivm/operators/iterate.ts`) that's the moral equivalent of differential-dataflow's `scope.iterative` but without the time-tracking machinery — operators are stateful, so each iteration's body sees only the new diff, and convergence is detected by db-ivm's standard "no pending work" loop.
 
 Rows cross the dataflow boundary as comma-joined strings (`"1,2,3,"`) rather than `number[]`: db-ivm uses JS `Map` for its top-level indexes, which means object identity matters, but JS hashes strings natively. The string boundary sidesteps both that and `JSON.stringify`'s aversion to `bigint`. Inside operators we project columns at the string level when possible, falling back to `number[]` only for arithmetic / compare evaluation.
 

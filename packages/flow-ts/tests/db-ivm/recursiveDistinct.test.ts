@@ -1,7 +1,7 @@
 // The recursive dedup, on its own.
 //
-// End-to-end coverage lives in flow-ts, where there is a real recursive
-// stratum to point at. This is the protocol in isolation: what the operator
+// End-to-end coverage lives in the executing suite, where there is a real
+// recursive stratum to point at. This is the protocol in isolation: what the operator
 // emits, and when, given deltas it cannot see the origin of.
 //
 // The contract is one sentence — a tuple that loses a derivation is retracted
@@ -9,11 +9,11 @@
 // stopped moving — and every test here is a consequence of it.
 
 import { describe, expect, it } from 'vitest'
-import { D2 } from '../src/d2.js'
-import { output } from '../src/operators/output.js'
-import { recursiveStringDistinct } from '../src/operators/recursiveDistinct.js'
-import { stringDistinct } from '../src/operators/stringDistinct.js'
-import type { MultiSet } from '../src/multiset.js'
+import { D2 } from '../../src/db-ivm/d2.js'
+import { output } from '../../src/db-ivm/operators/output.js'
+import { recursiveStringDistinct } from '../../src/db-ivm/operators/recursiveDistinct.js'
+import { stringDistinct } from '../../src/db-ivm/operators/stringDistinct.js'
+import type { MultiSet } from '../../src/db-ivm/multiset.js'
 
 type Emission = [string, number]
 

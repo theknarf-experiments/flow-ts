@@ -22,7 +22,7 @@ export class DefaultMap<K, V> extends Map<K, V> {
     super(entries)
   }
 
-  get(key: K): V {
+  override get(key: K): V {
     if (!this.has(key)) {
       // this.set(key, this.defaultValue())
       return this.defaultValue()

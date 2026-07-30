@@ -43,7 +43,7 @@ import {
   reduce,
   recursiveStringDistinct,
   stringDistinct,
-} from '@flow-ts/db-ivm'
+} from '../db-ivm/index.js'
 import { iterateMulti } from './iterate-multi.js'
 import {
   type AggregationHeadIDB,

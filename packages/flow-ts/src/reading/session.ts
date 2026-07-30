@@ -6,8 +6,8 @@
 // `Row = bigint[]` covers all arities at once. db-ivm has no notion of
 // frontiers or epoch, so `advanceTo()` is just an alias for `flush()`.
 
-import type { MultiSet, RootStreamBuilder } from '@flow-ts/db-ivm'
-import { MultiSet as MultiSetClass } from '@flow-ts/db-ivm'
+import type { MultiSet, RootStreamBuilder } from '../db-ivm/index.js'
+import { MultiSet as MultiSetClass } from '../db-ivm/index.js'
 import type { Row } from './row.js'
 import type { Semiring } from './semiring.js'
 import type { Time } from './epoch.js'

@@ -3,7 +3,7 @@
 // File-output helpers (writeRel, writeRelSize, mergeRelationPartitions) live
 // in `@flow-ts/cli`'s `io.ts` so this module stays browser-compatible.
 
-import { distinct, map, output } from '@flow-ts/db-ivm'
+import { distinct, map, output } from '../db-ivm/index.js'
 import { type Rel, type DoubleRel } from './rel.js'
 import { type Row, rowToString } from './row.js'
 

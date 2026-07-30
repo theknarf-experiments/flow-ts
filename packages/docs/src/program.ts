@@ -16,7 +16,7 @@
 // omitted here. Likewise `.rule` is just a section header for the
 // batch CLI's `.dl` files — the grammar treats it as optional.
 
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from 'flow-ts'
 
 export const SOURCE = `\
 .in

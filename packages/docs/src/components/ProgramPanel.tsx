@@ -9,7 +9,7 @@
 // from scratch. Fine for a page someone is reading, wrong for a hot path.
 
 import { useEffect, useState } from 'react'
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from 'flow-ts'
 import type { Store } from '@flow-ts/react'
 
 export interface ProgramPanelProps {

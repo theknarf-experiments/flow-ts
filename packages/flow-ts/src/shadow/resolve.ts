@@ -77,10 +77,11 @@ export type Resolution =
 export interface ResolveOptions extends ShadowOptions {
   /** How to read the generated shadow program back in.
    *
-   *  flow-ts has no parser dependency on purpose — `@flow-ts/parsing` depends
-   *  on *this* package for the AST, not the other way round, so that consumers
-   *  can bring their own syntax. The caller therefore supplies the reader,
-   *  normally `parseProgram` from `@flow-ts/parsing`. */
+   *  Injected rather than imported, even though `parseProgram` now lives in this
+   *  package: the shadow compiler emits Datalog *source*, and whoever chose the
+   *  syntax going in should choose the syntax coming back out. A consumer with
+   *  its own front end supplies its own reader; everyone else passes
+   *  `parseProgram`. */
   parse: (source: string) => Program
   /** Report `ambiguous` instead of applying every candidate when a request
    *  reaches more than one source relation. Callers that own a UI usually want

@@ -2,8 +2,8 @@
   "$schema": "https://turborepo.org/schema.json",
   "tasks": {
     "build:grammar": {
-      "inputs": ["src/grammar.peggy"],
-      "outputs": ["src/__generated__/**"]
+      "inputs": ["src/parsing/grammar.peggy"],
+      "outputs": ["src/parsing/__generated__/**"]
     },
     "build": {
       "dependsOn": ["^build", "build:grammar"],
@@ -17,7 +17,19 @@
     },
     "test": {
       "dependsOn": ["^build", "build:grammar"],
-      "inputs": ["src/**", "tests/**", "tsconfig.json", "package.json", "vitest.config.ts"],
+      "inputs": [
+        "src/**",
+        "tests/**",
+        "e2e/**",
+        "tsconfig.json",
+        "package.json",
+        "vitest.config.ts",
+        "playwright.config.ts",
+        "index.html",
+        "vite.config.ts",
+        "ssg.tsx",
+        "ssg-for-vite.tsx"
+      ],
       "outputs": []
     },
     "bench": {

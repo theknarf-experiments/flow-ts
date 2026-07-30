@@ -39,7 +39,7 @@ const subnavClass = ({ isActive }: { isActive: boolean }) =>
   isActive ? 'active' : undefined
 import { Store, useProgram } from '@flow-ts/react'
 import type { Resolution } from 'flow-ts'
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from 'flow-ts'
 import { AGENDA_INTO, SEED_NOTES, SOURCE, VOCAB, program } from './program.js'
 import { type Row, type VaultFacts, applyToVault, parseVault } from './markdown.js'
 

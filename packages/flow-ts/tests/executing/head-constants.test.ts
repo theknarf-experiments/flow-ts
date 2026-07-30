@@ -3,7 +3,7 @@
 // `"literal"` used to reach the numeric evaluator and fail with an error
 // about arithmetic — nowhere near the rule that wrote it.
 
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from '../../src/parsing/index.js'
 import { describe, expect, it } from 'vitest'
 import { executeProgram } from '../../src/executing/index.js'
 import type { Row } from '../../src/reading/index.js'

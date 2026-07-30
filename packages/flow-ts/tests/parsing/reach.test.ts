@@ -1,7 +1,7 @@
 // Targeted parser tests on reach.dl — the simplest end-to-end Datalog program.
 
 import { describe, expect, it } from 'vitest'
-import { parseProgram } from '../src/index.js'
+import { parseProgram } from '../../src/parsing/index.js'
 
 const REACH = `\
 .in

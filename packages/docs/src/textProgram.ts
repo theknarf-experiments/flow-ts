@@ -12,7 +12,7 @@
 // from the sentinel `(0, 0)` and collecting the `value` column gives
 // you the rendered text.
 
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from 'flow-ts'
 
 export const TEXT_SOURCE = `\
 .in

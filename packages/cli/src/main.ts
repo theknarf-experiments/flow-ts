@@ -10,7 +10,7 @@ import {
   type IdbSink,
   type ProgramSession,
 } from 'flow-ts'
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from 'flow-ts'
 import type { Row } from 'flow-ts'
 import type { Args } from './args.js'
 import {

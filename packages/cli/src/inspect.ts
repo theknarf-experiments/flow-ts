@@ -7,7 +7,7 @@
 // purely on the program.
 
 import * as fs from 'node:fs'
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from 'flow-ts'
 import {
   ProgramQueryPlan,
   Strata,

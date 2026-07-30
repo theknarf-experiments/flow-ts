@@ -1,7 +1,7 @@
 // React bindings for the flow-ts Datalog runtime, inspired by Tanstack
 // DB's Collection / live-query split.
 //
-// One `Store` wraps a single `openSession` from `@flow-ts/executing`.
+// One `Store` wraps a single `openSession` from `flow-ts`.
 // Each `Collection` is a typed handle to one EDB you can `insert` /
 // `delete` rows on. Each IDB head is materialised internally as a set
 // of live rows, and `useLiveQuery(store, idbName)` is a React hook
@@ -32,7 +32,7 @@ import {
   compileShadow,
   openBackwardSession,
 } from 'flow-ts'
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from 'flow-ts'
 
 export interface StoreOptions {
   /** Views an edit can be written back through. Opt-in, and deliberately so.

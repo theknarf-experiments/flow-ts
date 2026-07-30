@@ -2,7 +2,7 @@
 // EDB facts, and collect rows via the sink callback. No filesystem.
 
 import { describe, expect, it } from 'vitest'
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from '../../src/parsing/index.js'
 import type { Row } from '../../src/reading/index.js'
 import { executeProgram, type IdbSink } from '../../src/executing/index.js'
 

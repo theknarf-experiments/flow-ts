@@ -223,8 +223,7 @@ The executor is published-shaped (not on npm yet) as `flow-ts`. Two entry points
 ### Batch — `executeProgram`
 
 ```ts
-import { executeProgram } from 'flow-ts'
-import { parseProgram } from '@flow-ts/parsing'
+import { executeProgram, parseProgram } from 'flow-ts'
 
 const program = parseProgram(source)
 const facts = new Map([
@@ -265,14 +264,14 @@ Operators carry their own state across `advance()` calls (the join indexes, the 
 ```
 packages/
   flow-ts/      The engine. One package with several internal modules:
-                  ast/         Typed AST (shared with parsing)
+                  ast/         Typed AST — the parser builds it, the executor reads it
                   strata/      Kosaraju's SCC → stratified evaluation order
                   catalog/     Per-rule signatures, SIP rewriting, dependent atoms
                   optimizing/  Prim's MST join-order optimisation
                   planning/    Logical IR: TransformationFlow trees, head arithmetic
                   reading/     Row type, encoding, in-memory rels (no I/O)
                   executing/   Dataflow assembly + executor (executeProgram, openSession)
-  parsing/      Datalog grammar (peggy) → parseProgram. Depends on flow-ts for the AST.
+                  parsing/     Datalog grammar (peggy) → parseProgram
   db-ivm/       Vendored Tanstack db-ivm + a queue-based `iterate` operator
   cli/          flow-ts binary, argv parsing (commander+zod), fact CSV I/O
   react/        React bindings: Store / Collection / useLiveQuery

@@ -2,7 +2,7 @@
 // read whatever columns it was handed, so a query with a typo in it returned
 // rows that didn't match the names it gave them.
 
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from '../../src/parsing/index.js'
 import { describe, expect, it } from 'vitest'
 import { executeProgram } from '../../src/executing/index.js'
 

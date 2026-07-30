@@ -14,7 +14,7 @@
 // program to a fixpoint so IDBs defined in terms of IDBs resolve too.
 
 import { describe, expect, it } from 'vitest'
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from '../../src/parsing/index.js'
 import { inferRelationTypes } from '../../src/typing/index.js'
 
 const types = (src: string) => inferRelationTypes(parseProgram(src, { grammarSource: 't.dl' }))

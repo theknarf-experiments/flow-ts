@@ -1,6 +1,6 @@
 // End-to-end Catalog tests on parsed .dl programs.
 
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from '../../src/parsing/index.js'
 import { describe, expect, it } from 'vitest'
 import { Catalog } from '../../src/catalog/index.js'
 

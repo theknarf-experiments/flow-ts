@@ -4,11 +4,12 @@
 // packages; collapsing them into a single package matches how they
 // actually compose at runtime and keeps consumer imports simple.
 //
-// The split between this package and `@flow-ts/parsing` is real:
-// parsing has a build step (the peggy grammar) and consumers may
-// want to bring their own syntax or build programs programmatically,
-// so it stays its own package. The AST types live here because the
-// executor is their primary consumer; the parser depends on us.
+// Parsing is in here too, as of the same reasoning applied once more.
+// It was a separate package on the grounds that it has a build step
+// (the peggy grammar) and that a consumer might bring its own syntax.
+// But the parser needs the AST, the AST belongs with the executor
+// that consumes it, and the executor's own tests need a parser to
+// write programs in — a cycle no split of two packages resolves.
 
 export * from './ast/index.js'
 export * from './strata/index.js'
@@ -19,3 +20,4 @@ export * from './reading/index.js'
 export * from './executing/index.js'
 export * from './typing/index.js'
 export * from './shadow/index.js'
+export * from './parsing/index.js'

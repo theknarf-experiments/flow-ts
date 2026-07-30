@@ -13,7 +13,7 @@
 
 import { useMemo } from 'react'
 import { Link } from 'react-router'
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from 'flow-ts'
 import { Store, useProgram } from '@flow-ts/react'
 import { RelationTable } from '../components/RelationTable.js'
 import { WritableTable } from '../components/WritableTable.js'

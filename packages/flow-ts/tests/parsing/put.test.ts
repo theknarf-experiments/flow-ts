@@ -10,8 +10,8 @@
 // request that arrives later.
 
 import { describe, expect, it } from 'vitest'
-import { programToDl } from 'flow-ts'
-import { parseProgram } from '../src/index.js'
+import { programToDl } from '../../src/index.js'
+import { parseProgram } from '../../src/parsing/index.js'
 
 const withPut = (put: string) => `\
 .in

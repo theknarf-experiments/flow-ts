@@ -11,7 +11,7 @@
 // or none, is a refusal with a reason rather than a guess.
 
 import { describe, expect, it } from 'vitest'
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from '../../src/parsing/index.js'
 import type { Row } from '../../src/reading/index.js'
 import { compileShadow, resolveBackward } from '../../src/shadow/index.js'
 import { type Facts, key, liveRows } from './_harness.js'

@@ -11,7 +11,7 @@
 // lessons parse and run at all, and that between them they cover the language.
 
 import { describe, expect, it } from 'vitest'
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from 'flow-ts'
 import { compileShadow, executeProgram, openBackwardSession, type Row } from 'flow-ts'
 import { LESSONS, TOP_LEVEL, lessonBySlug, lessonLabel } from '../src/lessons/lessons.js'
 

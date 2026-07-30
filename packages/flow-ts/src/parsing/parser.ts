@@ -1,5 +1,11 @@
 // Top-level parser. Uses a pre-generated peggy parser
-// (see src/grammar.peggy → src/__generated__/grammar.js).
+// (see grammar.peggy → __generated__/grammar.js, built by `build:grammar`).
+//
+// This was its own package until the dependency ran the wrong way: the parser
+// needs the AST, the AST lives with the executor that consumes it, and the
+// executor's own tests need a parser to write programs in. That is a cycle, and
+// no arrangement of two packages fixes it — so parsing lives inside the engine,
+// as one more internal module alongside `planning` and `shadow`.
 
 import {
   Aggregation,
@@ -21,7 +27,7 @@ import {
   Program,
   type PutPolicy,
   RelDecl,
-} from 'flow-ts'
+} from '../ast/index.js'
 import { parse as peggyParse } from './__generated__/grammar.js'
 
 type Builders = {

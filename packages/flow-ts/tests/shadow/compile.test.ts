@@ -6,7 +6,7 @@
 // on the ordinary engine, so these tests mostly assert on generated source.
 
 import { describe, expect, it } from 'vitest'
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from '../../src/parsing/index.js'
 import { compileShadow } from '../../src/shadow/index.js'
 
 /** Generated rule lines only, trimmed — easier to assert on than raw source. */

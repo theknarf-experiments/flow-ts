@@ -21,7 +21,7 @@
 //                     to guess.
 
 import { describe, expect, it } from 'vitest'
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from '../../src/parsing/index.js'
 import type { Row } from '../../src/reading/index.js'
 import { compileShadow, openBackwardSession, resolveBackward } from '../../src/shadow/index.js'
 import type { Facts } from './_harness.js'

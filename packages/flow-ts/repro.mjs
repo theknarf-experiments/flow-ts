@@ -1,4 +1,4 @@
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from './src/parsing/index.js'
 import { openSession } from './dist/index.js'
 
 const SOURCE = `\

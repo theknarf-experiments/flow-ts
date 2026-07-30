@@ -1,7 +1,7 @@
 // Targeted tests for RuleQueryPlan over parsed rules.
 
 import { Catalog } from '../../src/catalog/index.js'
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from '../../src/parsing/index.js'
 import { describe, expect, it } from 'vitest'
 import { RuleQueryPlan, transformationOutput } from '../../src/planning/index.js'
 

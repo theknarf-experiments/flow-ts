@@ -1,6 +1,6 @@
 // Tests for AggregationHeadIDB + aggregationCatalogFromProgram.
 
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from '../../src/parsing/index.js'
 import { describe, expect, it } from 'vitest'
 import { AggregationHeadIDB, aggregationCatalogFromProgram } from '../../src/catalog/index.js'
 

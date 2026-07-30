@@ -35,7 +35,7 @@
 // "append", which is exactly flow-md's convention for locator columns it can't
 // know until the file is re-parsed.
 
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from 'flow-ts'
 
 export const SOURCE = `\
 .in

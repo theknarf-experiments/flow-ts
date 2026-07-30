@@ -3,7 +3,7 @@
 // later inserts don't see stale state from earlier closed sessions.
 
 import { describe, expect, it } from 'vitest'
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from '../../src/parsing/index.js'
 import type { Row } from '../../src/reading/index.js'
 import { executeProgram, openSession, type IdbSink } from '../../src/executing/index.js'
 

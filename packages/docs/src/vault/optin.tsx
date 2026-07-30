@@ -9,7 +9,7 @@ import { useMemo, useState } from 'react'
 import { useProgram, useWritableQuery } from '@flow-ts/react'
 import type { ShadowChannel } from 'flow-ts'
 import { compileShadow, openBackwardSession, resolveBackward } from 'flow-ts'
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from 'flow-ts'
 import { columnNames, reasonOf, store, useVault } from './shell.js'
 
 /** `Load(path, count(text)) :- Open(path, text).`

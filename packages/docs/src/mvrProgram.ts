@@ -11,7 +11,7 @@
 // emit Pred edges from every concurrent leaf to a freshly-written
 // value without scanning the Set / Overwritten relations by hand.
 
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from 'flow-ts'
 import type { Program } from 'flow-ts'
 
 export const MVR_NO_CB_SOURCE = `\

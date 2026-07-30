@@ -5,7 +5,7 @@
 // the program, and see whether the view moved the way the request asked. These
 // helpers are that loop.
 
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from '../../src/parsing/index.js'
 import { executeProgram } from '../../src/executing/index.js'
 import type { Row } from '../../src/reading/index.js'
 import { type ShadowOptions, compileShadow } from '../../src/shadow/index.js'

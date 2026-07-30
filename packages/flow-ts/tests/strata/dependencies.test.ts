@@ -1,6 +1,6 @@
 // Targeted tests for DependencyGraph against parsed .dl programs.
 
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from '../../src/parsing/index.js'
 import { describe, expect, it } from 'vitest'
 import { DependencyGraph } from '../../src/strata/index.js'
 

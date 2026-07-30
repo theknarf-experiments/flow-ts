@@ -11,7 +11,7 @@
 // nothing in the shadow compiler had to learn that — the declaration says it.
 
 import { describe, expect, it } from 'vitest'
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from '../../src/parsing/index.js'
 import { compileShadow, openBackwardSession } from '../../src/shadow/index.js'
 import { type Facts, backward, liveRows } from './_harness.js'
 

@@ -1,7 +1,7 @@
 // Targeted PlanTree tests on parsed .dl rules.
 
 import { Catalog } from '../../src/catalog/index.js'
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from '../../src/parsing/index.js'
 import { describe, expect, it } from 'vitest'
 import { PlanTree } from '../../src/optimizing/index.js'
 

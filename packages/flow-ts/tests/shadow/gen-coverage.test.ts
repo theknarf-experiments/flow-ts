@@ -12,7 +12,7 @@
 
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from '../../src/parsing/index.js'
 import { compileShadow } from '../../src/shadow/index.js'
 import { inferRelationTypes } from '../../src/typing/index.js'
 import { dedupe, liveRows } from './_harness.js'

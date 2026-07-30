@@ -25,7 +25,6 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@flow-ts/parsing": "workspace:*",
     "commander": "^14.0.3",
     "flow-ts": "workspace:*",
     "zod": "^4.4.3"

@@ -14,7 +14,7 @@
 // that fails the build teaches you about the machine rather than the code.
 
 import { it } from 'vitest'
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from '../src/parsing/index.js'
 import { executeProgram, openSession } from '../src/executing/index.js'
 import type { Row } from '../src/reading/index.js'
 import { compileShadow, openBackwardSession, resolveBackward } from '../src/shadow/index.js'

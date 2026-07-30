@@ -1,6 +1,6 @@
 // Sideways-info-passing tests using the example from the Rust reducer docstring.
 
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from '../../src/parsing/index.js'
 import { describe, expect, it } from 'vitest'
 import { Catalog } from '../../src/catalog/index.js'
 

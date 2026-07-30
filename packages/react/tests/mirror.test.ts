@@ -13,7 +13,7 @@
 // advance again.
 
 import { describe, expect, it } from 'vitest'
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from 'flow-ts'
 import { Store } from '../src/index.js'
 import type { Row } from 'flow-ts'
 

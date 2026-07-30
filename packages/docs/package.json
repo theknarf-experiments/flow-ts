@@ -15,7 +15,6 @@
     "build:spa": "vite build"
   },
   "dependencies": {
-    "@flow-ts/parsing": "workspace:*",
     "@flow-ts/react": "workspace:*",
     "@tanstack/react-table": "^8.21.3",
     "flow-ts": "workspace:*",

@@ -19,7 +19,7 @@
 
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from '../../src/parsing/index.js'
 import { executeProgram } from '../../src/executing/index.js'
 import type { Row } from '../../src/reading/index.js'
 import { type BackwardSession, openBackwardSession } from '../../src/shadow/index.js'

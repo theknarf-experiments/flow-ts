@@ -7,7 +7,7 @@
 // desugaring would be the wrong design and one of these would fail.
 
 import { describe, expect, it } from 'vitest'
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from '../../src/parsing/index.js'
 import { executeProgram } from '../../src/executing/index.js'
 import type { Row } from '../../src/reading/index.js'
 import { inferRelationTypes } from '../../src/typing/index.js'

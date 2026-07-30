@@ -1,19 +1,18 @@
 # @flow-ts/react
 
 React bindings for the flow-ts Datalog runtime — a Tanstack-DB-inspired
-"one collection, many live-query hooks" pattern on top of
-`@flow-ts/executing`.
+"one collection, many live-query hooks" pattern on top of `flow-ts`.
 
 ## Install
 
 ```bash
-pnpm add @flow-ts/react @flow-ts/parsing @flow-ts/executing @flow-ts/reading react
+pnpm add @flow-ts/react flow-ts react
 ```
 
 ## API sketch
 
 ```ts
-import { parseProgram } from '@flow-ts/parsing'
+import { parseProgram } from 'flow-ts'
 import { Store, useLiveQuery, useProgram } from '@flow-ts/react'
 
 const program = parseProgram(`
@@ -46,7 +45,7 @@ function ReachableCount() {
 
 ## How it works
 
-`Store` wraps one long-lived `openSession` from `@flow-ts/executing`.
+`Store` wraps one long-lived `openSession` from `flow-ts`.
 `Collection<T>(name)` is a typed handle to an EDB you can `insert` /
 `delete` rows on. Each IDB head is materialised internally; the IDB
 sink callback queues row diffs, and a microtask drives

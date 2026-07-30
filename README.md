@@ -120,24 +120,8 @@ just the last two.
 node packages/cli/dist/bin.js -p path/to/program.dl -f path/to/facts/ -c out/
 ```
 
-```
-Usage: flow-ts [options]
-
-A Datalog engine on top of incremental dataflow
-
-Options:
-  -p, --program <path>    path of the Datalog program
-  -f, --facts <dir>       directory containing EDB fact files
-  -c, --csvs <dir>        directory to write IDB CSV outputs into
-  -d, --delimiter <char>  field delimiter for fact files (default: ",")
-  --fat-mode              enable fat-row mode for arities > 8
-  --no-sharing            disable transformation-output sharing across rules
-  -w, --workers <n>       number of worker threads (informational)
-  -O <level>              optimization level: 0=as-is, 1=sip, 2=planning,
-                          3=sip + planning
-  --stream                read incremental EDB updates from stdin (see below)
-  -h, --help              display help
-```
+`--help` lists every flag; `-O <0..3>` picks the optimisation level (0 as-is,
+1 sideways info passing, 2 planning, 3 both) and `--stream` is described below.
 
 If `-c <dir>` is not given, IDB rows are printed to stdout one per line.
 

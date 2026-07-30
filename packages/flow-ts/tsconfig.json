@@ -4,7 +4,9 @@
     "outDir": "dist",
     "rootDir": "src",
     "allowJs": true,
-    "checkJs": false
+    "checkJs": false,
+    "sourceMap": false,
+    "declarationMap": true
   },
   "include": [
     "src/**/*"

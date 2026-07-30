@@ -82,6 +82,32 @@ describe('the manifest says what npm needs it to say', () => {
     expect(Object.keys(root)[0]).toBe('types')
   })
 
+  it('ships declaration maps and the source they point at, but no JS maps', () => {
+    // The deliberate middle of three options. Most libraries ship `dist` alone;
+    // shipping `.js.map` too costs 456 KB of the 1.9 MB this used to be, and buys
+    // debugger step-through — worth little for a library. `.d.ts.map` plus `src`
+    // costs 120 KB and buys go-to-definition landing on the real TypeScript,
+    // which for this codebase is where the reasoning is written down.
+    const dist = path.join(PKG_ROOT, 'dist')
+    if (!fs.existsSync(dist)) return   // not built; `pnpm build` covers this
+
+    const walk = (dir: string): string[] =>
+      fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+        const full = path.join(dir, e.name)
+        return e.isDirectory() ? walk(full) : [full]
+      })
+    const built = walk(dist)
+    expect(built.filter((f) => f.endsWith('.js.map'))).toEqual([])
+    expect(built.filter((f) => f.endsWith('.d.ts.map')).length).toBeGreaterThan(0)
+
+    // And the map has to resolve, which means `src` must be in `files`.
+    const sample = built.find((f) => f.endsWith('.d.ts.map'))!
+    const map = JSON.parse(fs.readFileSync(sample, 'utf8')) as { sources: string[] }
+    const target = path.resolve(path.dirname(sample), map.sources[0]!)
+    expect(fs.existsSync(target)).toBe(true)
+    expect(manifest.files).toContain('src')
+  })
+
   it('declares no dependency the published tree cannot reach', () => {
     // `src` and `dist` ship; nothing else does. A runtime dependency on a
     // workspace package would therefore be unresolvable once installed.

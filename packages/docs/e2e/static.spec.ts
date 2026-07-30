@@ -33,7 +33,7 @@ test.describe('prerendered pages', () => {
       ['/', 'flow-ts'],
       ['/learn/facts', 'Facts and rules'],
       ['/learn/put-into', 'Joins and refusals: .put into, .put none'],
-      ['/friends', 'flow-ts • friend-graph demo'],
+      ['/friends', 'friend-graph demo'],
       ['/vault', 'Markdown vault'],
       ['/vault/shapes', 'Markdown vault'],
     ]

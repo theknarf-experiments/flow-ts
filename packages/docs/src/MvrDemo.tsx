@@ -68,7 +68,7 @@ export function MvrDemo(): JSX.Element {
   return (
     <div className="app">
       <header>
-        <h1>flow-ts • MVR key-value store demo</h1>
+        <h1>MVR key-value store demo</h1>
         <p>
           Two-replica multi-value register from Stewen §4.2.1. Every
           write to a key creates an immutable <code>Set</code> op and

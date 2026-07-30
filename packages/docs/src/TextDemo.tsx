@@ -125,7 +125,7 @@ export function TextDemo(): JSX.Element {
   return (
     <div className="app">
       <header>
-        <h1>flow-ts • two-replica text CRDT demo</h1>
+        <h1>two-replica text CRDT demo</h1>
         <p>
           Two independent <code>Store</code> instances running the same
           list-CRDT program. Each editor only writes to its own store.

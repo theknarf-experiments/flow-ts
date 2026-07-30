@@ -71,7 +71,7 @@ export function App() {
   return (
     <div className="app">
       <header>
-        <h1>flow-ts • friend-graph demo</h1>
+        <h1>friend-graph demo</h1>
         <p>
           One Datalog program with both numeric and string columns. Three
           React views, each with its own live query. Edit the graph in the

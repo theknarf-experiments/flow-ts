@@ -1,7 +1,30 @@
 {
   "name": "@flow-ts/react",
   "version": "0.1.0",
+  "description": "React bindings for flow-ts: one Store over a live Datalog session, typed EDB collections, and hooks that re-render on the derivations that changed.",
+  "keywords": [
+    "datalog",
+    "react",
+    "hooks",
+    "incremental",
+    "live-query",
+    "flow-ts",
+    "typescript"
+  ],
+  "license": "MIT",
+  "author": "Frank Lyder Bredland",
+  "homepage": "https://github.com/theknarf-experiments/flow-ts#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/theknarf-experiments/flow-ts.git",
+    "directory": "packages/react"
+  },
+  "bugs": "https://github.com/theknarf-experiments/flow-ts/issues",
+  "engines": {
+    "node": ">=20"
+  },
   "type": "module",
+  "sideEffects": false,
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
@@ -22,7 +45,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "flow-ts": "workspace:*"
+    "flow-ts": "workspace:^"
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0"
@@ -32,5 +55,8 @@
     "react": "^18.3.1",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

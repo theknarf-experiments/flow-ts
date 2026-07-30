@@ -123,7 +123,7 @@ importers:
   packages/react:
     dependencies:
       flow-ts:
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../flow-ts
     devDependencies:
       '@types/react':

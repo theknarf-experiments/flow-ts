@@ -1,8 +1,33 @@
 {
   "name": "flow-ts",
   "version": "0.1.0",
+  "description": "A Datalog engine in TypeScript, built on incremental dataflow \u2014 parse, stratify and plan programs, then feed facts in over time and only the affected derivations re-run.",
+  "keywords": [
+    "datalog",
+    "incremental",
+    "dataflow",
+    "ivm",
+    "incremental-view-maintenance",
+    "query-engine",
+    "logic-programming",
+    "recursion",
+    "stratification",
+    "typescript"
+  ],
   "license": "MIT",
+  "author": "Frank Lyder Bredland",
+  "homepage": "https://github.com/theknarf-experiments/flow-ts#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/theknarf-experiments/flow-ts.git",
+    "directory": "packages/flow-ts"
+  },
+  "bugs": "https://github.com/theknarf-experiments/flow-ts/issues",
+  "engines": {
+    "node": ">=20"
+  },
   "type": "module",
+  "sideEffects": false,
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {

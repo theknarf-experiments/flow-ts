@@ -5,7 +5,7 @@
 //     producing a float — JS auto-coerces the int operand
 //
 // Run it:
-//     pnpm -F @flow-ts/cli run cli -- examples/stocks.dl --facts examples
+//     node packages/cli/dist/bin.js -p examples/stocks.dl -f examples
 
 .in
 .decl Stock(symbol: string, price: float)

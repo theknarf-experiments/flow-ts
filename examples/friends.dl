@@ -5,7 +5,7 @@
 //     before resolving each endpoint back to its name
 //
 // Run it:
-//     pnpm -F @flow-ts/cli run cli -- examples/friends.dl --facts examples
+//     node packages/cli/dist/bin.js -p examples/friends.dl -f examples
 //
 // See examples/Person.csv, examples/Friend.csv for the seed data.
 

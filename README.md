@@ -294,7 +294,7 @@ Rows cross the dataflow boundary as comma-joined strings (`"1,2,3,"`) rather tha
 `flow-ts` and the rest of the stack are filesystem-free, so the whole engine runs in the browser unchanged. `packages/docs/` is a Vite + React + react-router site that does exactly that, and it's where the language is documented. It builds to static pages — one HTML file per route, with the derived tables already rendered — and deploys to GitHub Pages:
 
 ```bash
-pnpm -F @flow-ts/docs run dev     # http://localhost:5173
+pnpm -F docs run dev     # http://localhost:5173
 ```
 
 It's in two halves. The **tutorial** is eleven lessons, one per language feature, ordered so each only uses what came before — facts and rules, joins, filters, arithmetic, union, recursion, negation, aggregation, incremental retraction, ad-hoc queries, and writing back. The last splits into three parts (11.1–11.3), one per `.put` policy that supplies what the rules leave open: `insert`, `spread`, and `into`/`none`. Every page is live: edit a fact, or edit the rules themselves, and watch the derived tables update. The **demos** are the same engine at a larger size — a friend graph, a markdown vault that writes edits back into the source text, and two CRDTs from Stewen 2025 expressed as Datalog queries.
@@ -309,7 +309,7 @@ The whole pipeline (parser, planner, db-ivm runtime, shadow compiler, router, ta
 
 ```bash
 pnpm test                              # 367 unit + property + e2e tests
-pnpm -F @flow-ts/cli test -- vs-rust   # diff TS output against the Rust binary
+pnpm -F cli test -- vs-rust   # diff TS output against the Rust binary
 ```
 
 The vs-rust oracle runs each upstream `.dl` example through both the Rust `executing` binary (from the `dbflow` repo) and our TS CLI on identical synthetic facts, then compares IDB CSV outputs row-by-row. It auto-skips if the Rust binary isn't available on disk (or set `RUST_FLOWLOG` to override the path).

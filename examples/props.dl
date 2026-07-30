@@ -11,7 +11,7 @@
 // `string` would mean no arithmetic and no joins against typed relations.
 //
 // Run it:
-//     pnpm -F @flow-ts/cli run cli -- examples/props.dl --facts examples
+//     node packages/cli/dist/bin.js -p examples/props.dl -f examples
 //
 // See examples/Prop.csv, examples/City.csv for the seed data.
 

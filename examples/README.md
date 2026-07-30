@@ -4,7 +4,7 @@ Small `.dl` programs that exercise the engine's value-type system end to
 end. Each program ships with its own CSV facts in this directory.
 
 > **Looking for per-feature documentation?** That lives in the docs site
-> (`pnpm -F @flow-ts/docs run dev`), as a tutorial of eleven lessons — one
+> (`pnpm -F docs run dev`), as a tutorial of eleven lessons — one
 > each for facts and rules, joins, filters, arithmetic, union, recursion,
 > negation, aggregation, incremental retraction, ad-hoc queries and writing
 > back, the last splitting into a part per `.put` policy — where every program
@@ -17,7 +17,7 @@ end. Each program ships with its own CSV facts in this directory.
 From the repo root:
 
 ```bash
-pnpm -F @flow-ts/cli run build
+pnpm -F cli run build
 node packages/cli/dist/bin.js -p examples/<name>.dl -f examples
 ```
 

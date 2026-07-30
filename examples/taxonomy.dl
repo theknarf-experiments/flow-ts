@@ -3,7 +3,7 @@
 //   • recursive joins keyed entirely on strings
 //
 // Run it:
-//     pnpm -F @flow-ts/cli run cli -- examples/taxonomy.dl --facts examples
+//     node packages/cli/dist/bin.js -p examples/taxonomy.dl -f examples
 
 .in
 .decl Subcat(parent: string, child: string)

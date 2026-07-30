@@ -6,5 +6,5 @@
 
 procs:
   docs:
-    shell: pnpm -F @flow-ts/docs run dev
+    shell: pnpm -F docs run dev
     cwd: .

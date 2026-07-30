@@ -9,7 +9,7 @@
 // needs them — `flow-ts inspect examples/payroll.dl` shows them.
 //
 // Run it:
-//     pnpm -F @flow-ts/cli run cli -- examples/payroll.dl --facts examples
+//     node packages/cli/dist/bin.js -p examples/payroll.dl -f examples
 
 .in
 .decl Person(id: number, name: string, dept: string)

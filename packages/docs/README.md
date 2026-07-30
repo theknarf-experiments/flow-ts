@@ -1,11 +1,11 @@
-# @flow-ts/docs
+# Documentation site
 
-The documentation site: a Vite + React SPA that runs the whole flow-ts engine in
-the browser, so every example on it is live rather than a code block.
+A Vite + React SPA that runs the whole engine in the browser, so every example on
+it is live rather than a code block.
 
 ```bash
 pnpm install
-pnpm -F @flow-ts/docs run dev     # http://localhost:5173
+pnpm -F docs run dev     # http://localhost:5173
 ```
 
 ## What's here
@@ -72,8 +72,8 @@ lesson into a lie. The same file checks that between them the lessons still
 cover the language, so a new grammar feature can't land undocumented.
 
 ```bash
-pnpm -F @flow-ts/docs run test:unit   # the lessons' claims
-pnpm -F @flow-ts/docs run test        # those, then the Playwright suite
+pnpm -F docs run test:unit   # the lessons' claims
+pnpm -F docs run test        # those, then the Playwright suite
 ```
 
 ## Look

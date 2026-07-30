@@ -1,6 +1,7 @@
 {
   "name": "@flow-ts/cli",
   "version": "0.1.0",
+  "private": true,
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -13,10 +14,6 @@
       "default": "./dist/index.js"
     }
   },
-  "files": [
-    "dist",
-    "src"
-  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",

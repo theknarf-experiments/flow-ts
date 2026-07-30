@@ -218,7 +218,9 @@ Add `--json` for machine-readable output, or `-O 1` / `--no-sharing` to inspect 
 
 ## Library usage
 
-The executor is published-shaped (not on npm yet) as `flow-ts`. Two entry points:
+The executor is published-shaped (not on npm yet) as `flow-ts`. Two packages are
+meant to go out — `flow-ts`, usable on its own, and `@flow-ts/react` on top of
+it — and everything else here is private. Two entry points:
 
 ### Batch — `executeProgram`
 
@@ -274,7 +276,9 @@ packages/
                   parsing/     Datalog grammar (peggy) → parseProgram
                   db-ivm/      Vendored fork of Tanstack DB's ivm (MIT, see its
                                LICENSE) + a queue-driven `iterate` operator
-  cli/          flow-ts binary, argv parsing (commander+zod), fact CSV I/O
+  cli/          flow-ts binary, argv parsing (commander+zod), fact CSV I/O.
+                Private: it is for driving the engine locally, and folding it
+                into the core would put commander and zod in every consumer.
   react/        React bindings: Store / Collection / useLiveQuery
   docs/         Documentation site: a Vite + React + react-router SPA running
                 the engine in the browser — a per-feature tutorial plus four
